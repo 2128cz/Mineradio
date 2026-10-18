@@ -84,6 +84,7 @@
     'js/modules/06-lyrics/05-upload-dragdrop.js',
     'js/modules/06-lyrics/06-lyric-timing-offset.js',
     'js/modules/06-lyrics/07-pv-lyric-format.js',
+    'js/modules/06-lyrics/08-pv-prefetch.js',
     'js/modules/07-fx/00-preset-archive-data.js',
     'js/modules/07-fx/01-lyric-color-controls.js',
     'js/modules/07-fx/02-accent-background-controls.js',

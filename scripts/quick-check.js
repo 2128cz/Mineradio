@@ -354,6 +354,60 @@ function runPvPipelineCheck() {
   }
 }
 
+// The renderer half of the PV pipeline: the prefetch that rides the existing queue lyric fetch
+// (docs/PLAN_JIZURA_PV.md section 4.3, probe tmp/cdp-pv-prefetch-check.js).
+function runPvPrefetchCheck() {
+  logStep('PV archive prefetch (renderer hook, switch, live probe)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '08-pv-prefetch.js');
+  if (!fs.existsSync(modulePath)) fail('06-lyrics/08-pv-prefetch.js is missing; the queue prefetch has nothing to hand lyrics to');
+  const moduleText = fs.readFileSync(modulePath, 'utf8');
+  const lyricText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '00-lyrics-fetch-parse.js'), 'utf8');
+
+  const hooks = (lyricText.match(/pvPrefetchFromLyricState\(candidate\.song/g) || []).length;
+  if (hooks !== 2) {
+    fail(`the queue lyric prefetch must hand both its paths to the PV prefetch (cached lyrics and freshly fetched ones); found ${hooks} call site(s)`);
+  }
+  if (!/var pvPrefetchEnabled = false;/.test(moduleText)) {
+    fail('PV prefetch must default to off: turning it on plans every song on every install');
+  }
+  // A random seed would give the same song a different shot list every run, so the archive could
+  // never be hit again. The seed has to come from the song identity.
+  if (!/pvSeedForSongKey\(pvSongKeyFor\(song\)\)/.test(moduleText) || /Math\.random/.test(moduleText)) {
+    fail('the plan seed must be derived from the song key, never random');
+  }
+  if (!/timingSource === 'fallback'/.test(moduleText)) {
+    fail('synthetic fallback lyrics must be skipped: a plan built from placeholder words is a shot list for nothing');
+  }
+  const planPosters = walk(path.join(appRoot, 'public', 'js'))
+    .filter((file) => /\.js$/.test(file) && /\/api\/pv\/plan/.test(fs.readFileSync(file, 'utf8')));
+  if (planPosters.length !== 1 || path.basename(planPosters[0]) !== '08-pv-prefetch.js') {
+    fail(`only 06-lyrics/08-pv-prefetch.js may ask for a plan; also asking: ${planPosters.map(rel).join(', ') || '(this module is missing)'}`);
+  }
+  console.log('[OK] PV prefetch rides the queue lyric flow, defaults to off, and is the only plan client.');
+
+  const probe = path.join(appRoot, 'tmp', 'cdp-pv-prefetch-check.js');
+  if (!fs.existsSync(probe)) {
+    console.log('[SKIP] tmp/cdp-pv-prefetch-check.js is not in this checkout; the live half is not exercised.');
+    return;
+  }
+  const cdpPort = Number(process.env.MINERADIO_CDP_PORT) || 9223;
+  const reachable = spawnSync(process.execPath, ['-e',
+    `require('http').get({hostname:'127.0.0.1',port:${cdpPort},path:'/json/list',agent:false},(res)=>{res.resume();process.exit(res.statusCode===200?0:1)}).on('error',()=>process.exit(1))`,
+  ], { cwd: appRoot, encoding: 'utf8' });
+  if (reachable.status !== 0) {
+    // Name the layer: no devtools port means no renderer to ask, which is not the same fact as
+    // "the prefetch is broken".
+    console.log(`[SKIP] PV prefetch live probe -- no devtools endpoint on 127.0.0.1:${cdpPort} (start with scripts/dev-restart.ps1 -DebugPort ${cdpPort})`);
+    return;
+  }
+  const run = spawnSync(process.execPath, [probe, String(cdpPort)], { cwd: appRoot, encoding: 'utf8' });
+  process.stdout.write(run.stdout || '');
+  if (run.status !== 0) {
+    process.stderr.write(run.stderr || '');
+    fail(`PV prefetch probe failed (rc=${run.status}); expected PV-PREFETCH-PROBE ALL PASS`);
+  }
+}
+
 function runVisualTakeoverMaskCheck() {
   logStep('Visual takeover mask equivalence regression');
   const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
@@ -5939,6 +5993,7 @@ async function main() {
   runJizuraVendorCheck();
   runPvPlannerCheck();
   runPvPipelineCheck();
+  runPvPrefetchCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();

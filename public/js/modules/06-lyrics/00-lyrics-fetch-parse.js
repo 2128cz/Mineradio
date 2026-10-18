@@ -100,12 +100,24 @@ async function runQueueLyricPrefetch(fromIndex, token) {
   try {
     var cached = await readPersistentLyricCache(candidate.song);
     if (token !== lyricQueuePrefetchToken) return false;
-    if (cached) return true;
+    if (cached) {
+      // Lyrics already on disk still need a plan, so parse them exactly as a fresh response
+      // would be parsed and let the PV prefetch hook decide whether to ask for one.
+      if (typeof pvPrefetchFromLyricState === 'function') {
+        pvPrefetchFromLyricState(candidate.song, parseLyricResponseToOriginalState(candidate.song, cached));
+      }
+      return true;
+    }
     var response = await apiJson(lyricEndpointForSong(candidate.song));
     if (token !== lyricQueuePrefetchToken) return false;
     var merged = mergeInlineLyricResponseForSong(candidate.song, response || {});
     var state = parseLyricResponseToOriginalState(candidate.song, merged);
     if (!state || !state.usableLyric) return false;
+    // PV prefetch rides this queue: it is already serial and already token-checked, so the shot
+    // list for an upcoming song gets planned while the current one plays.
+    if (typeof pvPrefetchFromLyricState === 'function') {
+      pvPrefetchFromLyricState(candidate.song, state);
+    }
     writePersistentLyricCache(candidate.song, merged);
     return true;
   } catch (_) {
