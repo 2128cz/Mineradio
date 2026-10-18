@@ -300,6 +300,60 @@ function runPvPlannerProbe() {
   }
 }
 
+// Route wiring for the planning pipeline, plus the live end-to-end when an app happens to be
+// running with a writable cache (docs/PLAN_JIZURA_PV.md section 4.2, script tmp/pv-pipeline-e2e.js).
+function runPvPipelineCheck() {
+  logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
+  const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
+  for (const [pattern, why] of [
+    [/pn === '\/api\/pv\/plan'/, 'server.js no longer exposes the planning route'],
+    [/pn === '\/api\/pv\/planner'/, 'server.js no longer exposes the planner status/release route'],
+    [/crypto\.createHash\('sha1'\)\.update\(payload\.lyrics, 'utf8'\)\.digest\('hex'\)\.slice\(0, 16\)/, 'the lyric fingerprint must be computed from the payload text'],
+    // ...and it must actually reach the key. Asserting only the computation above let a mutation
+    // that kept computing it and then keyed on the caller's hash pass the gate untouched.
+    [/canonicalArchiveKey\(\{[\s\S]{0,240}lyricHash: lyricFingerprint/, 'the archive key must be keyed on the derived lyric fingerprint, not on a caller-supplied hash'],
+    [/delete plan\.fontTable/, 'the archive must not keep the inline font table (validateArchive rejects it)'],
+    [/pvPlanInFlight/, 'concurrent requests for one key must share a single plan'],
+    [/let pvPlannerInstance = null/, 'the planner window must be created lazily, not at boot'],
+  ]) {
+    if (!pattern.test(serverText)) fail(why);
+  }
+
+  const e2e = path.join(appRoot, 'tmp', 'pv-pipeline-e2e.js');
+  if (!fs.existsSync(e2e)) {
+    console.log('[SKIP] tmp/pv-pipeline-e2e.js is not in this checkout, so the live half is not exercised.');
+    return;
+  }
+  const run = spawnSync(process.execPath, [e2e], { cwd: appRoot, encoding: 'utf8' });
+  const out = String(run.stdout || '');
+  process.stdout.write(out);
+  const judged = out.match(/^judged process pid=(\d+) startedAt=([^ ]+) /m);
+  if (judged) {
+    const serverMtime = fs.statSync(path.join(appRoot, 'server.js')).mtimeMs;
+    const startedAt = Date.parse(judged[2]);
+    if (Number.isFinite(startedAt) && startedAt < serverMtime) {
+      // The live half judges a running process; if it started before this source was last
+      // written, its verdict describes that older build. Say so instead of letting the PASS
+      // read as "this source was exercised".
+      console.log('[WARN] the probed app (pid ' + judged[1] + ', started ' + judged[2] + ') predates server.js (' +
+        new Date(serverMtime).toISOString() + '); this live verdict describes that build, not the current source.');
+    }
+  } else {
+    console.log('[WARN] the e2e did not report which process it judged, so the verdict cannot be tied to a build.');
+  }
+  const skip = (out.match(/^E2E-SKIP .*$/m) || [])[0];
+  if (skip) {
+    // A skip has to name the layer it skipped on: "the app is not running" and "the cache drive
+    // was refused" are different facts, and neither is a pass.
+    console.log('[SKIP] PV pipeline e2e -- ' + skip);
+    return;
+  }
+  if (run.status !== 0) {
+    process.stderr.write(run.stderr || '');
+    fail(`PV pipeline e2e failed (rc=${run.status}); expected PV-PIPELINE-E2E ALL PASS`);
+  }
+}
+
 function runVisualTakeoverMaskCheck() {
   logStep('Visual takeover mask equivalence regression');
   const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
@@ -5884,6 +5938,7 @@ async function main() {
   runPvLyricFormatCheck();
   runJizuraVendorCheck();
   runPvPlannerCheck();
+  runPvPipelineCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();

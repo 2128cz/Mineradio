@@ -142,13 +142,16 @@ function createPvArchiveStore(options) {
 
   function write(archive) {
     if (!archive || !archive.archiveKey) return { ok: false, error: 'PV_WRITE_REQUIRES_ARCHIVE_KEY' };
+    const verdict = validateArchive(archive);
+    if (!verdict.ok) return Object.assign({ ok: false, bytes: Buffer.byteLength(JSON.stringify(archive), 'utf8') }, verdict);
+    // savedAt must be stamped BEFORE the size is measured: reporting a byte count that excludes
+    // it made the route's number disagree with the file it had just written (caught by the
+    // pipeline e2e, which compares the reported size with statSync on the file).
+    archive.savedAt = now();
     const bytes = Buffer.byteLength(JSON.stringify(archive), 'utf8');
     if (bytes > maxArchiveBytes) return { ok: false, error: 'PV_ARCHIVE_TOO_LARGE', bytes, maxArchiveBytes };
-    const verdict = validateArchive(archive);
-    if (!verdict.ok) return Object.assign({ ok: false, bytes }, verdict);
     const located = pathFor(archive.archiveKey);
     if (!located) return { ok: false, error: 'PV_KEY_INVALID' };
-    archive.savedAt = now();
     // .tmp then rename, same as writeBeatMapCache: a reader must never see a half file.
     const tmp = located.file + '.' + process.pid + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(archive));

@@ -117,7 +117,8 @@ const {
   readCuefieldFeedbackStats,
 } = require('./cuefield/feedback-log');
 const { planCuefieldTransitionFromCache } = require('./cuefield/mineradio-bridge');
-const { createPvArchiveStore, PV_SCHEMA: PV_ARCHIVE_SCHEMA } = require('./pv-archive');
+const { createPvArchiveStore, canonicalArchiveKey, PV_SCHEMA: PV_ARCHIVE_SCHEMA } = require('./pv-archive');
+const { createPvPlanner } = require('./pv-planner');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -808,6 +809,166 @@ const pvArchive = createPvArchiveStore({
   // The rule is shared with beatmaps (cacheRootInfoFor); only the judged path differs.
   assertWritableRoot: assertPvCacheRootWritable,
 });
+
+// The planner owns a hidden window with the whole engine in it, so it is created on first use:
+// an app that never opens a PV must not pay for it. srcFingerprint is the engine hash itself, so
+// refreshing the engine invalidates every archive instead of silently drawing with a new one.
+let pvPlannerInstance = null;
+let pvPlannerFailure = null;
+let pvSrcFingerprintCache = null;
+function pvSrcFingerprint() {
+  if (!pvSrcFingerprintCache) {
+    pvSrcFingerprintCache = require('./pv-planner').readEngine(__dirname).sha1.slice(0, 16);
+  }
+  return pvSrcFingerprintCache;
+}
+function getPvPlanner() {
+  if (pvPlannerInstance) return pvPlannerInstance;
+  if (pvPlannerFailure) throw pvPlannerFailure;
+  try {
+    pvPlannerInstance = createPvPlanner({ appRoot: __dirname });
+  } catch (err) {
+    // A pin mismatch must stay a named failure, not a re-read attempt on every request.
+    pvPlannerFailure = err;
+    throw err;
+  }
+  return pvPlannerInstance;
+}
+function releasePvPlanner() {
+  if (pvPlannerInstance) pvPlannerInstance.dispose();
+  pvPlannerInstance = null;
+  pvPlannerFailure = null;
+  return { ok: true };
+}
+// pid + startedAt are part of the reading on purpose: a live probe judges a RUNNING process, so
+// without them a green e2e cannot be told apart from a green e2e against a build that predates
+// the source being tested (the app I am talking to may simply be older than this file).
+const PV_PROCESS_STARTED_AT = new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString();
+function pvPlannerStats() {
+  const identity = { pid: process.pid, startedAt: PV_PROCESS_STARTED_AT, uptimeSec: Math.round(process.uptime()) };
+  return pvPlannerInstance
+    ? Object.assign({ open: pvPlannerInstance.isOpen(), fingerprint: pvSrcFingerprint() }, identity, pvPlannerInstance.stats())
+    : Object.assign({ open: false, fingerprint: pvSrcFingerprint(), windowsCreated: 0, plans: 0, failures: 0, timeouts: 0 }, identity);
+}
+
+// One plan per key even when the renderer asks twice: the caller is a prefetch queue that can
+// race itself after a track change, and paying twice for the same song is the exact waste this
+// whole route exists to avoid.
+const pvPlanInFlight = new Map();
+
+async function handlePvPlan(body) {
+  const request = body && typeof body === 'object' ? body : {};
+  const payload = request.payload && typeof request.payload === 'object' ? request.payload : null;
+  const song = request.song && typeof request.song === 'object' ? request.song : {};
+  const wrong = (reason) => ({ ok: false, hit: false, planned: false, stored: false, reason });
+  if (!payload || typeof payload.lyrics !== 'string' || !payload.lyrics) return wrong('PV_PLAN_BAD_REQUEST');
+  if (!song.key) return wrong('PV_PLAN_BAD_REQUEST');
+
+  const fingerprint = pvSrcFingerprint();
+  // The key is derived from the lyric TEXT, not from a hash the caller supplies: a caller that
+  // kept an old hash while the lyrics changed got a stale hit (the pipeline e2e's E4 caught
+  // exactly that). request.lyricHash is still recorded, as provenance only.
+  const lyricFingerprint = crypto.createHash('sha1').update(payload.lyrics, 'utf8').digest('hex').slice(0, 16);
+  const lyricHash = String(request.lyricHash || '') || lyricFingerprint;
+  const recipe = {
+    seed: payload.seed, style: payload.style || '', mood: payload.mood || null,
+    aspect: payload.aspect || '', res: payload.res, fps: payload.fps,
+    koma: payload.koma, typeset: false, unify: payload.unify !== false,
+  };
+  const key = canonicalArchiveKey({
+    songKey: song.key,
+    lyricHash: lyricFingerprint,
+    lang: payload.lang || '',
+    aspect: payload.aspect || '',
+    res: payload.res,
+    seed: payload.seed,
+    style: payload.style || '',
+    srcFingerprint: fingerprint,
+  });
+
+  const cached = pvArchive.read(key);
+  if (cached.ok) {
+    // Same shape as the miss path (minus the plan itself): a caller that branches on
+    // lyricFingerprint or srcFingerprint must not have to know which path answered.
+    return {
+      ok: true, hit: true, planned: false, stored: true, key,
+      cuts: cached.cuts, lines: cached.lines, events: cached.events,
+      savedAt: cached.archive.savedAt, file: cached.file,
+      srcFingerprint: fingerprint, lyricFingerprint, lyricHash,
+      bytes: (() => { try { return fs.statSync(cached.file).size; } catch (e) { return null; } })(),
+    };
+  }
+
+  if (pvPlanInFlight.has(key)) {
+    const shared = await pvPlanInFlight.get(key);
+    return Object.assign({}, shared, { shared: true });
+  }
+
+  const job = (async () => {
+    const startedAt = Date.now();
+    const out = await getPvPlanner().plan(payload);
+    const plan = JSON.parse(out.json);
+    // The archive rejects an inline font table (validateArchive): it is the same catalogue for
+    // every song, so it belongs in the one sidecar keyed by srcFingerprint.
+    const fontTable = plan.fontTable || null;
+    if (fontTable) delete plan.fontTable;
+    const archive = {
+      pvSchema: PV_ARCHIVE_SCHEMA,
+      archiveKey: key,
+      jizura: { version: out.appVersion || null, planVersion: plan.version || 2, srcFingerprint: fingerprint },
+      song: {
+        key: song.key,
+        provider: song.provider || '',
+        title: song.title || payload.title || '',
+        artist: song.artist || payload.artist || '',
+        duration: Number(song.duration) > 0 ? Number(song.duration) : plan.duration,
+      },
+      source: {
+        lyricHash,
+        lang: payload.lang || '',
+        withTranslation: !!request.hasTranslation,
+        timingSource: request.timingSource || 'lrc',
+      },
+      recipe,
+      align: { mineradioLyricOffsetMs: Number(request.lyricOffsetMs) || 0, jizuraTypesetLeadApplied: false },
+      plan,
+    };
+    const stored = pvArchive.write(archive);
+    if (fontTable) pvArchive.saveFontTable(fontTable, fingerprint);
+    return {
+      ok: true,
+      hit: false,
+      planned: true,
+      stored: stored.ok === true,
+      storeReason: stored.ok ? '' : (stored.reason || stored.error || 'PV_PLAN_NOT_STORED'),
+      key,
+      cuts: out.cuts,
+      lines: (plan.lines || []).length,
+      events: (plan.events || []).length,
+      engineMs: out.engineMs,
+      planMs: Date.now() - startedAt,
+      bytes: stored.bytes || null,
+      file: stored.file || null,
+      srcFingerprint: fingerprint,
+      lyricFingerprint,
+      lyricHash,
+    };
+  })();
+
+  pvPlanInFlight.set(key, job);
+  try {
+    return await job;
+  } catch (err) {
+    return Object.assign(wrong(err.code || err.message || 'PV_PLAN_FAILED'), {
+      detail: String(err.message || err),
+      engineStack: err.engineStack || null,
+      key,
+    });
+  } finally {
+    pvPlanInFlight.delete(key);
+  }
+}
+
 function pvCacheInventory() {
   const entries = pvArchive.list();
   return {
@@ -4955,6 +5116,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
+    return;
+  }
+
+  if (pn === '/api/pv/plan' && req.method === 'POST') {
+    try {
+      const body = await readRequestBody(req);
+      sendJSON(res, await handlePvPlan(body));
+    } catch (err) {
+      sendJSON(res, { ok: false, hit: false, planned: false, stored: false, reason: err.code || err.message || 'PV_PLAN_ROUTE_FAILED' });
+    }
+    return;
+  }
+
+  if (pn === '/api/pv/planner') {
+    // Memory governance: the hidden window holds the whole engine, so the app must be able to
+    // drop it (PV turned off, or the app is about to idle) without restarting.
+    if (req.method === 'POST') {
+      const body = await readRequestBody(req).catch(() => ({}));
+      if (body && body.release === true) {
+        sendJSON(res, Object.assign(releasePvPlanner(), { stats: pvPlannerStats() }));
+        return;
+      }
+    }
+    sendJSON(res, Object.assign({ ok: true }, pvPlannerStats()));
     return;
   }
 

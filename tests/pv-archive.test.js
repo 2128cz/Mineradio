@@ -121,6 +121,11 @@ test('write/read round-trip preserves the plan byte for byte', () => {
   assert.equal(JSON.stringify(readBack.archive.plan), JSON.stringify(archive.plan));
   assert.ok(readBack.archive.savedAt > 0);
   assert.ok(fs.existsSync(readBack.file));
+  // The reported byte count has to describe the file that was written. It did not: savedAt was
+  // stamped after the measurement, so every reported size was short by its own timestamp and the
+  // pipeline e2e (statSync vs reported bytes) caught a 28,584 vs 28,7xx mismatch.
+  assert.equal(written.bytes, fs.statSync(readBack.file).size, 'reported bytes must equal the file on disk');
+  assert.equal(Buffer.byteLength(JSON.stringify(readBack.archive), 'utf8'), fs.statSync(readBack.file).size);
   // no .tmp litter left behind
   const litter = store.list().filter((e) => /\.tmp/.test(e.name));
   assert.deepEqual(litter, []);
