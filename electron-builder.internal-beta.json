@@ -37,6 +37,7 @@
     "qishui-audio-decryptor/**/*",
     "dj-analyzer.js",
     "pv-archive.js",
+    "pv-planner.js",
     "LICENSE",
     "NOTICE.md",
     "docs/THIRD_PARTY_PORTS.md",

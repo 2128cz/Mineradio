@@ -233,6 +233,73 @@ function runJizuraVendorCheck() {
   console.log(`[OK] vendored engine pinned: ${manifest.keptFileCount} files -> ${manifest.bundleBytes}B sha1=${manifest.bundleSha1.slice(0, 12)} (${manifest.upstreamVersion || 'version?'} @ ${String(manifest.upstreamRevision || '').slice(0, 12)})`);
 }
 
+function runPvPlannerCheck() {
+  logStep('PV planner bridge (hidden window, vendored engine, packaging)');
+  const plannerPath = path.join(appRoot, 'pv-planner.js');
+  if (!fs.existsSync(plannerPath)) fail('pv-planner.js is missing; the PV archive pipeline needs it (docs/PLAN_JIZURA_PV.md §4.1)');
+  const plannerText = fs.readFileSync(plannerPath, 'utf8');
+  const syntax = spawnSync(process.execPath, ['--check', plannerPath], { cwd: appRoot, encoding: 'utf8' });
+  if (syntax.status !== 0) fail(`pv-planner.js does not parse: ${syntax.stderr || ''}`);
+
+  // The engine must be reachable exactly one way: through this module, from the vendored file
+  // whose hash the gate pins. A second reader is how a renderer copy reappears later. Comments
+  // are stripped first: prose that names the file (this arm's own messages do) is not a reader.
+  const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
+    .filter((file) => /\.js$/.test(file) && /jizura-engine\.js/.test(stripComments(fs.readFileSync(file, 'utf8'))));
+  if (!/ENGINE_RELATIVE_PATH = path\.join\('vendor', 'jizura', 'jizura-engine\.js'\)/.test(plannerText)) {
+    fail('pv-planner.js no longer resolves the vendored engine path; the pin check below would be meaningless');
+  }
+  if (!/PV_ENGINE_PIN_MISMATCH/.test(plannerText)) {
+    fail('pv-planner.js must refuse to plan with an engine whose hash differs from the manifest pin');
+  }
+  if (readers.length) {
+    fail(`only pv-planner.js may read the vendored engine; also read by: ${readers.map(rel).join(', ')}`);
+  }
+  // Window posture: hidden, isolated, and certainly not loading with webSecurity off (that was
+  // only ever needed by the spike, which pulls 39 separate files over file:// XHR).
+  if (!/show:\s*false/.test(plannerText) || /webSecurity:\s*false/.test(plannerText)) {
+    fail('the planner window must be created with show:false and without disabling webSecurity');
+  }
+  if (!/contextIsolation:\s*true/.test(plannerText) || !/nodeIntegration:\s*false/.test(plannerText)) {
+    fail('the planner window must keep contextIsolation on and nodeIntegration off');
+  }
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  if (/pv-planner/.test(loaderText)) {
+    fail('pv-planner.js is a main-process module; index-loader.js must not list it');
+  }
+  const releasePkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
+  const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
+  const releaseFiles = (releasePkg.build && releasePkg.build.files) || [];
+  const betaFiles = betaPkg.files || [];
+  if (!releaseFiles.includes('pv-planner.js') || !betaFiles.includes('pv-planner.js')) {
+    fail(`pv-planner.js must be listed in both packaging file manifests; release=${releaseFiles.includes('pv-planner.js')} beta=${betaFiles.includes('pv-planner.js')}`);
+  }
+  console.log('[OK] PV planner bridge is wired to the pinned vendored engine and ships in both packages.');
+  if (runElectron) runPvPlannerProbe();
+  else console.log('[SKIP] planner probe needs Electron (quick-check.bat full).');
+}
+
+// P1..P6 of docs/PLAN_JIZURA_PV.md section 4.1, judged by tmp/pv-planner-probe.js in a real
+// Electron main process.
+function runPvPlannerProbe() {
+  const probe = path.join(appRoot, 'tmp', 'pv-planner-probe.js');
+  if (!fs.existsSync(probe)) {
+    fail('tmp/pv-planner-probe.js is missing, so the planner judgments are not being exercised');
+  }
+  const electron = path.join(appRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+  if (!fs.existsSync(electron)) {
+    console.log('[SKIP] electron.exe not installed; planner probe not run.');
+    return;
+  }
+  const run = spawnSync(electron, [probe], { cwd: appRoot, encoding: 'utf8' });
+  process.stdout.write(run.stdout || '');
+  if (run.status !== 0) {
+    process.stderr.write(run.stderr || '');
+    fail(`PV planner probe failed (rc=${run.status}); expected ALL PASS 6/6`);
+  }
+}
+
 function runVisualTakeoverMaskCheck() {
   logStep('Visual takeover mask equivalence regression');
   const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
@@ -5816,6 +5883,7 @@ async function main() {
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
   runJizuraVendorCheck();
+  runPvPlannerCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();

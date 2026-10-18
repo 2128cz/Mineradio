@@ -3,7 +3,8 @@
   "upstreamRoot": "G:\\SoftwareFile\\JIZURA",
   "upstreamRevision": "fc16bfe43ea4a6c25a21f1caf04d17326de14f00",
   "upstreamVersion": "0.10.1",
-  "generation": "sorted(glob('src/*.js')) minus exclusions, each file decoded as UTF-8 with CRLF folded to LF, joined with a single '\\n' — same steps as upstream build.py:11-12",
+  "versionSubstitutions": 1,
+  "generation": "sorted(glob('src/*.js')) minus exclusions, each file decoded as UTF-8 with CRLF folded to LF, joined with a single '\\n', then '@VERSION@' replaced by the upstream VERSION — the same steps as upstream build.py:11-12 and :29",
   "excluded": [
     {
       "file": "12_ui.js",
@@ -249,8 +250,8 @@
     }
   ],
   "keptFilesRawBytes": 2184670,
-  "bundleBytes": 2149724,
-  "bundleSha1": "4d0ff171fe4263e179bdb41f259a33b8fd3c0f7e",
+  "bundleBytes": 2149721,
+  "bundleSha1": "096195a0fe8dbfb67277c9c4d147655f0a4cf36d",
   "licenseBytes": 1065,
   "licenseSha1": "d23b141fc953d4ce61eb94562e1f8232cda35c2d",
   "licenseUpstreamRawBytes": 1086,
