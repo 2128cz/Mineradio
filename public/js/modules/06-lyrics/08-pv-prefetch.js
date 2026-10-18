@@ -17,6 +17,36 @@ var pvPrefetchInFlight = false;
 var pvPrefetchAttempted = {};
 var pvPrefetchAttemptCount = 0;
 var pvPrefetchStats = { planned: 0, hits: 0, failed: 0, skipped: 0, notStored: 0, lastSongKey: '', lastReason: '', lastAt: 0 };
+// With the cache refused (the default until the cache-drive decision lands) a prefetch plans and
+// then throws the plan away: 2.1MB of engine plus ~30ms per song for nothing. Remember the
+// refusal, name it as a skip reason, and retry occasionally so turning the cache back on does
+// not require a restart.
+var pvPrefetchCacheBlockedAt = 0;
+var pvPrefetchCacheBlockedReason = '';
+var PV_PREFETCH_CACHE_RETRY_MS = 5 * 60 * 1000;
+
+function pvPrefetchCacheUsable(now) {
+  if (!pvPrefetchCacheBlockedAt) return true;
+  if ((now || Date.now()) - pvPrefetchCacheBlockedAt >= PV_PREFETCH_CACHE_RETRY_MS) {
+    pvPrefetchCacheBlockedAt = 0;
+    pvPrefetchCacheBlockedReason = '';
+    return true;
+  }
+  return false;
+}
+
+// The entry a settings change would use ("I pointed the cache at another drive"): forget a
+// refusal instead of waiting out the retry window. Probes use it to start from a clean state.
+function pvPrefetchResetCacheBlock() {
+  pvPrefetchCacheBlockedAt = 0;
+  pvPrefetchCacheBlockedReason = '';
+  return true;
+}
+
+function pvPrefetchNoteStoreRefusal(reason) {
+  pvPrefetchCacheBlockedAt = Date.now();
+  pvPrefetchCacheBlockedReason = String(reason || 'not-stored');
+}
 
 function pvPrefetchActive() {
   if (typeof window !== 'undefined' && window.__mineradioPvPrefetchOverride === true) return true;
@@ -38,6 +68,8 @@ function pvPrefetchState() {
     active: pvPrefetchActive(),
     inFlight: pvPrefetchInFlight,
     attempted: pvPrefetchAttemptCount,
+    cacheWritable: pvPrefetchCacheUsable(),
+    cacheBlockedReason: pvPrefetchCacheBlockedReason,
     stats: Object.assign({}, pvPrefetchStats),
   };
 }
@@ -134,6 +166,11 @@ function pvPrefetchFromLyricState(song, state) {
       pvPrefetchStats.lastReason = 'already-attempted';
       return Promise.resolve({ ok: false, reason: 'already-attempted' });
     }
+    if (!pvPrefetchCacheUsable()) {
+      pvPrefetchStats.skipped++;
+      pvPrefetchStats.lastReason = 'cache-unwritable:' + (pvPrefetchCacheBlockedReason || 'unknown');
+      return Promise.resolve({ ok: false, reason: 'cache-unwritable', storeReason: pvPrefetchCacheBlockedReason });
+    }
     if (typeof formatLyricsForPv !== 'function' || typeof pvLyricHash !== 'function' || typeof apiJson !== 'function') {
       pvPrefetchStats.failed++;
       pvPrefetchStats.lastReason = 'formatter-missing';
@@ -170,13 +207,23 @@ function pvPrefetchFromLyricState(song, state) {
       if (res && res.ok) {
         if (res.hit) pvPrefetchStats.hits++;
         else pvPrefetchStats.planned++;
-        if (res.stored === false) pvPrefetchStats.notStored++;
+        if (res.stored === false) {
+          pvPrefetchStats.notStored++;
+          pvPrefetchNoteStoreRefusal(res.storeReason);
+        }
         pvPrefetchStats.lastReason = res.stored === false ? ('not-stored:' + (res.storeReason || '')) : (res.hit ? 'hit' : 'planned');
-        return { ok: true, hit: !!res.hit, key: res.key, cuts: res.cuts, lyricFingerprint: res.lyricFingerprint };
+        return { ok: true, stored: res.stored !== false, hit: !!res.hit, key: res.key, cuts: res.cuts, lyricFingerprint: res.lyricFingerprint };
       }
       pvPrefetchStats.failed++;
       pvPrefetchStats.lastReason = (res && res.reason) || 'route-refused';
-      return { ok: false, reason: pvPrefetchStats.lastReason };
+      // A cache refusal arrives as a route-level failure (the store's guard throws), not as
+      // stored:false, so recognise it here too or every later song pays a plan that gets thrown
+      // away for the same reason.
+      if (/^PV_CACHE_/.test(pvPrefetchStats.lastReason)) {
+        pvPrefetchStats.notStored++;
+        pvPrefetchNoteStoreRefusal(pvPrefetchStats.lastReason);
+      }
+      return { ok: false, stored: false, reason: pvPrefetchStats.lastReason };
     }).catch(function (err) {
       pvPrefetchInFlight = false;
       pvPrefetchStats.failed++;

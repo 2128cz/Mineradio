@@ -400,6 +400,18 @@ function runPvPrefetchCheck() {
     console.log(`[SKIP] PV prefetch live probe -- no devtools endpoint on 127.0.0.1:${cdpPort} (start with scripts/dev-restart.ps1 -DebugPort ${cdpPort})`);
     return;
   }
+  // A live probe judges a RUNNING renderer, which may predate this module. That is not "the
+  // prefetch is broken", so it skips by name instead of failing - a red here would send someone
+  // looking for a defect in code the app never loaded.
+  const identityProbe = spawnSync(process.execPath, ['-e',
+    `require('http').get({hostname:'127.0.0.1',port:3000,path:'/api/pv/planner',agent:false},(res)=>{let t='';res.on('data',c=>{t+=c});res.on('end',()=>{try{process.stdout.write(String(JSON.parse(t).startedAt||''))}catch(e){process.stdout.write('')}})}).on('error',()=>process.stdout.write(''))`,
+  ], { cwd: appRoot, encoding: 'utf8' });
+  const startedAt = Date.parse(String(identityProbe.stdout || '').trim());
+  const moduleMtime = fs.statSync(modulePath).mtimeMs;
+  if (Number.isFinite(startedAt) && startedAt < moduleMtime) {
+    console.log(`[SKIP] PV prefetch live probe -- the running app started ${new Date(startedAt).toISOString()}, before 06-lyrics/08-pv-prefetch.js was last written (${new Date(moduleMtime).toISOString()}); restart it`);
+    return;
+  }
   const run = spawnSync(process.execPath, [probe, String(cdpPort)], { cwd: appRoot, encoding: 'utf8' });
   process.stdout.write(run.stdout || '');
   if (run.status !== 0) {

@@ -906,6 +906,14 @@ async function handlePvPlan(body) {
 
   const job = (async () => {
     const startedAt = Date.now();
+    // Ask whether an archive could be stored BEFORE planning: a refused cache used to surface
+    // only inside write(), which meant a full plan (2.1MB engine evaluation plus ~30ms) was paid
+    // and then thrown away on every prefetched song.
+    try {
+      assertPvCacheRootWritable();
+    } catch (err) {
+      return Object.assign(wrong(err.code || 'PV_CACHE_UNAVAILABLE'), { key, storeReason: err.code || '', planned: false });
+    }
     const out = await getPvPlanner().plan(payload);
     const plan = JSON.parse(out.json);
     // The archive rejects an inline font table (validateArchive): it is the same catalogue for
