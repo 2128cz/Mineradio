@@ -251,6 +251,9 @@
   "keptFilesRawBytes": 2184670,
   "bundleBytes": 2149724,
   "bundleSha1": "4d0ff171fe4263e179bdb41f259a33b8fd3c0f7e",
-  "licenseBytes": 1086,
-  "licenseSha1": "7d0b72c94594ae35610b1e004a1f21d3fba94e00"
+  "licenseBytes": 1065,
+  "licenseSha1": "d23b141fc953d4ce61eb94562e1f8232cda35c2d",
+  "licenseUpstreamRawBytes": 1086,
+  "licenseUpstreamRawSha1": "7d0b72c94594ae35610b1e004a1f21d3fba94e00",
+  "licenseLineEndingNote": "text verbatim, line endings folded CRLF->LF so the pin matches what git stores and checks out on every platform"
 }

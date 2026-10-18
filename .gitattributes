@@ -7,3 +7,7 @@
 *.ico binary
 *.png binary
 *.min.js text eol=lf
+# Vendored copies are hash-pinned (see docs/THIRD_PARTY_PORTS.md); their bytes must be the
+# same in the working tree, in the blob and on any platform's checkout, or the pin only holds
+# on the machine that generated it.
+vendor/** text eol=lf
