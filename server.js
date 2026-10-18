@@ -117,6 +117,7 @@ const {
   readCuefieldFeedbackStats,
 } = require('./cuefield/feedback-log');
 const { planCuefieldTransitionFromCache } = require('./cuefield/mineradio-bridge');
+const { createPvArchiveStore, PV_SCHEMA: PV_ARCHIVE_SCHEMA } = require('./pv-archive');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -706,13 +707,19 @@ async function fetchManifestUpdateInfo(ref) {
     return localUpdateFallback(err.message || 'Update manifest failed', { configured: true });
   }
 }
-function beatCacheRootInfo() {
-  const dir = path.resolve(BEATMAP_CACHE_DIR);
-  const root = path.parse(dir).root;
+// One drive rule, two subjects: the ban expression lives here once and is evaluated
+// against whatever cache directory is being judged. Reusing ensureBeatMapCacheDir for PV
+// instead would let the beatmap path's drive veto an unrelated PV directory.
+function cacheRootInfoFor(dir) {
+  const resolved = path.resolve(String(dir || ''));
+  const root = path.parse(resolved).root;
   const drive = root ? root.replace(/[\\\/]+$/, '').toUpperCase() : '';
   const allowed = !!root && !/^C:$/i.test(drive);
   const available = allowed && fs.existsSync(root);
-  return { dir, root, drive, allowed, available };
+  return { dir: resolved, root, drive, allowed, available };
+}
+function beatCacheRootInfo() {
+  return cacheRootInfoFor(BEATMAP_CACHE_DIR);
 }
 function ensureBeatMapCacheDir() {
   const info = beatCacheRootInfo();
@@ -771,6 +778,46 @@ function writeBeatMapCache(body) {
   fs.renameSync(tmp, file);
   return { ok: true, key: payload.key, savedAt: payload.savedAt, dir: path.dirname(file) };
 }
+// PV archives (JIZURA lyric-video plans) share the beatmap cache root policy on purpose:
+// ensureBeatMapCacheDir is the app's only C-drive refusal, so it is injected rather than
+// restated here. The sibling directory keeps PV files out of the beatmap listing/trimming.
+const PV_CACHE_DIR = process.env.MINERADIO_PV_CACHE_DIR
+  || path.join(path.dirname(path.resolve(BEATMAP_CACHE_DIR)), 'pvs');
+const PV_CACHE_BYTE_BUDGET = Number(process.env.MINERADIO_PV_CACHE_BUDGET_BYTES) || 200 * 1024 * 1024;
+function pvCacheRootInfo() {
+  return cacheRootInfoFor(PV_CACHE_DIR);
+}
+function assertPvCacheRootWritable() {
+  const info = pvCacheRootInfo();
+  if (!info.allowed) {
+    const err = new Error('PV_CACHE_ON_C_DRIVE_DISABLED');
+    err.code = err.message;
+    err.info = info;
+    throw err;
+  }
+  if (!info.available) {
+    const err = new Error('PV_CACHE_DRIVE_UNAVAILABLE');
+    err.code = err.message;
+    err.info = info;
+    throw err;
+  }
+  return info.dir;
+}
+const pvArchive = createPvArchiveStore({
+  resolveDir: () => PV_CACHE_DIR,
+  // The rule is shared with beatmaps (cacheRootInfoFor); only the judged path differs.
+  assertWritableRoot: assertPvCacheRootWritable,
+});
+function pvCacheInventory() {
+  const entries = pvArchive.list();
+  return {
+    archives: entries.length,
+    bytes: entries.reduce((total, entry) => total + entry.bytes, 0),
+    oldestMs: entries.length ? Math.min.apply(null, entries.map((e) => e.mtimeMs)) : 0,
+    newestMs: entries.length ? Math.max.apply(null, entries.map((e) => e.mtimeMs)) : 0,
+  };
+}
+
 function localUpdateFallback(reason, opts) {
   opts = opts || {};
   const configured = !!(opts.configured != null ? opts.configured : false);
@@ -4873,6 +4920,87 @@ const server = http.createServer(async (req, res) => {
           reason: err.code || err.message || 'BEAT_CACHE_WRITE_FAILED',
           dir: info.dir,
         });
+      }
+      return;
+    }
+
+    sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
+    return;
+  }
+
+  if (pn === '/api/pv/archive') {
+    if (req.method === 'GET') {
+      const key = url.searchParams.get('key') || '';
+      try {
+        const found = pvArchive.read(key);
+        sendJSON(res, found.ok
+          ? { ok: true, hit: true, key, schema: found.archive.pvSchema, cuts: found.cuts, lines: found.lines, events: found.events, savedAt: found.archive.savedAt, archive: found.archive }
+          : { ok: true, hit: false, key, error: found.error });
+      } catch (err) {
+        const info = err.info || beatCacheRootInfo();
+        sendJSON(res, { ok: false, hit: false, enabled: false, key, reason: err.code || err.message || 'PV_CACHE_READ_FAILED', dir: info.dir });
+      }
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const body = await readRequestBody(req);
+        sendJSON(res, pvArchive.write(body));
+      } catch (err) {
+        const info = err.info || beatCacheRootInfo();
+        sendJSON(res, { ok: false, enabled: false, reason: err.code || err.message || 'PV_CACHE_WRITE_FAILED', dir: info.dir });
+      }
+      return;
+    }
+
+    sendJSON(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
+    return;
+  }
+
+  if (pn === '/api/pv/archive/status') {
+    const root = Object.assign({ schema: PV_ARCHIVE_SCHEMA, budgetBytes: PV_CACHE_BYTE_BUDGET }, pvCacheRootInfo());
+    let inventory = { archives: 0, bytes: 0, oldestMs: 0, newestMs: 0 };
+    let reason = '';
+    try {
+      inventory = pvCacheInventory();
+    } catch (err) {
+      reason = err.code || err.message || 'PV_CACHE_UNAVAILABLE';
+    }
+    sendJSON(res, { ok: true, enabled: root.allowed && root.available, root, inventory, reason });
+    return;
+  }
+
+  if (pn === '/api/pv/archive/trim' && req.method === 'POST') {
+    try {
+      const body = await readRequestBody(req);
+      const budget = Number(body && body.budgetBytes) > 0 ? Number(body.budgetBytes) : PV_CACHE_BYTE_BUDGET;
+      sendJSON(res, pvArchive.trim(budget, (body && body.pinnedKeys) || []));
+    } catch (err) {
+      sendJSON(res, { ok: false, reason: err.code || err.message || 'PV_CACHE_TRIM_FAILED' });
+    }
+    return;
+  }
+
+  if (pn === '/api/pv/font-table') {
+    if (req.method === 'GET') {
+      try {
+        const found = pvArchive.loadFontTable(url.searchParams.get('src') || '');
+        sendJSON(res, found.ok
+          ? { ok: true, hit: true, srcFingerprint: found.srcFingerprint, fontTable: found.fontTable }
+          : Object.assign({ ok: true, hit: false }, found.error === 'PV_FONT_TABLE_STALE' ? { stale: true, have: found.have, want: found.want } : {}));
+      } catch (err) {
+        sendJSON(res, { ok: false, reason: err.code || err.message || 'PV_FONT_TABLE_READ_FAILED', dir: PV_CACHE_DIR });
+      }
+      return;
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const body = await readRequestBody(req);
+        sendJSON(res, pvArchive.saveFontTable(body && body.fontTable, body && body.srcFingerprint));
+      } catch (err) {
+        sendJSON(res, { ok: false, reason: err.code || err.message || 'PV_FONT_TABLE_WRITE_FAILED' });
       }
       return;
     }

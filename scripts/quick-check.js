@@ -90,6 +90,103 @@ function runPlaybackAudioGraphRegressionCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+function runPvArchiveRegressionCheck() {
+  logStep('PV archive store regression (JIZURA lyric-video plan cache)');
+  const testFile = path.join(appRoot, 'tests', 'pv-archive.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`pv archive regression failed: ${rel(testFile)}`);
+  }
+  // pv-archive.js is not covered by the "*-api.js" glob, so a dropped entry here would
+  // only surface as a crash-at-require inside the installed app. Fail the gate instead.
+  const releasePkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
+  const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
+  const releaseFiles = (releasePkg.build && releasePkg.build.files) || [];
+  const betaFiles = betaPkg.files || [];
+  if (!releaseFiles.includes('pv-archive.js') || !betaFiles.includes('pv-archive.js')) {
+    fail(`pv-archive.js must be listed in both packaging file manifests; release=${releaseFiles.includes('pv-archive.js')} beta=${betaFiles.includes('pv-archive.js')}`);
+  }
+  const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
+  if (!/require\('\.\/pv-archive'\)/.test(serverText) || !/api\/pv\/archive\/status/.test(serverText)) {
+    fail('server.js no longer wires the pv archive store or its status route');
+  }
+  // Regression guard for a real defect: reusing ensureBeatMapCacheDir made the beatmap
+  // path's drive veto the PV directory (status reported dir G:\...\pvs but drive C:).
+  if (/assertWritableRoot:\s*ensureBeatMapCacheDir/.test(serverText) || !/cacheRootInfoFor\(PV_CACHE_DIR\)/.test(serverText)) {
+    fail('PV cache root must be judged against PV_CACHE_DIR via cacheRootInfoFor, not the beatmap guard');
+  }
+  process.stdout.write(result.stdout || '');
+}
+
+function runPvLyricFormatCheck() {
+  logStep('PV lyric format regression (Mineradio lines -> JIZURA grammar)');
+  const testFile = path.join(appRoot, 'tests', 'pv-lyric-format.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`pv lyric format regression failed: ${rel(testFile)}`);
+  }
+  // The archive cache key is a hash of this formatter's output, so a non-deterministic
+  // rewrite (e.g. reading Date.now or iterating an object key order) silently kills hits.
+  // The no-clock/no-random scan is deliberately a source scan: the fixtures only exercise
+  // a dozen lines, so a random salt behind an untested branch would stay byte-identical.
+  const formatText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '07-pv-lyric-format.js'), 'utf8');
+  if (/Date\.now|new Date|performance\.now|Math\.random/.test(formatText)) {
+    fail('pv lyric formatter must stay deterministic: it feeds the archive cache key');
+  }
+  // The carry bug shipped once while the test stayed green, because the oracle only
+  // checked "well-formed and ascending". Pin that the stamp-vs-input-time oracle survives.
+  const testText = fs.readFileSync(testFile, 'utf8');
+  if (!/Math\.abs\(seconds - lines\[index\]\.t\)/.test(testText)) {
+    fail('pv lyric format test lost its stamp-vs-input-time oracle; a wrong carry passes format+ascending checks');
+  }
+  console.log('[OK] PV lyric format is deterministic and its stamp oracle is intact.');
+  process.stdout.write(result.stdout || '');
+}
+
+function runVisualTakeoverMaskCheck() {
+  logStep('Visual takeover mask equivalence regression');
+  const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`visual takeover mask regression failed: ${rel(testFile)}`);
+  }
+  // A module file that is never listed in index-loader.js is dead code that still
+  // passes every other syntax check, so the directory and the list must agree.
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const listed = new Set([...loaderText.matchAll(/'(js\/modules\/[^']+)'/g)].map(m => m[1]));
+  const modulesDir = path.join(appRoot, 'public', 'js', 'modules');
+  const walkModules = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? walkModules(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+  const orphans = walkModules(modulesDir)
+    .filter(file => file.endsWith('.js'))
+    .map(file => path.relative(path.join(appRoot, 'public'), file).replace(/\\/g, '/'))
+    .filter(rel2 => !listed.has(rel2));
+  if (orphans.length) {
+    fail(`module files exist but are not in index-loader.js modulePaths (dead code): ${orphans.join(', ')}`);
+  }
+  const missing = [...listed].filter(rel2 => !fs.existsSync(path.join(appRoot, 'public', rel2)));
+  if (missing.length) {
+    fail(`index-loader.js lists modules that do not exist on disk: ${missing.join(', ')}`);
+  }
+  console.log(`[OK] Takeover mask equivalence passes; ${listed.size} loader entries, 0 orphan modules, 0 missing modules.`);
+  process.stdout.write(result.stdout || '');
+}
+
 function runPlaybackSourceFallbackTransactionCheck() {
   logStep('Playback source fallback finite transaction regression');
   const testFile = path.join(appRoot, 'tests', 'playback-source-fallback-transaction.test.js');
@@ -3325,7 +3422,12 @@ function checkSonicTopographyPresetGuard() {
   if (!/var sonicLyricPreset/.test(stageLyricsText) || !/sonicLyricPreset && !fx\.lyricCameraLock && !wallpaperLyricLock/.test(stageLyricsText) || /sonicLyricCameraBasis/.test(stageLyricsText) || !/setStageLyricViewBasisFromCameraOrQuaternion\(lyricCoverWorldQuat\)/.test(stageLyricsText) || !/stageLyricTargetQuaternion\(lyricCoverWorldQuat,\s*layoutTiltX,\s*layoutTiltY\)/.test(stageLyricsText)) {
     fail('Sonic Topography lyrics must stay bound to the rotatable star-river visual basis instead of the camera');
   }
-  if (!/backgroundStarRiver/.test(combinedFxState) || !/id="t-backgroundStarRiver"/.test(indexText) || !/backgroundStarRiverParticles/.test(pointerText) || !/function updateBackgroundStarRiverState/.test(pointerText) || !/fx\.backgroundStarRiver === false/.test(pointerText + fxBindText) || !/presetUsesStarRiverParticles[\s\S]{0,120}SONIC_PRESET_INDEX/.test(mainLoopText) || !/presetStarRiverMuted/.test(mainLoopText) || !/SONIC_PRESET_INDEX[\s\S]{0,100}return 0/.test(pointerText) || /lyricStarRiver/.test(combinedFxState + indexText + fxBindText + pointerText + starRiverText) || !/backgroundGlassOpacity'[\s\S]{0,100}'backgroundStarRiver'/.test(archiveText)) {
+  // The star-river/preset coupling moved from the inline main-loop expressions into the
+  // takeover mask. Its substance must still hold, so this guard now reads both files
+  // instead of pinning one location (widened, not weakened: the patterns are still required).
+  const takeoverMaskText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '16-visual-takeover.js'), 'utf8');
+  const starRiverOwnerText = mainLoopText + takeoverMaskText;
+  if (!/backgroundStarRiver/.test(combinedFxState) || !/id="t-backgroundStarRiver"/.test(indexText) || !/backgroundStarRiverParticles/.test(pointerText) || !/function updateBackgroundStarRiverState/.test(pointerText) || !/fx\.backgroundStarRiver === false/.test(pointerText + fxBindText) || !/presetUsesStarRiverParticles[\s\S]{0,160}SONIC_PRESET_INDEX/.test(starRiverOwnerText) || !/backgroundStarRiver === false/.test(starRiverOwnerText) || !/SONIC_PRESET_INDEX[\s\S]{0,100}return 0/.test(pointerText) || /lyricStarRiver/.test(combinedFxState + indexText + fxBindText + pointerText + starRiverText) || !/backgroundGlassOpacity'[\s\S]{0,100}'backgroundStarRiver'/.test(archiveText)) {
     fail('background star river must be a persisted global preset-background switch instead of a lyric effect');
   }
   if (!/visualRotation:\s*particles && particles\.rotation/.test(mainLoopText) || !/visualRotationActive:\s*!!\(orbit && orbit\.rotating\)/.test(mainLoopText)) {
@@ -5631,6 +5733,9 @@ async function main() {
   runPlaybackSingleRepeatLoopRegressionCheck();
   runLocalMusicLibraryRegressionCheck();
   runBuiltInPlaylistRegressionCheck();
+  runPvArchiveRegressionCheck();
+  runPvLyricFormatCheck();
+  runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();
   runWallpaperEngineWin10YellowBorderRegressionCheck();

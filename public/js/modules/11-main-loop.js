@@ -582,6 +582,7 @@ function animate() {
   uniforms.uEnergy.value = audioEnergy;
   uniforms.uMouseXY.value.set(mouseWorld.x, mouseWorld.y);
   uniforms.uMouseActive.value = mouseActive ? 1 : 0;
+  var takeoverMask = computeVisualTakeoverMask(fx);
   var sonicPresetActiveEarly = window.MineradioSonicTopography && MineradioSonicTopography.isActive(fx);
   var sonicWorkshopActiveEarly = window.MineradioSonicWorkshop && MineradioSonicWorkshop.isActive(fx);
   var skullBackdropDim = fx && fx.preset === SKULL_PRESET_INDEX ? 0.58 : (sonicPresetActiveEarly || sonicWorkshopActiveEarly ? 0.82 : 1);
@@ -605,7 +606,7 @@ function animate() {
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.shelf-manager', shelfPerfStart);
   var lyricsParticlePerfStart = performance.now();
   var lyricsParticleStepDt = consumeFrameGate(mainFrameGates.lyricsParticles, now, dt, targetMainLyricsParticleFps(now), false, 'lyrics-particles');
-  if (lyricsParticleStepDt > 0) tickLyricsParticles();
+  if (lyricsParticleStepDt > 0 && !takeoverMask.suppress.lyricsParticles) tickLyricsParticles();
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.lyrics-particles', lyricsParticlePerfStart);
   var homeAudioPerfStart = performance.now();
   var homeAudioStepDt = consumeFrameGate(mainFrameGates.homeAudio, now, dt, targetMainHomeAudioFps(now), false, 'home-audio');
@@ -622,14 +623,9 @@ function animate() {
 
   // v7.2 旋转 = 头部+眼球追踪 + 鼠标/手势拖动 + 惯性
   tickGestureRotation(dt);
-  var skullPresetActive = fx && fx.preset === SKULL_PRESET_INDEX;
-  var workshopPresetActive = window.MineradioSonicWorkshop && MineradioSonicWorkshop.isActive(fx);
-  var presetUsesStarRiverParticles = fx && (Number(fx.preset) === 5 || (typeof SONIC_PRESET_INDEX !== 'undefined' && Number(fx.preset) === SONIC_PRESET_INDEX));
-  var presetStarRiverMuted = presetUsesStarRiverParticles && fx.backgroundStarRiver === false;
-  particles.visible = !skullPresetActive && !workshopPresetActive && !presetStarRiverMuted;
-  if (bloomParticles) bloomParticles.visible = !skullPresetActive && !workshopPresetActive && !presetStarRiverMuted && fx.bloom && fx.bloomStrength > 0.01;
-  if (floatGroup) floatGroup.visible = !skullPresetActive && !workshopPresetActive;
-  if (backCoverGroup) backCoverGroup.visible = !skullPresetActive && !workshopPresetActive;
+  var skullPresetActive = takeoverMask.skull;
+  var workshopPresetActive = takeoverMask.workshop;
+  applyVisualTakeover(takeoverMask);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;
@@ -674,7 +670,7 @@ function animate() {
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.sonic-workshop', sonicWorkshopPerfStart);
   var stageLyricsPerfStart = performance.now();
   var stageLyricsStepDt = consumeFrameGate(mainFrameGates.stageLyrics, now, dt, targetMainStageLyricsFps(now), false, 'stage-lyrics');
-  if (stageLyricsStepDt > 0) updateStageLyrics3D(stageLyricsStepDt);
+  if (stageLyricsStepDt > 0 && !takeoverMask.suppress.stageLyrics) updateStageLyrics3D(stageLyricsStepDt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.stage-lyrics', stageLyricsPerfStart);
   var desktopOverlayPerfStart = performance.now();
   var desktopOverlayStepDt = consumeFrameGate(mainFrameGates.desktopOverlay, now, dt, targetMainDesktopOverlayFps(now), false, 'desktop-overlay');
@@ -701,4 +697,20 @@ function animate() {
   }
   if (perfProbe && perfProbe.mark) perfProbe.mark('frame.total', frameCostMs);
 }
+
+// Scene-side application of the takeover mask. It runs from the frame loop, and also
+// immediately whenever a takeover owner registers or releases: the loop parks itself while
+// nothing is playing, so a frame-only assignment would keep the previous layer on screen
+// right at the moment an owner takes over.
+function applyVisualTakeover(mask) {
+  if (!mask || !mask.suppress) return;
+  if (particles) particles.visible = !mask.suppress.particles;
+  if (bloomParticles) bloomParticles.visible = !mask.suppress.bloom && fx.bloom && fx.bloomStrength > 0.01;
+  if (floatGroup) floatGroup.visible = !mask.suppress.float;
+  if (backCoverGroup) backCoverGroup.visible = !mask.suppress.backCover;
+  if (stageLyrics.group) stageLyrics.group.visible = !mask.suppress.stageLyrics;
+}
+
+if (typeof setVisualTakeoverApplier === 'function') setVisualTakeoverApplier(applyVisualTakeover);
+
 requestMainLoopAnimationFrame();
