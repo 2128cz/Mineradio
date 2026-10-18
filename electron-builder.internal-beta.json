@@ -31,6 +31,7 @@
     "public/**/*",
     "build/**/*",
     "cuefield/**/*",
+    "vendor/jizura/**/*",
     "server.js",
     "*-api.js",
     "qishui-audio-decryptor/**/*",

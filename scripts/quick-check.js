@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const appRoot = path.resolve(__dirname, '..');
@@ -151,6 +152,85 @@ function runPvLyricFormatCheck() {
   }
   console.log('[OK] PV lyric format is deterministic and its stamp oracle is intact.');
   process.stdout.write(result.stdout || '');
+}
+
+function runJizuraVendorCheck() {
+  logStep('Vendored JIZURA engine integrity (single-file, licence, packaging)');
+  const vendorDir = path.join(appRoot, 'vendor', 'jizura');
+  const bundlePath = path.join(vendorDir, 'jizura-engine.js');
+  const manifestPath = path.join(vendorDir, 'engine-manifest.json');
+  const licensePath = path.join(vendorDir, 'LICENSE.txt');
+  for (const p of [bundlePath, manifestPath, licensePath]) {
+    if (!fs.existsSync(p)) fail(`vendored engine is incomplete, missing ${rel(p)} (regenerate: node scripts/vendor-jizura-engine.js)`);
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const bundle = fs.readFileSync(bundlePath);
+  const sha1 = (buf) => crypto.createHash('sha1').update(buf).digest('hex');
+  // The pin is the point: an edit inside vendor/ (a stray debug line, a partial refresh) must
+  // fail here rather than ship as "the engine we measured".
+  if (sha1(bundle) !== manifest.bundleSha1 || bundle.length !== manifest.bundleBytes) {
+    fail(`vendored engine does not match its manifest: file sha1=${sha1(bundle)} ${bundle.length}B, manifest ${manifest.bundleSha1} ${manifest.bundleBytes}B`);
+  }
+  if (!Array.isArray(manifest.files) || manifest.files.length !== manifest.keptFileCount || manifest.keptFileCount + manifest.excluded.length !== manifest.sourceFileCount) {
+    fail('vendored engine manifest is internally inconsistent (kept + excluded must equal the upstream file count)');
+  }
+  // The pin is only reusable if the generator still runs; scripts/ is not in jsCheckFiles().
+  const generator = path.join(appRoot, 'scripts', 'vendor-jizura-engine.js');
+  const generatorCheck = spawnSync(process.execPath, ['--check', generator], { cwd: appRoot, encoding: 'utf8' });
+  if (generatorCheck.status !== 0) {
+    fail(`the vendoring generator no longer parses, so the hash above cannot be reproduced: ${generatorCheck.stderr || ''}`);
+  }
+  // MIT requires the notice and the licence text to travel with the copy; Mineradio ships an
+  // installer, so "it is in a file somewhere in the repo" is not enough.
+  const license = fs.readFileSync(licensePath);
+  if (sha1(license) !== manifest.licenseSha1) {
+    fail('vendored LICENSE.txt does not match the manifest (the upstream MIT text must ship verbatim)');
+  }
+  const bundleText = bundle.toString('utf8');
+  if (!/MIT License/.test(license.toString('utf8')) || !/Copyright \(c\) 2026 hakoniwa/.test(license.toString('utf8'))) {
+    fail('vendored LICENSE.txt is not the upstream MIT licence with its copyright line');
+  }
+  // Exclusion has to be real, not just declared in the manifest.
+  const excludedMarker = 'JIZURA — editor UI';
+  if (bundleText.indexOf(excludedMarker) >= 0) {
+    fail('vendored engine contains the editor UI module that the manifest says was excluded');
+  }
+  const moduleFacts = ['J.planForAE', 'J.AE_MAP', 'J.saveFontData', 'J.loadFontData', 'J.Renderer'];
+  for (const fact of moduleFacts) {
+    if (bundleText.indexOf(fact) < 0) {
+      fail(`vendored engine lost ${fact}; the closure test in PLAN_JIZURA_PV.md §3.5 says that module cannot be dropped`);
+    }
+  }
+  // We deliberately do not bundle mp4-muxer, so the export entry points must never be called.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    return entry.isDirectory() ? walk(full) : [full];
+  });
+  const engineCallPaths = ['public/js', 'scripts']
+    .flatMap((entry) => walk(path.join(appRoot, entry)))
+    .concat([path.join(appRoot, 'server.js'), path.join(appRoot, 'pv-archive.js')])
+    .filter((file) => /\.js$/.test(file));
+  // Match a call, not a mention: a comment or a doc line naming J.exportMP4 is legitimate
+  // (this file's own messages do), so requiring the open paren keeps the guard from failing
+  // on prose. A commented-out call still trips it, which is the safe direction.
+  const callers = engineCallPaths.filter((file) => /J\.export(?:MP4|PNGZip|Span)\s*\(/.test(fs.readFileSync(file, 'utf8')));
+  if (callers.length) {
+    fail(`mp4-muxer is not vendored, so JIZURA's export entry points must not be called: ${callers.map(rel).join(', ')}`);
+  }
+  // The engine is an IIFE bundle for the PV route, not a Mineradio renderer module: listing it
+  // in the loader would concatenate 2.1MB into every page load for no benefit.
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  if (/vendor\/jizura/.test(loaderText)) {
+    fail('index-loader.js registers the vendored engine; it is not a renderer module (see PLAN_JIZURA_PV.md §3.5)');
+  }
+  const releasePkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
+  const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
+  const releaseFiles = (releasePkg.build && releasePkg.build.files) || [];
+  const betaFiles = betaPkg.files || [];
+  if (!releaseFiles.includes('vendor/jizura/**/*') || !betaFiles.includes('vendor/jizura/**/*')) {
+    fail(`vendor/jizura/**/* must be listed in both packaging file manifests; release=${releaseFiles.includes('vendor/jizura/**/*')} beta=${betaFiles.includes('vendor/jizura/**/*')}`);
+  }
+  console.log(`[OK] vendored engine pinned: ${manifest.keptFileCount} files -> ${manifest.bundleBytes}B sha1=${manifest.bundleSha1.slice(0, 12)} (${manifest.upstreamVersion || 'version?'} @ ${String(manifest.upstreamRevision || '').slice(0, 12)})`);
 }
 
 function runVisualTakeoverMaskCheck() {
@@ -5735,6 +5815,7 @@ async function main() {
   runBuiltInPlaylistRegressionCheck();
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
+  runJizuraVendorCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();
