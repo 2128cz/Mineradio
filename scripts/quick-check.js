@@ -378,6 +378,46 @@ function runPvPipelineCheck() {
 
 // The renderer half of the PV pipeline: the prefetch that rides the existing queue lyric fetch
 // (probe tmp/cdp-pv-prefetch-check.js).
+function runWindowVisibilityTraceCheck() {
+  logStep('Window visibility trace (hide/minimize/restore recorded, collector reads them)');
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  const report = path.join(appRoot, 'scripts', 'collect-window-report.ps1');
+  if (!fs.existsSync(report)) fail('scripts/collect-window-report.ps1 is missing; the events have no reader');
+  const reportText = fs.readFileSync(report, 'utf8');
+
+  // "The player hid itself" is only answerable if every way the window can leave the
+  // screen writes a named event. A minimize already did; the hide/restore pair did not,
+  // so an instance sitting invisible in the tray left no trace on disk.
+  const hidden = mainText.match(/writeStartupState\('window-hidden',\s*\{([\s\S]*?)\}\);/);
+  if (!hidden) fail('the hide handler must record window-hidden: an external SW_HIDE is invisible otherwise');
+  ['intentionalHide', 'expectedVisible', 'expectedVisibleReason', 'desktopModeTransitionDepth', 'minimized', 'memUsedPercent']
+    .forEach((field) => {
+      if (!hidden || !hidden[1].includes(field)) {
+        fail(`window-hidden must carry ${field}, otherwise the hide cannot be attributed`);
+      }
+    });
+  if (!/writeStartupState\('window-restored'/.test(mainText)) {
+    fail('the restore handler must record window-restored, so a minimize event can be paired with its undo');
+  }
+  if (!/writeStartupState\('window-visibility-recovered'/.test(mainText)) {
+    fail('restoreHiddenMainWindow must record window-visibility-recovered: the watchdog acting is a finding, not noise');
+  }
+  const minimized = mainText.match(/writeStartupState\('window-minimized',\s*\{([\s\S]*?)\}\);/);
+  if (!minimized) fail('the minimize handler must keep recording window-minimized');
+  ['windowMinimizeReason', 'windowMinimizeIntentional', 'memUsedPercent'].forEach((field) => {
+    if (!minimized || !minimized[1].includes(field)) {
+      fail(`window-minimized must carry ${field}`);
+    }
+  });
+
+  // The reader has to identify the tree it judged, or a report from an older build reads
+  // as if it described the current one.
+  ['startup-state.json', '$state.events', 'productVersion', 'IsIconic', 'Get-WinEvent'].forEach((needle) => {
+    if (!reportText.includes(needle)) fail(`collect-window-report.ps1 no longer contains ${needle}`);
+  });
+  if (!/Write-Output \('REPORT='/.test(reportText)) fail('the collector must print where its report landed');
+}
+
 function runPvPrefetchCheck() {
   logStep('PV archive prefetch (renderer hook, switch, live probe)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '08-pv-prefetch.js');
@@ -6117,6 +6157,7 @@ async function main() {
   runPvPipelineCheck();
   runPvPrefetchCheck();
   runPvPresetCheck();
+  runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();

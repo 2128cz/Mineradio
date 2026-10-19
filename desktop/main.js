@@ -5340,6 +5340,11 @@ function shouldRestoreUnexpectedFullscreenVisibility(win) {
 
 function restoreHiddenMainWindow(win, reason, scope) {
   console.warn(`[WindowRecovery] restoring unexpectedly hidden ${scope} window:`, reason);
+  writeStartupState('window-visibility-recovered', {
+    visibilityRecoveryAt: Date.now(),
+    visibilityRecoveryReason: String(reason || ''),
+    visibilityRecoveryScope: String(scope || ''),
+  });
   markMainWindowExpectedVisible(win, true, `visibility-recovered-${reason}`);
   win.__mineradioIntentionalHide = false;
   ensureMainWindowInsideDisplay(win);
@@ -5709,10 +5714,14 @@ async function createWindowOnce() {
   win.on('unmaximize', () => sendWindowState(win));
   win.on('minimize', () => {
     const minimizeIntent = consumeMainWindowMinimizeIntent(win);
+    const mem = systemMemory.getMemorySnapshot();
     writeStartupState('window-minimized', {
       windowMinimizedAt: Date.now(),
       windowMinimizeIntentional: minimizeIntent.intentional,
       windowMinimizeReason: minimizeIntent.reason || 'unexpected',
+      memUsedPercent: mem.usedPercent,
+      memFreeMB: mem.freeMB,
+      appRssMB: mem.process.rssMB,
     });
     sendWindowState(win);
     if (fullDesktopModeHostVisibilityTransitionDepth <= 0) suspendWallpaperEngineForHiddenHost(win, 'minimize');
@@ -5732,17 +5741,33 @@ async function createWindowOnce() {
     clearMainWindowMinimizeIntent(win);
     win.__mineradioIntentionalHide = false;
     markMainWindowExpectedVisible(win, true, 'restore');
+    writeStartupState('window-restored', { windowRestoredAt: Date.now() });
     sendWindowState(win);
     if (fullDesktopModeHostVisibilityTransitionDepth <= 0) resumeWallpaperEngineForVisibleHost(win, 'restore');
   });
   win.on('show', () => {
     win.__mineradioIntentionalHide = false;
     markMainWindowExpectedVisible(win, true, 'show');
+    writeStartupState('window-shown', { windowShownAt: Date.now() });
     if (fullDesktopModeHostVisibilityTransitionDepth > 0) return;
     sendWindowState(win);
     resumeWallpaperEngineForVisibleHost(win, 'show');
   });
   win.on('hide', () => {
+    const mem = systemMemory.getMemorySnapshot();
+    // Without this the app leaving the screen leaves no trace on disk, so
+    // "it hid itself" cannot be told apart from "someone told it to hide".
+    writeStartupState('window-hidden', {
+      windowHiddenAt: Date.now(),
+      intentionalHide: win.__mineradioIntentionalHide === true,
+      expectedVisible: win.__mineradioExpectedVisible !== false,
+      expectedVisibleReason: String(win.__mineradioExpectedVisibleReason || ''),
+      desktopModeTransitionDepth: fullDesktopModeHostVisibilityTransitionDepth,
+      minimized: win.isMinimized(),
+      memUsedPercent: mem.usedPercent,
+      memFreeMB: mem.freeMB,
+      appRssMB: mem.process.rssMB,
+    });
     if (fullDesktopModeHostVisibilityTransitionDepth > 0) return;
     sendWindowState(win);
     suspendWallpaperEngineForHiddenHost(win, 'hide');
