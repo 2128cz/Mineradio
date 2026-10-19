@@ -129,6 +129,78 @@ function pvRecipeForSong(song, lang) {
   };
 }
 
+// The plan request is shared by the render layer (needs one now) and the prefetch (wants one
+// later), so the payload shape lives in exactly one place.
+function pvBuildPlanRequest(song, lines, translationLines, timingSource) {
+  if (typeof formatLyricsForPv !== 'function' || typeof pvLyricHash !== 'function') return null;
+  var songKey = pvSongKeyFor(song);
+  if (!songKey || !Array.isArray(lines) || !lines.length) return null;
+  var recipe = pvRecipeForSong(song, pvLangForLines(lines));
+  var lyrics = formatLyricsForPv(lines, { title: recipe.title, artist: recipe.artist });
+  return {
+    songKey: songKey,
+    body: {
+      song: {
+        key: songKey,
+        provider: String((song && (song.provider || song.source)) || ''),
+        title: recipe.title,
+        artist: recipe.artist,
+        duration: Number(song && song.duration) || 0,
+      },
+      lyricHash: pvLyricHash(lyrics),
+      hasTranslation: !!(translationLines && translationLines.length),
+      timingSource: timingSource || 'lrc-line',
+      lyricOffsetMs: 0,   // the per-song offset is applied when drawing, never baked into the plan
+      payload: Object.assign({ lyrics: lyrics }, recipe),
+    },
+  };
+}
+
+// The single place that talks to /api/pv/plan, and the single place that interprets a refusal:
+// a cache problem arrives either as stored:false or as a route-level failure naming PV_CACHE_*,
+// and both mean the next song would pay for a plan that gets thrown away for the same reason.
+function pvPostPlan(request) {
+  if (!request || typeof apiJson !== 'function') return Promise.resolve({ ok: false, reason: 'formatter-missing' });
+  return apiJson('/api/pv/plan', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request.body),
+    timeoutMs: 30000,
+  }).then(function (res) {
+    if (res && res.ok) {
+      if (res.stored === false) {
+        pvPrefetchStats.notStored++;
+        pvPrefetchNoteStoreRefusal(res.storeReason);
+      }
+      return {
+        ok: true,
+        hit: !!res.hit,
+        stored: res.stored !== false,
+        key: res.key,
+        cuts: res.cuts,
+        lyricFingerprint: res.lyricFingerprint,
+        storeReason: res.storeReason || '',
+      };
+    }
+    var reason = (res && res.reason) || 'route-refused';
+    if (/^PV_CACHE_/.test(reason)) {
+      pvPrefetchStats.notStored++;
+      pvPrefetchNoteStoreRefusal(reason);
+    }
+    return { ok: false, stored: false, reason: reason };
+  }).catch(function (err) {
+    return { ok: false, reason: String((err && err.message) || err) };
+  });
+}
+
+// The render layer's entry: same request, but no prefetch switch and no per-song dedupe - this
+// is the song being watched right now, so it needs the archive immediately.
+function pvEnsurePlanNow(song, lines, translationLines) {
+  var request = pvBuildPlanRequest(song, lines, translationLines, 'lrc-line');
+  if (!request) return Promise.resolve({ ok: false, reason: 'no-plan-payload' });
+  return pvPostPlan(request);
+}
+
 // Called from the queue lyric prefetch with the parsed lyric state. Never throws: a PV is an
 // extra, and a failure here must not disturb lyric loading or playback.
 function pvPrefetchFromLyricState(song, state) {
@@ -171,64 +243,28 @@ function pvPrefetchFromLyricState(song, state) {
       pvPrefetchStats.lastReason = 'cache-unwritable:' + (pvPrefetchCacheBlockedReason || 'unknown');
       return Promise.resolve({ ok: false, reason: 'cache-unwritable', storeReason: pvPrefetchCacheBlockedReason });
     }
-    if (typeof formatLyricsForPv !== 'function' || typeof pvLyricHash !== 'function' || typeof apiJson !== 'function') {
+    var request = pvBuildPlanRequest(song, state.lines, state.translationLines, state.timingSource);
+    if (!request) {
       pvPrefetchStats.failed++;
       pvPrefetchStats.lastReason = 'formatter-missing';
       return Promise.resolve({ ok: false, reason: 'formatter-missing' });
     }
-    var recipe = pvRecipeForSong(song, pvLangForLines(state.lines));
-    var lyrics = formatLyricsForPv(state.lines, { title: recipe.title, artist: recipe.artist });
-    var body = {
-      song: {
-        key: songKey,
-        provider: String((song && (song.provider || song.source)) || ''),
-        title: recipe.title,
-        artist: recipe.artist,
-        duration: Number(song && song.duration) || 0,
-      },
-      lyricHash: pvLyricHash(lyrics),
-      hasTranslation: !!(state.translationLines && state.translationLines.length),
-      timingSource: state.timingSource || 'lrc',
-      lyricOffsetMs: 0,   // the per-song offset is applied when drawing, never baked into the plan
-      payload: Object.assign({ lyrics: lyrics }, recipe),
-    };
     pvPrefetchAttempted[songKey] = true;
     pvPrefetchAttemptCount++;
     pvPrefetchInFlight = true;
     pvPrefetchStats.lastSongKey = songKey;
     pvPrefetchStats.lastAt = Date.now();
-    return apiJson('/api/pv/plan', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      timeoutMs: 30000,
-    }).then(function (res) {
+    return pvPostPlan(request).then(function (res) {
       pvPrefetchInFlight = false;
-      if (res && res.ok) {
+      if (res.ok) {
         if (res.hit) pvPrefetchStats.hits++;
         else pvPrefetchStats.planned++;
-        if (res.stored === false) {
-          pvPrefetchStats.notStored++;
-          pvPrefetchNoteStoreRefusal(res.storeReason);
-        }
         pvPrefetchStats.lastReason = res.stored === false ? ('not-stored:' + (res.storeReason || '')) : (res.hit ? 'hit' : 'planned');
-        return { ok: true, stored: res.stored !== false, hit: !!res.hit, key: res.key, cuts: res.cuts, lyricFingerprint: res.lyricFingerprint };
+        return res;
       }
       pvPrefetchStats.failed++;
-      pvPrefetchStats.lastReason = (res && res.reason) || 'route-refused';
-      // A cache refusal arrives as a route-level failure (the store's guard throws), not as
-      // stored:false, so recognise it here too or every later song pays a plan that gets thrown
-      // away for the same reason.
-      if (/^PV_CACHE_/.test(pvPrefetchStats.lastReason)) {
-        pvPrefetchStats.notStored++;
-        pvPrefetchNoteStoreRefusal(pvPrefetchStats.lastReason);
-      }
-      return { ok: false, stored: false, reason: pvPrefetchStats.lastReason };
-    }).catch(function (err) {
-      pvPrefetchInFlight = false;
-      pvPrefetchStats.failed++;
-      pvPrefetchStats.lastReason = String((err && err.message) || err);
-      return { ok: false, reason: pvPrefetchStats.lastReason };
+      pvPrefetchStats.lastReason = res.reason || 'route-refused';
+      return res;
     });
   } catch (error) {
     pvPrefetchInFlight = false;

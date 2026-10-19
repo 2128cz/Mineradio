@@ -18574,3 +18574,24 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
     width: calc(100vw - var(--desktop-safe-left) - var(--desktop-safe-right) - 24px);
   }
 }
+
+/* PV (preset 13): background DOM layer holding the JIZURA frame for the current song.
+   Same stacking as #album-bg (fixed, z-index 0) and later in DOM order, so it covers the
+   background stack while the WebGL canvas stays on top. Inert unless the preset is active:
+   the class is the only thing that makes it visible, and releasing zeroes the canvas. */
+#pv-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  transition: opacity 320ms ease;
+  pointer-events: none
+}
+#pv-layer.active { opacity: 1 }
+#pv-layer canvas {
+  display: block;
+  width: 100%;
+  height: 100%
+}

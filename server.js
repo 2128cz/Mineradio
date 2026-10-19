@@ -7074,6 +7074,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pn === '/pv-engine.js') {
+    // The PV engine ships as one vendored file outside public/ on purpose: index-loader must not
+    // concatenate 2.1MB into every page load. The renderer fetches it only when preset 13 is
+    // selected, and quick-check pins the hash of the file this route serves.
+    serveStatic(res, path.join(__dirname, 'vendor', 'jizura', 'jizura-engine.js'));
+    return;
+  }
+
   let filePath = pn === '/' ? '/index.html' : pn;
   filePath = path.join(__dirname, 'public', filePath);
   serveStatic(res, filePath);

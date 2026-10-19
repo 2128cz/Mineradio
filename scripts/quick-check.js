@@ -257,20 +257,26 @@ function runPvPlannerCheck() {
   const syntax = spawnSync(process.execPath, ['--check', plannerPath], { cwd: appRoot, encoding: 'utf8' });
   if (syntax.status !== 0) fail(`pv-planner.js does not parse: ${syntax.stderr || ''}`);
 
-  // The engine must be reachable exactly one way: through this module, from the vendored file
-  // whose hash the gate pins. A second reader is how a renderer copy reappears later. Comments
-  // are stripped first: prose that names the file (this arm's own messages do) is not a reader.
+  // Two readers are expected and no more: pv-planner.js plans with it, and server.js serves it to
+  // the renderer at /pv-engine.js (preset 13 loads it on demand instead of concatenating 2.1MB
+  // into every page load). A third reader is how a stale copy reappears.
   const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
-    .filter((file) => /\.js$/.test(file) && /jizura-engine\.js/.test(stripComments(fs.readFileSync(file, 'utf8'))));
+  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'pv-planner.js'), path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
+    .filter((file) => /\.js$/.test(file) && /jizura-engine\.js/.test(stripComments(fs.readFileSync(file, 'utf8'))))
+    .map((file) => path.basename(file))
+    .sort();
+  if (readers.join(',') !== 'pv-planner.js,server.js') {
+    fail(`the vendored engine must be read by exactly pv-planner.js and server.js (the /pv-engine.js route); readers: ${readers.join(', ') || '(none)'}`);
+  }
+  const servedEngine = /pn === '\/pv-engine\.js'[\s\S]{0,400}?vendor', 'jizura', 'jizura-engine\.js'/.test(stripComments(fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8')));
+  if (!servedEngine) {
+    fail('server.js must serve the vendored engine at /pv-engine.js (referencing the pinned file, not a copy)');
+  }
   if (!/ENGINE_RELATIVE_PATH = path\.join\('vendor', 'jizura', 'jizura-engine\.js'\)/.test(plannerText)) {
     fail('pv-planner.js no longer resolves the vendored engine path; the pin check below would be meaningless');
   }
   if (!/PV_ENGINE_PIN_MISMATCH/.test(plannerText)) {
     fail('pv-planner.js must refuse to plan with an engine whose hash differs from the manifest pin');
-  }
-  if (readers.length) {
-    fail(`only pv-planner.js may read the vendored engine; also read by: ${readers.map(rel).join(', ')}`);
   }
   // Window posture: hidden, isolated, and certainly not loading with webSecurity off (that was
   // only ever needed by the spike, which pulls 39 separate files over file:// XHR).
@@ -433,6 +439,94 @@ function runPvPrefetchCheck() {
   if (run.status !== 0) {
     process.stderr.write(run.stderr || '');
     fail(`PV prefetch probe failed (rc=${run.status}); expected PV-PREFETCH-PROBE ALL PASS`);
+  }
+}
+
+// Preset 13 wiring (docs/PLAN_JIZURA_PV.md section 8.1). The live half needs a renderer with a
+// devtools port; the static half is what guards the source.
+function runPvPresetCheck() {
+  logStep('PV preset (layer, engine on demand, takeover, release)');
+  const presetDir = path.join(appRoot, 'public', 'js', 'modules', '07-fx');
+  const archiveText = fs.readFileSync(path.join(presetDir, '00-preset-archive-data.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(presetDir, '04-preset-grid-uniforms.js'), 'utf8');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js');
+  const coreText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '00-state', '00-core-stores.js'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const cssText = fs.readFileSync(path.join(appRoot, 'public', 'css', 'index.css'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  if (!fs.existsSync(modulePath)) fail('02-visual/17-pv-preset.js is missing; preset 13 would be an empty card');
+
+  // Count inside each array, not across the file: the same file also holds lyricColorPresets and
+  // other { name: '...' } lists, and counting those made a 14-preset sanity check read 32.
+  const metaSlice = archiveText.slice(archiveText.indexOf('var presetMeta'), archiveText.indexOf('var presetIcons'));
+  const metaCount = (metaSlice.match(/\{ name: '/g) || []).length;
+  const iconCount = (archiveText.slice(archiveText.indexOf('var presetIcons'), archiveText.indexOf('var presetDisplayOrder')).match(/<\/svg>/g) || []).length;
+  const displayIds = (archiveText.match(/var presetDisplayOrder = \[([^\]]*)\]/) || [])[1] || '';
+  const idCount = displayIds.split(',').filter((s) => s.trim()).length;
+  const ceiling = Number((coreText.match(/MAX_VISUAL_PRESET_INDEX = (\d+)/) || [])[1]);
+  // Cards are built from presetMeta and index presetIcons by the same number, so a preset added
+  // to one list and not the other renders as a card with no icon (or silently disappears).
+  if (!(metaCount === iconCount && metaCount === idCount && ceiling === metaCount - 1)) {
+    fail(`preset lists disagree: meta=${metaCount} icons=${iconCount} displayOrder=${idCount} MAX_VISUAL_PRESET_INDEX=${ceiling} (expected meta == icons == displayOrder == MAX+1)`);
+  }
+  if (!/歌词PV/.test(archiveText) || !/LAYOUT|LYRIC PV/.test(archiveText)) {
+    fail('the PV preset must be a labelled, selectable card');
+  }
+  if (!/id="pv-layer"/.test(htmlText) || !/id="pv-canvas"/.test(htmlText) || !/#pv-layer\s*\{/.test(cssText)) {
+    fail('the PV layer and its canvas must exist in index.html with styles (and sit before #canvas-container)');
+  }
+  if (htmlText.indexOf('id="pv-layer"') > htmlText.indexOf('id="canvas-container"')) {
+    fail('the PV layer must come before the WebGL canvas container so it covers the background stack');
+  }
+  if (!/updatePvLayer\(now, dt\)/.test(loopText) || !/pv: createFrameGate\('main\.pv', 12\)/.test(loopText)) {
+    fail('the main loop must drive the PV layer through its own koma=12 frame gate');
+  }
+  if (!/applyPvPresetNow\(prev, p\)/.test(gridText)) {
+    fail('setPreset must apply the PV layer immediately: the loop parks when nothing plays');
+  }
+  const pvText = fs.readFileSync(modulePath, 'utf8');
+  for (const [pattern, why] of [
+    [/fetch\('\/pv-engine\.js'/, 'the renderer must load the engine from the pinned route, on demand'],
+    [/typeof J\.Renderer !== 'function' \|\| typeof J\.cutAt !== 'function'/, 'the loaded engine must be checked for the two entry points the layer needs'],
+    [/canvas\.width = 2;/, 'releasing must zero the canvas backing store, not just hide the layer'],
+    [/pvPresetState\.renderer = null;/, 'releasing must drop the renderer (its offscreen canvases are the expensive part)'],
+    [/id: 'pv-layer',/, 'the takeover owner must be registered so the scene layers yield to the PV'],
+    [/setPvPrefetchEnabled\(active\)/, 'the prefetch must follow the preset'],
+  ]) {
+    if (!pattern.test(pvText)) fail(why);
+  }
+  console.log(`[OK] PV preset wired: ${metaCount} presets, ceiling ${ceiling}, layer + takeover + release present.`);
+  runPvPresetLiveProbe(modulePath);
+}
+
+function runPvPresetLiveProbe(modulePath) {
+  const probe = path.join(appRoot, 'tmp', 'cdp-pv-preset-check.js');
+  if (!fs.existsSync(probe)) {
+    console.log('[SKIP] tmp/cdp-pv-preset-check.js is not in this checkout; the live half is not exercised.');
+    return;
+  }
+  const cdpPort = Number(process.env.MINERADIO_CDP_PORT) || 9223;
+  const reachable = spawnSync(process.execPath, ['-e',
+    `require('http').get({hostname:'127.0.0.1',port:${cdpPort},path:'/json/list',agent:false},(res)=>{res.resume();process.exit(res.statusCode===200?0:1)}).on('error',()=>process.exit(1))`,
+  ], { cwd: appRoot, encoding: 'utf8' });
+  if (reachable.status !== 0) {
+    console.log(`[SKIP] PV preset live probe -- no devtools endpoint on 127.0.0.1:${cdpPort} (start with scripts/dev-restart.ps1 -DebugPort ${cdpPort})`);
+    return;
+  }
+  const identityProbe = spawnSync(process.execPath, ['-e',
+    `require('http').get({hostname:'127.0.0.1',port:3000,path:'/api/pv/planner',agent:false},(res)=>{let t='';res.on('data',c=>{t+=c});res.on('end',()=>{try{process.stdout.write(String(JSON.parse(t).startedAt||''))}catch(e){process.stdout.write('')}})}).on('error',()=>process.stdout.write(''))`,
+  ], { cwd: appRoot, encoding: 'utf8' });
+  const startedAt = Date.parse(String(identityProbe.stdout || '').trim());
+  const moduleMtime = fs.statSync(modulePath).mtimeMs;
+  if (Number.isFinite(startedAt) && startedAt < moduleMtime) {
+    console.log(`[SKIP] PV preset live probe -- the running app started ${new Date(startedAt).toISOString()}, before 17-pv-preset.js was last written (${new Date(moduleMtime).toISOString()}); restart it`);
+    return;
+  }
+  const run = spawnSync(process.execPath, [probe, String(cdpPort)], { cwd: appRoot, encoding: 'utf8' });
+  process.stdout.write(run.stdout || '');
+  if (run.status !== 0) {
+    process.stderr.write(run.stderr || '');
+    fail(`PV preset probe failed (rc=${run.status}); expected PV-PRESET-PROBE ALL PASS`);
   }
 }
 
@@ -3728,10 +3822,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 12/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 13/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -6022,6 +6116,7 @@ async function main() {
   runPvPlannerCheck();
   runPvPipelineCheck();
   runPvPrefetchCheck();
+  runPvPresetCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();

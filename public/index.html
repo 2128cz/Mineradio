@@ -73,6 +73,12 @@
     </div>
     <div id="album-bg"></div>
     <div id="album-bg-next" aria-hidden="true"></div>
+    <!-- PV (preset 13): the JIZURA frame for the current song. Sits with the background stack,
+         after the wallpaper/album layers and before the WebGL canvas, so it needs no texture
+         upload. Inert unless the preset is active. -->
+    <div id="pv-layer" aria-hidden="true">
+      <canvas id="pv-canvas" aria-hidden="true"></canvas>
+    </div>
     <div id="canvas-container"></div>
     <canvas id="idle-guide-canvas" aria-hidden="true"></canvas>
 
