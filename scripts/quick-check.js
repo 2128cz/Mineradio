@@ -535,6 +535,26 @@ function runPvPresetCheck() {
   ]) {
     if (!pattern.test(pvText)) fail(why);
   }
+  // Geometry: the engine anchors a frame at (0,0) of whichever canvas it is handed, so the layer
+  // must contain-fit the design and centre it. A width-only scale (the first cut of this layer)
+  // pushed the lyric line off the bottom on wide viewports and left an unpainted band on tall ones.
+  if (!/Math\.min\(cssW \/ planW, cssH \/ planH\)/.test(pvText)) {
+    fail('the PV canvas must contain-fit the design in both axes, or a non-16:9 viewport clips the lyrics');
+  }
+  if (!/canvas\.style\.width = dispW \+ 'px'/.test(pvText)) {
+    fail('the PV canvas must carry its own CSS size so the layer can centre it');
+  }
+  const pvLayerRule = (cssText.match(/#pv-layer \{([\s\S]*?)\}/) || [])[1] || '';
+  if (!/align-items: *center/.test(pvLayerRule) || !/justify-content: *center/.test(pvLayerRule)) {
+    fail('#pv-layer must centre its canvas, otherwise the letterbox bars are not symmetric');
+  }
+  const pvCanvasRule = (cssText.match(/#pv-layer canvas \{([\s\S]*?)\}/) || [])[1] || '';
+  if (/width: *100%/.test(pvCanvasRule) || /height: *100%/.test(pvCanvasRule)) {
+    fail('#pv-layer canvas must not stretch to the layer - 17-pv-preset.js owns its size');
+  }
+  if (!/flex: *0 0 auto/.test(pvCanvasRule)) {
+    fail('#pv-layer canvas must not be a shrinkable flex item: shrinking squashes the frame against its own backing store');
+  }
   console.log(`[OK] PV preset wired: ${metaCount} presets, ceiling ${ceiling}, layer + takeover + release present.`);
   runPvPresetLiveProbe(modulePath);
 }

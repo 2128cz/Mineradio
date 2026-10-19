@@ -170,18 +170,33 @@ function pvDrawLayerFrame(canvas, now) {
   var renderer = pvPresetState.renderer;
   if (!plan || !renderer) return false;
   var t = pvPlayheadSeconds();
-  var cssW = canvas.clientWidth || 0;
-  var cssH = canvas.clientHeight || 0;
+  var layer = pvLayerElement();
+  var cssW = (layer && layer.clientWidth) || canvas.clientWidth || 0;
+  var cssH = (layer && layer.clientHeight) || canvas.clientHeight || 0;
+  if (cssW < 2 || cssH < 2) return false;
+  var planW = Math.max(1, plan.W || 1920);
+  var planH = Math.max(1, plan.H || 1080);
+  // Contain-fit in both axes, and let the canvas be exactly the fitted design rect: the engine
+  // anchors its frame at (0,0) of whatever canvas it is handed, so a full-viewport canvas with a
+  // width-only scale spills the lyric line off the bottom on wide screens and leaves a band the
+  // engine never paints on tall ones. Centring is the layer's job, so the leftovers are bars.
+  var fit = Math.min(cssW / planW, cssH / planH);
+  var dispW = Math.max(2, Math.round(planW * fit));
+  var dispH = Math.max(2, Math.round(planH * fit));
   var dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-  var w = Math.max(2, Math.round((cssW || 1280) * dpr));
-  var h = Math.max(2, Math.round((cssH || 720) * dpr));
-  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  var w = Math.max(2, Math.round(dispW * dpr));
+  var h = Math.max(2, Math.round(dispH * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = dispW + 'px';
+    canvas.style.height = dispH + 'px';
+  }
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
-  var scale = w / Math.max(1, plan.W || 1920);
   var started = performance.now();
   try {
-    renderer.frame(ctx, plan, t, { scale: scale });
+    renderer.frame(ctx, plan, t, { scale: w / planW });
   } catch (err) {
     // One bad frame must not wedge the layer: report, drop the renderer, and let the retry
     // window rebuild it rather than throwing every frame.
@@ -203,6 +218,8 @@ function pvReleasePvLayer() {
     // A canvas keeps its backing store while detached, so zeroing the size is the release.
     canvas.width = 2;
     canvas.height = 2;
+    canvas.style.width = '';
+    canvas.style.height = '';
     var ctx = canvas.getContext('2d');
     if (ctx) { try { ctx.clearRect(0, 0, 2, 2); } catch (_) {} }
   }
