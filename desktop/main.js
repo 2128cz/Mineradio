@@ -395,12 +395,15 @@ async function cacheSettingsSnapshot() {
   const activeNativePath = NATIVE_HELPER_TEMP_PATH;
   const wallpaperEnginePath = path.join(settings.nativePath, 'wallpaper-engine-muted-package-cache');
   const activeWallpaperEnginePath = path.join(activeNativePath, 'wallpaper-engine-muted-package-cache');
-  const [lyricsBytes, chromiumBytes, beatmapsBytes, wallpaperEngineBytes, userDataBytes] = await Promise.all([
+  const [lyricsBytes, chromiumBytes, beatmapsBytes, wallpaperEngineBytes, userDataBytes, pvsBytes] = await Promise.all([
     directoryUsageBytes(settings.lyricsPath),
     directoryUsageBytes(currentChromiumPath),
     directoryUsageBytes(activeBeatmapsPath),
     directoryUsageBytes(activeWallpaperEnginePath),
     directoryUsageBytes(app.getPath('userData')),
+    // PV archives are a managed cache too, so they belong in the same total the settings
+    // surface shows - otherwise "how much is this app using" silently under-reports.
+    directoryUsageBytes(process.env.MINERADIO_PV_CACHE_DIR || path.join(settings.rootPath, 'pvs')),
   ]);
   const chromiumRestartRequired = path.resolve(desiredChromiumPath) !== path.resolve(currentChromiumPath);
   const beatmapsRestartRequired = path.resolve(settings.beatmapsPath) !== path.resolve(activeBeatmapsPath);
@@ -427,7 +430,8 @@ async function cacheSettingsSnapshot() {
       beatmapsBytes,
       wallpaperEngineBytes,
       userDataBytes,
-      totalManagedBytes: lyricsBytes + chromiumBytes + beatmapsBytes + wallpaperEngineBytes,
+      pvsBytes,
+      totalManagedBytes: lyricsBytes + chromiumBytes + beatmapsBytes + wallpaperEngineBytes + pvsBytes,
     },
   };
 }
@@ -5018,6 +5022,10 @@ function configureLocalServerEnvironment(port) {
   process.env.HOST = '127.0.0.1';
   process.env.PORT = String(port);
   process.env.MINERADIO_BEAT_CACHE_DIR = cacheSettings.beatmapsPath;
+  // PV archives follow the same resolved cache root as lyrics and chromium (decision
+  // 2026-10-18, option A). The server judges the directory itself (writable + free space)
+  // instead of refusing anything on C, so the userData fallback is usable.
+  process.env.MINERADIO_PV_CACHE_DIR = path.join(cacheSettings.rootPath, 'pvs');
   process.env.CUEFIELD_FEEDBACK_FILE = path.join(STABLE_USER_DATA_PATH, 'cuefield-feedback.jsonl');
   process.env.COOKIE_FILE = path.join(STABLE_USER_DATA_PATH, '.cookie');
   process.env.QQ_COOKIE_FILE = path.join(STABLE_USER_DATA_PATH, '.qq-cookie');

@@ -785,19 +785,72 @@ function writeBeatMapCache(body) {
 const PV_CACHE_DIR = process.env.MINERADIO_PV_CACHE_DIR
   || path.join(path.dirname(path.resolve(BEATMAP_CACHE_DIR)), 'pvs');
 const PV_CACHE_BYTE_BUDGET = Number(process.env.MINERADIO_PV_CACHE_BUDGET_BYTES) || 200 * 1024 * 1024;
+const PV_CACHE_MIN_FREE_BYTES = Number(process.env.MINERADIO_PV_CACHE_MIN_FREE_BYTES) || 512 * 1024 * 1024;
+
+// PV follows the app's own cache settings (decision 2026-10-18, option A): its directory is
+// whatever root the app resolved, including the userData fallback that lands on C, because that
+// is already where lyrics (56KB) and chromium (51MB) are written. What replaces the old blanket
+// "never C" veto is a real writability check plus a free-space floor, so a full, removed or
+// sleeping drive is still refused - by a name that says which of those it was.
+// cacheRootInfoFor keeps its C veto for beatmaps; this is deliberately a separate rule.
 function pvCacheRootInfo() {
-  return cacheRootInfoFor(PV_CACHE_DIR);
+  const dir = path.resolve(String(PV_CACHE_DIR || ''));
+  const root = path.parse(dir).root;
+  const info = {
+    dir,
+    root,
+    drive: root ? root.replace(/[\\/]+$/, '').toUpperCase() : '',
+    writable: false,
+    freeBytes: null,
+    minFreeBytes: PV_CACHE_MIN_FREE_BYTES,
+    allowed: false,
+    available: false,
+    reason: '',
+    detail: '',
+  };
+  if (!root) {
+    info.reason = 'PV_CACHE_NO_ROOT';
+    return info;
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    info.writable = true;
+  } catch (err) {
+    info.reason = 'PV_CACHE_NOT_WRITABLE';
+    info.detail = String((err && err.message) || err);
+    return info;
+  }
+  try {
+    const stats = fs.statfsSync(root);
+    info.freeBytes = Number(stats.bavail) * Number(stats.bsize);
+  } catch (err) {
+    // Refuse rather than guess: an unreadable filesystem cannot promise the budget fits.
+    info.reason = 'PV_CACHE_FREE_SPACE_UNKNOWN';
+    info.detail = String((err && err.message) || err);
+    return info;
+  }
+  info.available = true;
+  info.allowed = info.freeBytes >= info.minFreeBytes;
+  if (!info.allowed) info.reason = 'PV_CACHE_FREE_SPACE_LOW';
+  return info;
 }
 function assertPvCacheRootWritable() {
   const info = pvCacheRootInfo();
-  if (!info.allowed) {
-    const err = new Error('PV_CACHE_ON_C_DRIVE_DISABLED');
+  if (!info.writable) {
+    const err = new Error(info.reason || 'PV_CACHE_NOT_WRITABLE');
     err.code = err.message;
     err.info = info;
     throw err;
   }
-  if (!info.available) {
-    const err = new Error('PV_CACHE_DRIVE_UNAVAILABLE');
+  if (info.freeBytes === null) {
+    const err = new Error(info.reason || 'PV_CACHE_FREE_SPACE_UNKNOWN');
+    err.code = err.message;
+    err.info = info;
+    throw err;
+  }
+  if (!info.allowed) {
+    const err = new Error('PV_CACHE_FREE_SPACE_LOW');
     err.code = err.message;
     err.info = info;
     throw err;
@@ -806,7 +859,7 @@ function assertPvCacheRootWritable() {
 }
 const pvArchive = createPvArchiveStore({
   resolveDir: () => PV_CACHE_DIR,
-  // The rule is shared with beatmaps (cacheRootInfoFor); only the judged path differs.
+  // PV judges its own path (writable + free space); beatmaps keep the shared C veto.
   assertWritableRoot: assertPvCacheRootWritable,
 });
 

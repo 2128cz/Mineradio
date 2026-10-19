@@ -118,8 +118,24 @@ function runPvArchiveRegressionCheck() {
   }
   // Regression guard for a real defect: reusing ensureBeatMapCacheDir made the beatmap
   // path's drive veto the PV directory (status reported dir G:\...\pvs but drive C:).
-  if (/assertWritableRoot:\s*ensureBeatMapCacheDir/.test(serverText) || !/cacheRootInfoFor\(PV_CACHE_DIR\)/.test(serverText)) {
-    fail('PV cache root must be judged against PV_CACHE_DIR via cacheRootInfoFor, not the beatmap guard');
+  // Since the 2026-10-18 decision (option A) PV judges its own path: writable plus a free-space
+  // floor, so the app's userData fallback on C is usable while a full or sleeping drive is still
+  // refused by name. It must not drift back to the shared C veto.
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  if (/assertWritableRoot:\s*ensureBeatMapCacheDir/.test(serverText) || !/assertWritableRoot:\s*assertPvCacheRootWritable/.test(serverText)) {
+    fail('PV cache root must be judged by its own assertPvCacheRootWritable, not the beatmap guard');
+  }
+  if (/function pvCacheRootInfo\(\)\s*\{\s*return cacheRootInfoFor\(/.test(serverText)) {
+    fail('PV cache root must not fall back to cacheRootInfoFor: its blanket "never C" veto is what disabled the cache in the userData fallback');
+  }
+  if (!/PV_CACHE_MIN_FREE_BYTES/.test(serverText) || !/freeBytes/.test(serverText) || !/statfsSync/.test(serverText)) {
+    fail('PV cache root must check writability and free space (statfsSync against PV_CACHE_MIN_FREE_BYTES)');
+  }
+  if (!/process\.env\.MINERADIO_PV_CACHE_DIR = path\.join\(cacheSettings\.rootPath, 'pvs'\)/.test(mainText)) {
+    fail('the app must point PV at the resolved cache root (main.js injects MINERADIO_PV_CACHE_DIR)');
+  }
+  if (!/pvsBytes/.test(mainText)) {
+    fail('PV archive bytes must appear in the cache-usage totals, or the settings surface under-reports');
   }
   process.stdout.write(result.stdout || '');
 }
