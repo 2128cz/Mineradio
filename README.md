@@ -75,7 +75,7 @@ Mineradio 2.2 修复音乐接口的登录与播放问题，改善歌单加载和
 - **引擎体积**：第一次选中该预设时才加载 PV 引擎（约 2MB，本地文件、不需要联网），不选它就不会加载。
 - **内存**：离开该预设时会释放出帧用的绘制器与画布。
 - 无歌词或只有占位歌词的曲目不会生成档案，背景下保持原样。
-- PV 引擎移植自 JIZURA（MIT），许可与移植范围见 `docs/THIRD_PARTY_PORTS.md` 与 `NOTICE.md`。
+- PV 引擎移植自开源项目 [JIZURA](https://github.com/852wa/JIZURA)（作者 hakoniwa，MIT 授权），其许可证原文随包附在 `vendor/jizura/LICENSE.txt`；移植范围与相对上游的唯一差异见 `docs/THIRD_PARTY_PORTS.md` 与 `NOTICE.md`。
 
 ## 使用说明
 

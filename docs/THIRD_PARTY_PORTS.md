@@ -79,8 +79,8 @@ partition for the user's own official login session.
 
 ## JIZURA text-PV engine (`vendor/jizura/`)
 
-- Upstream: `hakoniwa`'s JIZURA lyric-motion generator (local checkout at `G:\SoftwareFile\JIZURA`)
-- Reference revision: `fc16bfe43ea4a6c25a21f1caf04d17326de14f00` (VERSION `0.10.1`)
+- Upstream: <https://github.com/852wa/JIZURA> — `hakoniwa`'s JIZURA lyric-motion generator (checked out locally at `G:\SoftwareFile\JIZURA`)
+- Reference revision: `fc16bfe43ea4a6c25a21f1caf04d17326de14f00` (VERSION `0.10.1`; fetched from `refs/heads/main` on 2026-10-19)
 - License: MIT (`Copyright (c) 2026 hakoniwa`) — full text at `vendor/jizura/LICENSE.txt`
 - Port refresh date: 2026-10-18
 
