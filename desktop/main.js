@@ -3862,6 +3862,11 @@ function armMainWindowMinimizeIntent(win, reason) {
   win.__mineradioMinimizeIntentReason = String(reason || 'user');
 }
 
+function hasLiveMainWindowMinimizeIntent(win) {
+  if (!win || win.isDestroyed()) return false;
+  return Number(win.__mineradioMinimizeIntentUntil || 0) >= Date.now();
+}
+
 function consumeMainWindowMinimizeIntent(win) {
   if (!win || win.isDestroyed()) return { intentional: false, reason: '' };
   const intentional = Number(win.__mineradioMinimizeIntentUntil || 0) >= Date.now();
@@ -3887,7 +3892,7 @@ function hookMainWindowMinimizeIntent(win) {
   try {
     win.hookWindowMessage(WINDOWS_WM_SYSCOMMAND, (wParam) => {
       const command = windowMessageUnsignedValue(wParam) & 0xFFF0;
-      if (command === WINDOWS_SC_MINIMIZE) armMainWindowMinimizeIntent(win, 'native-system-command');
+      if (command === WINDOWS_SC_MINIMIZE && !hasLiveMainWindowMinimizeIntent(win)) armMainWindowMinimizeIntent(win, 'native-system-command');
     });
     win.__mineradioSystemCommandIntentHooked = true;
   } catch (error) {
@@ -5719,6 +5724,9 @@ async function createWindowOnce() {
       windowMinimizedAt: Date.now(),
       windowMinimizeIntentional: minimizeIntent.intentional,
       windowMinimizeReason: minimizeIntent.reason || 'unexpected',
+      windowMinimizeFocused: win.isFocused() === true,
+      windowMinimizeMaximized: win.isMaximized() === true,
+      windowMinimizeDesktopMode: fullDesktopModeRuntime.getStatus('window-minimize').enabled === true,
       memUsedPercent: mem.usedPercent,
       memFreeMB: mem.freeMB,
       appRssMB: mem.process.rssMB,
