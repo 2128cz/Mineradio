@@ -89,22 +89,22 @@ function pvEnsureEngine() {
 
 // Ask for the archive (hit or freshly planned) and keep its plan in memory. The plan request
 // deliberately ignores the prefetch switch: this is the render layer needing it now.
-function pvEnsurePlan(force) {
-  var song = pvCurrentSong();
-  if (!song) { pvPresetState.planError = 'no-song'; return Promise.resolve(false); }
+// Explicit entry point for tests and for any future caller that already holds the song and its
+// lines. Taking them as arguments keeps a fixture out of playQueue/currentIdx, which are app
+// state: the prefetch and this module both persist derived state, and a probe must not.
+function pvPlanForSong(song, lines, translationLines, opts) {
+  opts = opts || {};
+  if (!song || !Array.isArray(lines) || !lines.length) return Promise.resolve({ ok: false, reason: 'no-plan-payload' });
+  if (typeof pvEnsurePlanNow !== 'function') return Promise.resolve({ ok: false, reason: 'no-plan-client' });
+  return pvApplyPlan(song, lines, translationLines || [], opts).then(function (ok) {
+    return ok ? { ok: true, planKey: pvPresetState.planKey, cuts: pvPresetState.plan ? pvPresetState.plan.cuts.length : null } : { ok: false, reason: pvPresetState.planError || 'plan-failed' };
+  });
+}
+
+function pvApplyPlan(song, lines, translationLines, opts) {
+  opts = opts || {};
   var songKey = typeof pvSongKeyFor === 'function' ? pvSongKeyFor(song) : '';
-  var lines = typeof lyricsLines !== 'undefined' ? lyricsLines : null;
   if (!songKey) { pvPresetState.planError = 'no-song-key'; return Promise.resolve(false); }
-  if (!Array.isArray(lines) || !lines.length) { pvPresetState.planError = 'no-lyrics'; return Promise.resolve(false); }
-  if (!force && pvPresetState.plan && pvPresetState.planSongKey === songKey) return Promise.resolve(true);
-  if (pvPresetState.planPromise) return pvPresetState.planPromise;
-  // A failed attempt must not re-plan on every frame; retry on the window, or immediately when
-  // the song changed (a new song has its own archive).
-  if (!force && pvPresetState.planError && Date.now() < pvPresetState.planRetryAt && pvPresetState.planSongKey === songKey) {
-    return Promise.resolve(false);
-  }
-  if (typeof pvEnsurePlanNow !== 'function') { pvPresetState.planError = 'no-plan-client'; return Promise.resolve(false); }
-  var translationLines = typeof lyricsTranslationLines !== 'undefined' ? lyricsTranslationLines : [];
   pvPresetState.planPromise = pvEnsurePlanNow(song, lines, translationLines)
     .then(function (res) {
       if (!res || !res.ok) throw new Error('PV_PLAN_' + ((res && res.reason) || 'failed'));
@@ -120,11 +120,8 @@ function pvEnsurePlan(force) {
             pvPresetState.renderer = typeof J.Renderer === 'function' ? new J.Renderer() : null;
             pvPresetState.planError = '';
             pvPresetState.planRetryAt = 0;
-            // Draw the first frame as soon as the plan is in: waiting for the next loop tick
-            // would leave the layer black for a frame budget, and would never happen at all
-            // while the loop is parked (no playback).
             var canvas = pvCanvasElement();
-            if (canvas && pvPresetState.renderer) pvDrawLayerFrame(canvas, typeof performance !== 'undefined' ? performance.now() : Date.now());
+            if (canvas && pvPresetState.renderer && !opts.skipFirstFrame) pvDrawLayerFrame(canvas, typeof performance !== 'undefined' ? performance.now() : Date.now());
             return !!pvPresetState.renderer;
           });
         });
@@ -141,11 +138,38 @@ function pvEnsurePlan(force) {
   return pvPresetState.planPromise;
 }
 
+function pvEnsurePlan(force) {
+  var song = pvCurrentSong();
+  if (!song) { pvPresetState.planError = 'no-song'; return Promise.resolve(false); }
+  var songKey = typeof pvSongKeyFor === 'function' ? pvSongKeyFor(song) : '';
+  var lines = typeof lyricsLines !== 'undefined' ? lyricsLines : null;
+  if (!songKey) { pvPresetState.planError = 'no-song-key'; return Promise.resolve(false); }
+  if (!Array.isArray(lines) || !lines.length) { pvPresetState.planError = 'no-lyrics'; return Promise.resolve(false); }
+  if (!force && pvPresetState.plan && pvPresetState.planSongKey === songKey) return Promise.resolve(true);
+  if (pvPresetState.planPromise) return pvPresetState.planPromise;
+  // A failed attempt must not re-plan on every frame; retry on the window, or immediately when
+  // the song changed (a new song has its own archive).
+  if (!force && pvPresetState.planError && Date.now() < pvPresetState.planRetryAt && pvPresetState.planSongKey === songKey) {
+    return Promise.resolve(false);
+  }
+  var translationLines = typeof lyricsTranslationLines !== 'undefined' ? lyricsTranslationLines : [];
+  return pvApplyPlan(song, lines, translationLines, {});
+}
+
+// The playhead the layer draws at, behind a function so a probe can override the clock instead
+// of assigning the audio element: replacing that global is how one probe leaked its fixture into
+// the app's persisted playback snapshot (09-queue-snapshot-autoplay.js writes localStorage every
+// couple of seconds while a song is current).
+function pvPlayheadSeconds() {
+  if (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) return Math.max(0, audio.currentTime);
+  return 0;
+}
+
 function pvDrawLayerFrame(canvas, now) {
   var plan = pvPresetState.plan;
   var renderer = pvPresetState.renderer;
   if (!plan || !renderer) return false;
-  var t = typeof audio !== 'undefined' && audio && isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+  var t = pvPlayheadSeconds();
   var cssW = canvas.clientWidth || 0;
   var cssH = canvas.clientHeight || 0;
   var dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
