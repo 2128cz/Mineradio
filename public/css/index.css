@@ -18601,3 +18601,17 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
   top: 50%;
   transform: translate(-50%, -50%)
 }
+/* The bleed canvas is this frame's own edge, downsampled and stretched over the whole layer. A
+   viewport wider than any aspect the engine composes (32:9) would otherwise leave 880px of black
+   on each side; this fills it without cropping a single glyph. It sits behind the design canvas,
+   so only the bars show. The dimming is baked into the small canvas rather than a CSS filter:
+   a filter here would run over the full 7.4Mpx element every koma. */
+#pv-layer #pv-bleed {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
+  opacity: 0
+}
+#pv-layer #pv-bleed.on { opacity: 0.82 }

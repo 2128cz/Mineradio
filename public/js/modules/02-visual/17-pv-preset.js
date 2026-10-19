@@ -17,6 +17,17 @@
 var PV_PRESET_INDEX = 13;   // tracks MAX_VISUAL_PRESET_INDEX (three places; quick-check pins them)
 var PV_TARGET_FPS = 12;     // koma: 12 drawings per second, matching how the plan was built
 var PV_PLAN_RETRY_MS = 5000;
+// The bleed canvas is this box / 8 and CSS stretches it back, so the upscale itself is the blur.
+var PV_BLEED_DIVISOR = 8;
+var PV_BLEED_DIM = 0.45;          // black laid over the small canvas so the bars stay a surround
+// Glyph decomposition is the 100-340ms spike at cut entry (it rasterises each new character and
+// reads it back). Warm it ahead of the playhead, but only out of measured slack: a third of the
+// koma window is left over after a frame that cost less than PV_WARM_BUDGET_MS, and a warm frame
+// is far cheaper than a real one because its canvas is only PV_WARM_MAX_HEIGHT tall.
+var PV_WARM_BUDGET_MS = Math.round(1000 / PV_TARGET_FPS / 3);
+var PV_WARM_EVERY_DRAWS = 2;
+var PV_WARM_KOMA_PER_CUT = 3;
+var PV_WARM_MAX_HEIGHT = 240;     // buckets follow env.scale, which only depends on the width
 
 var pvPresetState = {
   active: false,
@@ -38,6 +49,12 @@ var pvPresetState = {
   lastT: 0,
   fitMode: '',
   fitCrop: 0,
+  bleedActive: false,
+  warmCanvas: null,
+  warmIndex: 0,
+  warmScale: 0,
+  warmSteps: 0,
+  drawsSinceWarm: 0,
   prefetchFollowing: false,
 };
 
@@ -47,6 +64,7 @@ function pvPresetIsActive() {
 
 function pvLayerElement() { return document.getElementById('pv-layer'); }
 function pvCanvasElement() { return document.getElementById('pv-canvas'); }
+function pvBleedElement() { return document.getElementById('pv-bleed'); }
 
 // The playing song is derived from the queue, the way the rest of the app derives it
 // (05-playback/00-api-quality-output.js:230, 10-queue-actions.js:73) - there is no
@@ -117,6 +135,10 @@ function pvApplyPlan(song, lines, translationLines, opts) {
           return pvEnsureEngine().then(function (J) {
             if (!J) throw new Error('PV_ENGINE_' + (pvPresetState.engineError || 'unavailable'));
             pvPresetState.plan = data.archive.plan;
+            // a new plan means new characters: start the warm pass over
+            pvPresetState.warmIndex = 0;
+            pvPresetState.warmScale = 0;
+            pvPresetState.drawsSinceWarm = 0;
             pvPresetState.planKey = res.key;
             pvPresetState.planSongKey = songKey;
             pvPresetState.renderer = typeof J.Renderer === 'function' ? new J.Renderer() : null;
@@ -231,6 +253,84 @@ function pvDrawLayerFrame(canvas, now) {
   pvPresetState.lastDrawAt = now;
   pvPresetState.lastCostMs = Math.round((performance.now() - started) * 100) / 100;
   pvPresetState.lastT = t;
+  pvDrawBleedFrame(canvas, cssW, cssH, dispW, dispH, dpr);
+  return true;
+}
+
+// A viewport wider than any aspect the engine composes (32:9 tops out past 21:9) cannot be covered
+// without cropping the lyric line - measured at 5120x1440, covering clips glyphs in 59 of 60
+// frames - so the bars stay geometrically, and this fills them with the frame's own edge instead
+// of black. The source is downsampled by PV_BLEED_DIVISOR and CSS stretches it back, which is
+// what does the blurring; the dim is baked into the small canvas so no filter runs over 7.4Mpx.
+function pvDrawBleedFrame(source, cssW, cssH, dispW, dispH, dpr) {
+  var bleed = pvBleedElement();
+  if (!bleed) return;
+  var bars = dispW < cssW - 2 || dispH < cssH - 2;
+  if (!bars) {
+    if (bleed.width !== 2 || bleed.height !== 2) { bleed.width = 2; bleed.height = 2; }
+    if (pvPresetState.bleedActive) { bleed.classList.remove('on'); pvPresetState.bleedActive = false; }
+    return;
+  }
+  var w = Math.max(16, Math.round((cssW * dpr) / PV_BLEED_DIVISOR));
+  var h = Math.max(16, Math.round((cssH * dpr) / PV_BLEED_DIVISOR));
+  if (bleed.width !== w || bleed.height !== h) { bleed.width = w; bleed.height = h; }
+  var bctx = bleed.getContext('2d');
+  if (!bctx) return;
+  try {
+    bctx.setTransform(1, 0, 0, 1, 0, 0);
+    bctx.globalAlpha = 1;
+    bctx.globalCompositeOperation = 'source-over';
+    bctx.clearRect(0, 0, w, h);
+    bctx.drawImage(source, 0, 0, w, h);
+    bctx.fillStyle = 'rgba(0,0,0,' + PV_BLEED_DIM + ')';
+    bctx.fillRect(0, 0, w, h);
+  } catch (_) { return; }
+  if (!pvPresetState.bleedActive) { bleed.classList.add('on'); pvPresetState.bleedActive = true; }
+}
+
+// The spike is not the drawing, it is the first time a character is seen: decompose rasterises
+// the glyph, reads it back and splits it into strokes. Walk the plan ahead of the playhead so
+// that work happens while a frame still has slack. The cache key follows size * env.scale, so
+// the warm canvas only has to match the width; keeping it short is what makes the step cheap.
+function pvWarmNextKoma() {
+  var plan = pvPresetState.plan;
+  var renderer = pvPresetState.renderer;
+  var canvas = pvCanvasElement();
+  if (!plan || !renderer || !canvas || !canvas.width) return false;
+  var cuts = Array.isArray(plan.cuts) ? plan.cuts : null;
+  if (!cuts || !cuts.length) return false;
+  var planW = Math.max(1, plan.W || 1920);
+  var planH = Math.max(1, plan.H || 1080);
+  var scale = canvas.width / planW;
+  if (!pvPresetState.warmScale || Math.abs(scale - pvPresetState.warmScale) / pvPresetState.warmScale > 0.05) {
+    // different buckets than the ones already decomposed - start the pass again
+    pvPresetState.warmScale = scale;
+    pvPresetState.warmIndex = 0;
+  }
+  var total = cuts.length * PV_WARM_KOMA_PER_CUT;
+  if (pvPresetState.warmIndex >= total) return false;
+  var cv = pvPresetState.warmCanvas;
+  if (!cv) { cv = pvPresetState.warmCanvas = document.createElement('canvas'); }
+  var w = Math.max(2, Math.round(planW * scale));
+  var h = Math.min(Math.max(2, Math.round(planH * scale)), PV_WARM_MAX_HEIGHT);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  var ctx = cv.getContext('2d');
+  if (!ctx) return false;
+  var cut = cuts[Math.floor(pvPresetState.warmIndex / PV_WARM_KOMA_PER_CUT)];
+  if (!cut) { pvPresetState.warmIndex = total; return false; }
+  var slot = pvPresetState.warmIndex % PV_WARM_KOMA_PER_CUT;
+  var dur = Math.max(0.1, (cut.end || cut.start + 1) - cut.start);
+  var offsets = [0.02, 0.22, Math.min(0.6, dur * 0.4)];
+  var t = cut.start + offsets[slot];
+  try {
+    renderer.frame(ctx, plan, t, { scale: scale, noGhost: true, noPost: true, noHud: true });
+  } catch (_) {
+    // Warming is opportunistic: if a sample throws, stop the pass rather than wedge the layer.
+    pvPresetState.warmIndex = total;
+    return false;
+  }
+  pvPresetState.warmIndex += 1;
+  pvPresetState.warmSteps += 1;
   return true;
 }
 
@@ -245,6 +345,17 @@ function pvReleasePvLayer() {
     var ctx = canvas.getContext('2d');
     if (ctx) { try { ctx.clearRect(0, 0, 2, 2); } catch (_) {} }
   }
+  var bleed = pvBleedElement();
+  if (bleed) {
+    bleed.width = 2;
+    bleed.height = 2;
+    bleed.classList.remove('on');
+  }
+  pvPresetState.bleedActive = false;
+  pvPresetState.warmCanvas = null;
+  pvPresetState.warmIndex = 0;
+  pvPresetState.warmScale = 0;
+  pvPresetState.drawsSinceWarm = 0;
   var layer = pvLayerElement();
   if (layer) layer.classList.remove('active');
   pvPresetState.active = false;
@@ -277,6 +388,8 @@ function pvPresetStatus() {
     lastCostMs: pvPresetState.lastCostMs,
     fitMode: pvPresetState.fitMode,
     fitCrop: pvPresetState.fitCrop,
+    bleed: (function () { var b = pvBleedElement(); return b ? { w: b.width, h: b.height, on: pvPresetState.bleedActive } : null; })(),
+    warm: { index: pvPresetState.warmIndex, steps: pvPresetState.warmSteps, scale: Math.round(pvPresetState.warmScale * 1000) / 1000 },
   };
 }
 
@@ -305,7 +418,15 @@ function updatePvLayer(now, dt) {
     ? consumeFrameGate(gate, now, dt, PV_TARGET_FPS, false, 'pv-layer')
     : Math.max(0, Number(dt) || 0);
   if (step <= 0) { pvPresetState.skips += 1; return false; }
-  return pvDrawLayerFrame(canvas, now);
+  var drew = pvDrawLayerFrame(canvas, now);
+  // Spend only measured slack on warming: one step every PV_WARM_EVERY_DRAWS delivered frames,
+  // and never right after a frame that already used most of the koma window.
+  if (drew) pvPresetState.drawsSinceWarm += 1;
+  if (drew && pvPresetState.drawsSinceWarm >= PV_WARM_EVERY_DRAWS && pvPresetState.lastCostMs <= PV_WARM_BUDGET_MS) {
+    pvPresetState.drawsSinceWarm = 0;
+    pvWarmNextKoma();
+  }
+  return drew;
 }
 
 // Switching the preset must take effect immediately, not on the next frame: with nothing playing

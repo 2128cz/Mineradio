@@ -611,6 +611,29 @@ function runPvPresetCheck() {
   if (!/position: *absolute/.test(pvCanvasRule) || !/translate\(-50%, *-50%\)/.test(pvCanvasRule)) {
     fail('#pv-layer canvas must be centred by absolute positioning: flex shrinks an undersized item and pushes an oversized one off the start edge');
   }
+  // The surround for viewports wider than any aspect the engine composes (32:9): the bars stay
+  // geometrically, and the bleed canvas fills them with this frame's own edge. Two invariants:
+  // it must be stretched over the whole layer (its own small backing store is the blur), and it
+  // must be released with everything else, because a detached canvas keeps its pixels.
+  if (!/id="pv-bleed"/.test(htmlText) || htmlText.indexOf('id="pv-bleed"') > htmlText.indexOf('id="pv-canvas"')) {
+    fail('the bleed canvas must exist and sit before the PV design canvas');
+  }
+  const bleedRule = (cssText.match(/#pv-layer #pv-bleed \{([\s\S]*?)\}/) || [])[1] || '';
+  if (!/width: *100%/.test(bleedRule) || !/height: *100%/.test(bleedRule) || !/transform: *none/.test(bleedRule)) {
+    fail('#pv-bleed must stretch over the layer and opt out of the centring transform');
+  }
+  if (!/pvDrawBleedFrame\(canvas,/.test(pvText)) fail('the frame must repaint the bleed surround');
+  if (!/bleed\.width = 2;/.test(pvText)) fail('releasing must zero the bleed backing store too');
+  // Warming is only allowed to spend measured slack; a fixed budget that exceeds the koma window
+  // would stall playback instead of hiding the spike.
+  const warmBudget = /var PV_WARM_BUDGET_MS = ([^;]+);/.exec(pvText);
+  if (!warmBudget || !/1000 \/ PV_TARGET_FPS \/ 3/.test(warmBudget[1])) {
+    fail(`the warm budget must stay derived from the koma window (found ${warmBudget && warmBudget[1]})`);
+  }
+  if (!/pvWarmNextKoma\(\)/.test(pvText) || !/lastCostMs <= PV_WARM_BUDGET_MS/.test(pvText)) {
+    fail('the glyph warm pass must run from the layer tick and only out of measured slack');
+  }
+  if (!/pvPresetState\.warmCanvas = null;/.test(pvText)) fail('releasing must drop the warm canvas');
   console.log(`[OK] PV preset wired: ${metaCount} presets, ceiling ${ceiling}, layer + takeover + release present.`);
   runPvPresetLiveProbe(modulePath);
 }
