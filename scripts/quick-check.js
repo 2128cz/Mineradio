@@ -393,6 +393,36 @@ function runPvPipelineCheck() {
 
 // The renderer half of the PV pipeline: the prefetch that rides the existing queue lyric fetch
 // (probe tmp/cdp-pv-prefetch-check.js).
+function runMainWindowRuntimeRecoveryRegressionCheck() {
+  logStep('Main-window runtime recovery (visibility guards, hide trace, desktop-mode replay)');
+  const testFile = path.join(appRoot, 'tests', 'main-window-runtime-recovery.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`main-window runtime recovery regression failed: ${rel(testFile)}`);
+  }
+  // The two fixes that arrived from dev/lrss4, pinned here because no other arm reads these files
+  // for this: an app-caused minimize emits SC_MINIMIZE like a user command does, and desktop mode
+  // used to replay a minimized snapshot - together they put the player off-screen with every
+  // watchdog convinced the user asked for it.
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  if (!/WINDOWS_SC_MINIMIZE && !hasLiveMainWindowMinimizeIntent\(win\)/.test(mainText)) {
+    fail('the system-command hook must not relabel a minimize the app itself caused as a native command');
+  }
+  const desktopText = fs.readFileSync(path.join(appRoot, 'desktop', 'full-desktop-mode-runtime.js'), 'utf8');
+  if (/if \(snapshot\.minimized\) safeCall\(win, 'minimize', null\);/.test(desktopText)) {
+    fail('full desktop mode must not replay a minimized snapshot');
+  }
+  if (!/if \(snapshot\.minimized \|\| snapshot\.visible\) safeCall\(win, 'show', null\);/.test(desktopText)) {
+    fail('full desktop mode must show the window instead of re-minimising it when restoring state');
+  }
+  console.log('[OK] main-window runtime recovery green; the minimize-intent and desktop-replay fixes hold.');
+}
+
 function runWindowVisibilityTraceCheck() {
   logStep('Window visibility trace (hide/minimize/restore recorded, collector reads them)');
   const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
@@ -6204,6 +6234,7 @@ async function main() {
   runPvPrefetchCheck();
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
+  runMainWindowRuntimeRecoveryRegressionCheck();
   runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();

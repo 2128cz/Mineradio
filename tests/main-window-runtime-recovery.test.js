@@ -112,7 +112,14 @@ function testWindowVisibilityAndSystemWakeGuards() {
 
   assert.match(mainText, /win\.__mineradioIntentionalHide = true;[\s\S]{0,140}markMainWindowExpectedVisible\(win, false, 'tray-hide'\)[\s\S]{0,180}win\.hide\(\)/, 'tray hide must be marked intentional and not expected visible before hide');
   assert.match(mainText, /win\.on\('show'[\s\S]{0,180}win\.__mineradioIntentionalHide = false[\s\S]{0,140}markMainWindowExpectedVisible\(win, true, 'show'\)/, 'show must clear intentional hide and restore expected visibility');
-  assert.match(mainText, /win\.on\('hide'[\s\S]{0,1100}restoreUnexpectedMainWindowVisibility\(win, 'hide-event'\)/, 'unexpected hide must schedule a short delayed restore');
+  // No character budget: the hide handler also carries the attribution record, and a length
+  // window fails silently every time that record grows (that is how the window-hidden trace
+  // broke this guard). Assert against the handler's own block instead.
+  const hideEventBlock = sourceBlock(mainText, "win.on('hide'", "win.on('focus'");
+  assert.match(hideEventBlock, /restoreUnexpectedMainWindowVisibility\(win, 'hide-event'\)/, 'unexpected hide must schedule a short delayed restore');
+  assert.match(hideEventBlock, /writeStartupState\('window-hidden'/, 'a hide must leave a named trace on disk, or it cannot be attributed later');
+  assert.match(hideEventBlock, /intentionalHide: win\.__mineradioIntentionalHide === true/, 'the hide trace must record whether the app asked for it');
+  assert.match(hideEventBlock, /expectedVisibleReason/, 'the hide trace must name the reason the app expected invisibility, if any');
   assert.match(mainText, /ipcMain\.handle\('desktop-window-minimize'[\s\S]{0,320}armMainWindowMinimizeIntent\(win, 'renderer-window-control'\)[\s\S]{0,100}win\?\.minimize\(\)/, 'the visible minimize control must arm explicit user intent before minimizing');
   assert.match(mainText, /hookWindowMessage\(WINDOWS_WM_SYSCOMMAND[\s\S]{0,220}WINDOWS_SC_MINIMIZE[\s\S]{0,140}native-system-command/, 'native taskbar and system-menu minimize commands must be treated as intentional');
   const minimizeEventBlock = sourceBlock(mainText, "win.on('minimize'", "win.on('restore'");
