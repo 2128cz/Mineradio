@@ -115,12 +115,36 @@ function pvLangForLines(lines) {
   return 'en';
 }
 
+// The aspects the vendored engine composes a layout for (J.designSize). A window whose shape is
+// far from 16:9 gets a plan built for its own shape: the engine then lays lines out for a tall
+// or ultra-wide frame instead of shrinking a 16:9 composition into letterbox bars.
+var PV_ASPECT_RATIOS = [
+  ['21:9', 21 / 9], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1],
+  ['4:5', 4 / 5], ['3:4', 3 / 4], ['9:16', 9 / 16]
+];
+
+// Nearest on the log scale, so 16:10 reads as 16:9 and 5:4 does not become 1:1 by rounding.
+// The size arrives as arguments (falling back to the window) so a probe can walk the bands
+// without resizing the app.
+function pvAspectForViewport(width, height) {
+  var w = Math.max(0, Number(width) || 0) || (typeof window !== 'undefined' ? Number(window.innerWidth) || 0 : 0);
+  var h = Math.max(0, Number(height) || 0) || (typeof window !== 'undefined' ? Number(window.innerHeight) || 0 : 0);
+  if (w < 2 || h < 2) return '16:9';
+  var ratio = Math.log(w / h);
+  var best = '16:9', gap = Infinity;
+  for (var i = 0; i < PV_ASPECT_RATIOS.length; i++) {
+    var d = Math.abs(ratio - Math.log(PV_ASPECT_RATIOS[i][1]));
+    if (d < gap) { gap = d; best = PV_ASPECT_RATIOS[i][0]; }
+  }
+  return best;
+}
+
 function pvRecipeForSong(song, lang) {
   return {
     lang: lang,
     style: 'noir',
     seed: pvSeedForSongKey(pvSongKeyFor(song)),
-    aspect: '16:9',
+    aspect: pvAspectForViewport(),
     res: 720,
     fps: 24,
     koma: 12,

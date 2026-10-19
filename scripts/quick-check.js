@@ -140,6 +140,21 @@ function runPvArchiveRegressionCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+function runPvAspectSelectionRegressionCheck() {
+  logStep('PV viewport aspect selection (plan shape follows the window)');
+  const testFile = path.join(appRoot, 'tests', 'pv-aspect-selection.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`pv aspect selection regression failed: ${rel(testFile)}`);
+  }
+  console.log('[OK] pv-aspect-selection.test.js green: every window shape lands on an aspect the engine sizes.');
+}
+
 function runPvLyricFormatCheck() {
   logStep('PV lyric format regression (Mineradio lines -> JIZURA grammar)');
   const testFile = path.join(appRoot, 'tests', 'pv-lyric-format.test.js');
@@ -6176,6 +6191,7 @@ async function main() {
   runPvPlannerCheck();
   runPvPipelineCheck();
   runPvPrefetchCheck();
+  runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
   runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
