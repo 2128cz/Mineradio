@@ -1666,8 +1666,10 @@ class FullDesktopModeRuntime {
     safeCall(win, 'setHasShadow', null, snapshot.hasShadow);
     if (snapshot.maximized) safeCall(win, 'maximize', null);
     if (snapshot.fullScreen) safeCall(win, 'setFullScreen', null, true);
-    if (snapshot.minimized) safeCall(win, 'minimize', null);
-    if (snapshot.visible) safeCall(win, 'show', null);
+    // Never replay a minimized snapshot: entering desktop mode already restored the window,
+    // and Electron's own minimize emits SC_MINIMIZE like a user command does, so the replay
+    // leaves the player off-screen with every visibility watchdog convinced it was asked to hide.
+    if (snapshot.minimized || snapshot.visible) safeCall(win, 'show', null);
     else safeCall(win, 'hide', null);
     if (snapshot.visible && snapshot.focused && !snapshot.minimized) safeCall(win, 'focus', null);
   }
