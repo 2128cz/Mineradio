@@ -36,6 +36,8 @@ var pvPresetState = {
   lastDrawAt: 0,
   lastCostMs: 0,
   lastT: 0,
+  fitMode: '',
+  fitCrop: 0,
   prefetchFollowing: false,
 };
 
@@ -165,6 +167,24 @@ function pvPlayheadSeconds() {
   return 0;
 }
 
+// Beyond this linear crop per side, covering the viewport would eat too much of the composition
+// and the layer falls back to contain (bars) instead. 0.15 is set from the measured worst case:
+// a window sitting exactly between two of the engine's aspects (the widest pair gap is 1:1↔4:3
+// and 3:4↔9:16 at ln 0.288) needs a 0.134 total crop, so every reachable shape still covers, and
+// the overflow never exceeds ~6.7% of a frame edge.
+var PV_MAX_COVER_CROP = 0.15;
+
+// Contain-fit or cover-fit, decided per frame from the layer box: cover keeps the whole screen
+// painted (decor running past the edges, which is the point of the layer), and the crop it needs
+// is small because the plan was already chosen for this window shape.
+function pvFitForBox(planW, planH, cssW, cssH) {
+  var contain = Math.min(cssW / planW, cssH / planH);
+  var cover = Math.max(cssW / planW, cssH / planH);
+  var crop = Math.max(1 - cssW / (planW * cover), 1 - cssH / (planH * cover));
+  if (crop > PV_MAX_COVER_CROP) return { scale: contain, mode: 'contain', crop: crop };
+  return { scale: cover, mode: 'cover', crop: crop };
+}
+
 function pvDrawLayerFrame(canvas, now) {
   var plan = pvPresetState.plan;
   var renderer = pvPresetState.renderer;
@@ -176,13 +196,13 @@ function pvDrawLayerFrame(canvas, now) {
   if (cssW < 2 || cssH < 2) return false;
   var planW = Math.max(1, plan.W || 1920);
   var planH = Math.max(1, plan.H || 1080);
-  // Contain-fit in both axes, and let the canvas be exactly the fitted design rect: the engine
-  // anchors its frame at (0,0) of whatever canvas it is handed, so a full-viewport canvas with a
-  // width-only scale spills the lyric line off the bottom on wide screens and leaves a band the
-  // engine never paints on tall ones. Centring is the layer's job, so the leftovers are bars.
-  var fit = Math.min(cssW / planW, cssH / planH);
-  var dispW = Math.max(2, Math.round(planW * fit));
-  var dispH = Math.max(2, Math.round(planH * fit));
+  // The engine anchors a frame at (0,0) of whichever canvas it is handed, so the canvas is sized
+  // to the design at the chosen scale and the layer centres it: contain leaves symmetric bars,
+  // cover lets the composition run off the edges. Either way the canvas covers every pixel the
+  // viewer should see, and nothing is left transparent to show through as noise.
+  var fit = pvFitForBox(planW, planH, cssW, cssH);
+  var dispW = Math.max(2, Math.round(planW * fit.scale));
+  var dispH = Math.max(2, Math.round(planH * fit.scale));
   var dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
   var w = Math.max(2, Math.round(dispW * dpr));
   var h = Math.max(2, Math.round(dispH * dpr));
@@ -192,6 +212,8 @@ function pvDrawLayerFrame(canvas, now) {
     canvas.style.width = dispW + 'px';
     canvas.style.height = dispH + 'px';
   }
+  pvPresetState.fitMode = fit.mode;
+  pvPresetState.fitCrop = Math.round(fit.crop * 1000) / 1000;
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
   var started = performance.now();
@@ -253,6 +275,8 @@ function pvPresetStatus() {
     released: pvPresetState.released,
     lastT: pvPresetState.lastT,
     lastCostMs: pvPresetState.lastCostMs,
+    fitMode: pvPresetState.fitMode,
+    fitCrop: pvPresetState.fitCrop,
   };
 }
 

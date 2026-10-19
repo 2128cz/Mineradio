@@ -18584,19 +18584,20 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
   inset: 0;
   z-index: 0;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: #000;
   opacity: 0;
   transition: opacity 320ms ease;
   pointer-events: none
 }
 #pv-layer.active { opacity: 1 }
-/* The canvas is sized to the contain-fitted design rect by 17-pv-preset.js, and must not be a
-   shrinkable flex item: shrinking squashes the picture against its own backing store whenever
-   the window gets narrower than the last drawing. */
+/* 17-pv-preset.js sizes the canvas to the design at the chosen scale: cover mode makes it larger
+   than the layer and the layer's own overflow:hidden crops the excess, contain mode makes it
+   smaller. Absolutely centring it (rather than flex, which would shrink an undersized item and
+   push an oversized one off the start edge) keeps the crop symmetric in both cases. */
 #pv-layer canvas {
   display: block;
-  flex: 0 0 auto
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%)
 }

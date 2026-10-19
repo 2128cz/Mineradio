@@ -550,25 +550,36 @@ function runPvPresetCheck() {
   ]) {
     if (!pattern.test(pvText)) fail(why);
   }
-  // Geometry: the engine anchors a frame at (0,0) of whichever canvas it is handed, so the layer
-  // must contain-fit the design and centre it. A width-only scale (the first cut of this layer)
-  // pushed the lyric line off the bottom on wide viewports and left an unpainted band on tall ones.
-  if (!/Math\.min\(cssW \/ planW, cssH \/ planH\)/.test(pvText)) {
-    fail('the PV canvas must contain-fit the design in both axes, or a non-16:9 viewport clips the lyrics');
+  // Geometry: the engine anchors a frame at (0,0) of whichever canvas it is handed, so the canvas
+  // is sized to the design at a chosen scale and the layer centres it. Cover (canvas larger than
+  // the layer, excess cropped by its own overflow) is the default because a bare letterbox reads
+  // as dead space; contain is only allowed when covering would crop more than the cap, which is
+  // where a lyric line would start disappearing.
+  if (!/Math\.min\(cssW \/ planW, cssH \/ planH\)/.test(pvText) || !/Math\.max\(cssW \/ planW, cssH \/ planH\)/.test(pvText)) {
+    fail('the PV fit must weigh contain and cover for the current box, not pick one blindly');
+  }
+  const cropCapMatch = /var PV_MAX_COVER_CROP = ([\d.]+);/.exec(pvText);
+  if (!cropCapMatch) fail('the cover crop cap is missing; nothing bounds how much of the frame may run off');
+  const cropCap = Number(cropCapMatch && cropCapMatch[1]);
+  if (!(cropCap > 0 && cropCap <= 0.15)) {
+    fail(`the cover crop cap must stay in 0..0.15 (found ${cropCapMatch && cropCapMatch[1]}): beyond that the crop eats lyric lines`);
+  }
+  if (!/mode: 'cover'/.test(pvText) || !/mode: 'contain'/.test(pvText)) {
+    fail('the fit must report which mode it chose, so a probe can tell cover from contain');
   }
   if (!/canvas\.style\.width = dispW \+ 'px'/.test(pvText)) {
     fail('the PV canvas must carry its own CSS size so the layer can centre it');
   }
   const pvLayerRule = (cssText.match(/#pv-layer \{([\s\S]*?)\}/) || [])[1] || '';
-  if (!/align-items: *center/.test(pvLayerRule) || !/justify-content: *center/.test(pvLayerRule)) {
-    fail('#pv-layer must centre its canvas, otherwise the letterbox bars are not symmetric');
+  if (!/overflow: *hidden/.test(pvLayerRule)) {
+    fail('#pv-layer must clip its canvas, otherwise cover mode spills over the window');
   }
   const pvCanvasRule = (cssText.match(/#pv-layer canvas \{([\s\S]*?)\}/) || [])[1] || '';
   if (/width: *100%/.test(pvCanvasRule) || /height: *100%/.test(pvCanvasRule)) {
     fail('#pv-layer canvas must not stretch to the layer - 17-pv-preset.js owns its size');
   }
-  if (!/flex: *0 0 auto/.test(pvCanvasRule)) {
-    fail('#pv-layer canvas must not be a shrinkable flex item: shrinking squashes the frame against its own backing store');
+  if (!/position: *absolute/.test(pvCanvasRule) || !/translate\(-50%, *-50%\)/.test(pvCanvasRule)) {
+    fail('#pv-layer canvas must be centred by absolute positioning: flex shrinks an undersized item and pushes an oversized one off the start edge');
   }
   console.log(`[OK] PV preset wired: ${metaCount} presets, ceiling ${ceiling}, layer + takeover + release present.`);
   runPvPresetLiveProbe(modulePath);

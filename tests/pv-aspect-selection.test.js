@@ -107,6 +107,31 @@ test('the table only offers aspects the vendored engine actually sizes and lays 
   }
 });
 
+test('with the plan chosen for the window, covering never crops past the cap, so no bars appear', () => {
+  const { pick } = loadPicker({ innerWidth: 1920, innerHeight: 1080 });
+  // The cap lives in the render module; read it from there so the two cannot drift apart.
+  const renderSource = fs.readFileSync(
+    path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'),
+    'utf8',
+  );
+  const cap = Number(/var PV_MAX_COVER_CROP = ([\d.]+);/.exec(renderSource)[1]);
+  assert.ok(cap > 0, 'the render module must publish its cover crop cap');
+  const designSize = vm.runInNewContext(`(${/J\.designSize = (\(aspect\) => \{[\s\S]*?\});/.exec(engineSource)[1]})`);
+  assert.equal(designSize('16:9').join('x'), '1920x1080');
+
+  const failures = [];
+  for (let ratio = 0.5; ratio <= 2.5; ratio += 0.005) {
+    const width = Math.round(ratio * 1000), height = 1000;
+    const aspect = pick(width, height);
+    const [W, H] = designSize(aspect);
+    const cover = Math.max(width / W, height / H);
+    const crop = Math.max(1 - width / (W * cover), 1 - height / (H * cover));
+    if (crop > cap) failures.push({ ratio: Math.round(ratio * 100) / 100, aspect: aspect, crop: Math.round(crop * 1000) / 1000 });
+  }
+  // Any ratio that still needs bars must be named, not averaged away.
+  assert.deepEqual(failures.slice(0, 6), [], `${failures.length} window shapes between 0.5 and 2.5 would still get bars`);
+});
+
 test('the recipe asks the viewport instead of hardcoding a shape', () => {
   assert.match(prefetchSource, /aspect: pvAspectForViewport\(\),/,
     'pvRecipeForSong must take the aspect from the viewport; a hardcoded 16:9 letterboxes every other window');
