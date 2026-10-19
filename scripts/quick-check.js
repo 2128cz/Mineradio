@@ -214,7 +214,7 @@ function runJizuraVendorCheck() {
   const moduleFacts = ['J.planForAE', 'J.AE_MAP', 'J.saveFontData', 'J.loadFontData', 'J.Renderer'];
   for (const fact of moduleFacts) {
     if (bundleText.indexOf(fact) < 0) {
-      fail(`vendored engine lost ${fact}; the closure test in PLAN_JIZURA_PV.md §3.5 says that module cannot be dropped`);
+      fail(`vendored engine lost ${fact}; the closure test says that module cannot be dropped (it holds the plan serializer or the font hooks)`);
     }
   }
   // We deliberately do not bundle mp4-muxer, so the export entry points must never be called.
@@ -237,7 +237,7 @@ function runJizuraVendorCheck() {
   // in the loader would concatenate 2.1MB into every page load for no benefit.
   const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
   if (/vendor\/jizura/.test(loaderText)) {
-    fail('index-loader.js registers the vendored engine; it is not a renderer module (see PLAN_JIZURA_PV.md §3.5)');
+    fail('index-loader.js registers the vendored engine; it is a background-layer bundle, not a renderer module');
   }
   const releasePkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
@@ -252,7 +252,7 @@ function runJizuraVendorCheck() {
 function runPvPlannerCheck() {
   logStep('PV planner bridge (hidden window, vendored engine, packaging)');
   const plannerPath = path.join(appRoot, 'pv-planner.js');
-  if (!fs.existsSync(plannerPath)) fail('pv-planner.js is missing; the PV archive pipeline needs it (docs/PLAN_JIZURA_PV.md §4.1)');
+  if (!fs.existsSync(plannerPath)) fail('pv-planner.js is missing; the PV archive pipeline needs its planning bridge');
   const plannerText = fs.readFileSync(plannerPath, 'utf8');
   const syntax = spawnSync(process.execPath, ['--check', plannerPath], { cwd: appRoot, encoding: 'utf8' });
   if (syntax.status !== 0) fail(`pv-planner.js does not parse: ${syntax.stderr || ''}`);
@@ -302,7 +302,7 @@ function runPvPlannerCheck() {
   else console.log('[SKIP] planner probe needs Electron (quick-check.bat full).');
 }
 
-// P1..P6 of docs/PLAN_JIZURA_PV.md section 4.1, judged by tmp/pv-planner-probe.js in a real
+// The planning bridge's six acceptance checks, judged by tmp/pv-planner-probe.js in a real
 // Electron main process.
 function runPvPlannerProbe() {
   const probe = path.join(appRoot, 'tmp', 'pv-planner-probe.js');
@@ -323,7 +323,7 @@ function runPvPlannerProbe() {
 }
 
 // Route wiring for the planning pipeline, plus the live end-to-end when an app happens to be
-// running with a writable cache (docs/PLAN_JIZURA_PV.md section 4.2, script tmp/pv-pipeline-e2e.js).
+// running with a writable cache (script tmp/pv-pipeline-e2e.js).
 function runPvPipelineCheck() {
   logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
   const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
@@ -377,7 +377,7 @@ function runPvPipelineCheck() {
 }
 
 // The renderer half of the PV pipeline: the prefetch that rides the existing queue lyric fetch
-// (docs/PLAN_JIZURA_PV.md section 4.3, probe tmp/cdp-pv-prefetch-check.js).
+// (probe tmp/cdp-pv-prefetch-check.js).
 function runPvPrefetchCheck() {
   logStep('PV archive prefetch (renderer hook, switch, live probe)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '08-pv-prefetch.js');
@@ -442,7 +442,7 @@ function runPvPrefetchCheck() {
   }
 }
 
-// Preset 13 wiring (docs/PLAN_JIZURA_PV.md section 8.1). The live half needs a renderer with a
+// Preset 13 wiring. The live half needs a renderer with a
 // devtools port; the static half is what guards the source.
 function runPvPresetCheck() {
   logStep('PV preset (layer, engine on demand, takeover, release)');

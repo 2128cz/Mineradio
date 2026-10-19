@@ -1,6 +1,6 @@
 'use strict';
 
-// PV archive prefetch (docs/PLAN_JIZURA_PV.md §4): when the existing queue lyric prefetch pulls
+// PV archive prefetch: when the existing queue lyric prefetch pulls
 // an upcoming song's lyrics, this turns them into a JIZURA plan and asks the server to store it.
 // The playback path then only has to read a plan at the moment a PV is shown.
 //

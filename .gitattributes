@@ -10,7 +10,7 @@
 # Vendored copies are hash-pinned (see docs/THIRD_PARTY_PORTS.md); their bytes must be the
 # same in the working tree, in the blob and on any platform's checkout, or the pin only holds
 # on the machine that generated it. Narrow on purpose: a blanket `vendor/** text` rule would
-# corrupt any binary a later vendored asset brings in (fonts, per PLAN_JIZURA_PV.md §5).
+# corrupt any binary a later vendored asset brings in (a font would be next).
 vendor/**/*.txt text eol=lf
 vendor/**/*.js text eol=lf
 vendor/**/*.json text eol=lf

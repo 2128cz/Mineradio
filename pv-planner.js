@@ -1,6 +1,7 @@
 'use strict';
 
-// Main-process planning bridge for the JIZURA PV route (decision C in docs/PLAN_JIZURA_PV.md).
+// Main-process planning bridge for the JIZURA PV route. The port decision puts planning in a
+// hidden window rather than the renderer: one engine per install, off the playback thread.
 //
 // The engine needs a document (it builds canvases for glyph metrics at module scope), so it
 // cannot run in the Node main process. It runs in a hidden window instead, which also keeps a
