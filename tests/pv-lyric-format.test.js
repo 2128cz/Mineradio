@@ -137,6 +137,53 @@ test('interludes appear only across a real gap', () => {
   assert.ok(forced.indexOf('\u95F4\u594F') >= 0, 'threshold is configurable');
 });
 
+test('endsOut lines up with the rows the engine will turn into lines', () => {
+  // The repair channel is index-addressed: plan.lines[i] is re-timed with lineEnds[i], so an
+  // off-by-one here silently re-times the wrong sentence. The two ways the emitted text and the
+  // engine's line list differ must both be handled - [ti:]/[ar:] rows are skipped by the parser
+  // (jizura-engine.js:2704) while a [间奏 N] row becomes a line of its own (:2711).
+  const box = load();
+  const ends = [];
+  const text = box.formatLyricsForPv([
+    { t: 0, text: '第一句', duration: 2 },
+    { t: 2, text: '第二句', duration: 3 },
+    { t: 8, text: '第三句', duration: 2.5 },
+  ], { title: '歌名', artist: '歌手', endsOut: ends });
+
+  const rows = text.split('\n');
+  assert.equal(rows[0], '[ti:歌名]');
+  assert.equal(rows[1], '[ar:歌手]');
+  assert.equal(ends.length, rows.length - 2, 'meta rows must not take an index');
+  const timed = rows.slice(2);
+  const starts = timed.map((row) => {
+    const m = /^\[(\d{2,3}):(\d{2})\.(\d{2})\]/.exec(row);
+    return Number(m[1]) * 60 + Number(m[2]) + Number(m[3]) / 100;
+  });
+  // A 3 s gap between lines 2 and 3 stays under the interlude threshold, so this fixture has no
+  // marker row at all: three text rows, three ends, meta rows taking no index.
+  assert.deepEqual(ends, [2, 5, 10.5]);
+  ends.forEach((end, i) => {
+    assert.ok(end > starts[i], `line ${i} must end after it starts`);
+    if (i + 1 < ends.length) assert.ok(end <= starts[i + 1] + 1e-6, `line ${i} must not eat line ${i + 1}`);
+  });
+
+  const withMarker = box.formatLyricsForPv([
+    { t: 0, text: '第一句', duration: 2 },
+    { t: 12, text: '第二句', duration: 2 },
+  ], { emitMeta: false, endsOut: ends });
+  const markerRows = withMarker.split('\n');
+  assert.equal(markerRows[0], '[00:00.00]第一句');
+  assert.match(markerRows[1], /^\[间奏 (9|10)\]$/, 'the marker rides between the two lines: ' + markerRows[1]);
+  assert.equal(ends.length, 3, 'an interlude row is a line too, so it takes an index');
+  assert.equal(ends[0], 2, 'the sung line ends on its own duration');
+  assert.equal(ends[1], 12, 'the interlude line ends where the next line starts');
+  assert.equal(ends[2], 14);
+
+  const cleared = box.formatLyricsForPv([], { emitMeta: false, endsOut: ends });
+  assert.equal(cleared, '');
+  assert.equal(ends.length, 0, 'a reused array must be reset, not appended to');
+});
+
 test('out-of-order input is clamped forward, never emitted backwards', () => {
   const box = load();
   const stats = {};

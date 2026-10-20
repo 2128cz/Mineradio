@@ -160,7 +160,11 @@ function pvBuildPlanRequest(song, lines, translationLines, timingSource) {
   var songKey = pvSongKeyFor(song);
   if (!songKey || !Array.isArray(lines) || !lines.length) return null;
   var recipe = pvRecipeForSong(song, pvLangForLines(lines));
-  var lyrics = formatLyricsForPv(lines, { title: recipe.title, artist: recipe.artist });
+  // lineEnds is the repair channel: the lyric grammar can only carry a line's start, so the
+  // ends this app already knows (and already clamps to 12 s in finalizeLyricLineDurations) go
+  // alongside the text for the planner to stretch the shot list back onto them.
+  var lineEnds = [];
+  var lyrics = formatLyricsForPv(lines, { title: recipe.title, artist: recipe.artist, endsOut: lineEnds });
   return {
     songKey: songKey,
     body: {
@@ -175,7 +179,7 @@ function pvBuildPlanRequest(song, lines, translationLines, timingSource) {
       hasTranslation: !!(translationLines && translationLines.length),
       timingSource: timingSource || 'lrc-line',
       lyricOffsetMs: 0,   // the per-song offset is applied when drawing, never baked into the plan
-      payload: Object.assign({ lyrics: lyrics }, recipe),
+      payload: Object.assign({ lyrics: lyrics, lineEnds: lineEnds }, recipe),
     },
   };
 }

@@ -77,14 +77,28 @@ function pvLineEndSeconds(line, startSeconds) {
 }
 
 // Main entry. Returns the JIZURA lyric string; callers hash the result for the cache key.
-// Stats go into options.statsOut, because a string primitive cannot carry properties
-// (assigning one under 'use strict' throws).
+// Stats go into options.statsOut, and the per-line end times into options.endsOut, because a
+// string primitive cannot carry properties (assigning one under 'use strict' throws).
+//
+// endsOut is the repair channel for JIZURA's short lyric window. The grammar has no end tag:
+// the engine reads line STARTS and derives each end as "the next start" (vendor
+// jizura-engine.js:2895), then caps how long the line may stay on screen at
+// max(3.6, chars * 0.5 + 1.2) (:2995). A line the platform already timed is thrown away and
+// long lines lose their tail, so the caller hands the ends to the planner separately and the
+// plan gets stretched back to them after it is built.
+//
+// The array aligns with the engine's parsed line indexes, NOT with the output rows: [ti:]/[ar:]
+// are skipped by the parser (:2704) while a [间奏 N] marker becomes a line of its own (:2711),
+// so a marker pushes an entry too. Ordering survives because an untagged marker is keyed to
+// sit directly after the line it follows (:2742-2743).
 function formatLyricsForPv(lines, options) {
   var opts = options || {};
   var source = Array.isArray(lines) ? lines : [];
   var interludeThreshold = Number(opts.interludeThresholdSec) > 0 ? Number(opts.interludeThresholdSec) : PV_INTERLUME_THRESHOLD_SEC;
   var fallbackStep = Number(opts.fallbackStepSec) > 0 ? Number(opts.fallbackStepSec) : 3;
   var emitMeta = opts.emitMeta !== false;
+  var ends = Array.isArray(opts.endsOut) ? opts.endsOut : null;
+  if (ends) ends.length = 0;
   var rows = [];
   var stats = { droppedNoText: 0, clampedOutOfOrder: 0, interludes: 0, annotationLines: 0, lines: 0 };
 
@@ -121,6 +135,9 @@ function formatLyricsForPv(lines, options) {
       var gapSeconds = Math.min(PV_INTERLUME_MAX_SEC, Math.round(startSeconds - previousEnd));
       if (gapSeconds >= 1) {
         out.push('[\u95F4\u594F ' + gapSeconds + ']');
+        // The marker's own end is the next line's start: the engine estimates the marker's
+        // start by chaining, so only the end is a fact here.
+        if (ends) ends.push(startSeconds);
         stats.interludes++;
       }
     }
@@ -131,6 +148,7 @@ function formatLyricsForPv(lines, options) {
     }
     out.push(pvTimeTag(startSeconds) + text);
     previousEnd = Math.max(item.end, startSeconds + 0.2);
+    if (ends) ends.push(previousEnd);
   }
 
   var result = out.join('\n');
