@@ -15,7 +15,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const PV_SCHEMA = 'mineradio-pv-v1';
+// v2: archives written before repairPlanTails hold the engine's short lyric windows, so bumping
+// the schema invalidates them by key and every song re-plans with its tails stretched. The stale
+// v1 files are ordinary LRU victims from here on (trim is mtime-based over the whole directory).
+const PV_SCHEMA = 'mineradio-pv-v2';
 const FONT_TABLE_FILE = 'font-table.json';
 const MAX_ARCHIVE_BYTES = 6 * 1024 * 1024;
 const MAX_KEY_CHARS = 400;

@@ -118,7 +118,7 @@ const {
 } = require('./cuefield/feedback-log');
 const { planCuefieldTransitionFromCache } = require('./cuefield/mineradio-bridge');
 const { createPvArchiveStore, canonicalArchiveKey, PV_SCHEMA: PV_ARCHIVE_SCHEMA } = require('./pv-archive');
-const { createPvPlanner } = require('./pv-planner');
+const { createPvPlanner, repairPlanTails } = require('./pv-planner');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -969,6 +969,11 @@ async function handlePvPlan(body) {
     }
     const out = await getPvPlanner().plan(payload);
     const plan = JSON.parse(out.json);
+    // JIZURA caps a lyric line's on-screen time by character count, so a line whose real length
+    // is longer shows nothing until the next line. payload.lineEnds carries the ends this app
+    // already knows (the grammar has no end tag); the repair rescales each line's shots onto them
+    // before anything is hashed, stored or drawn. See repairPlanTails in pv-planner.js.
+    const tailRepair = repairPlanTails(plan, Array.isArray(payload.lineEnds) ? payload.lineEnds : null);
     // The archive rejects an inline font table (validateArchive): it is the same catalogue for
     // every song, so it belongs in the one sidecar keyed by srcFingerprint.
     const fontTable = plan.fontTable || null;
@@ -991,6 +996,9 @@ async function handlePvPlan(body) {
         timingSource: request.timingSource || 'lrc',
       },
       recipe,
+      // Provenance for the tail repair: an archive without it was planned before the fix, and the
+      // numbers say how much of this song's shot list was re-timed.
+      tailRepair,
       align: { mineradioLyricOffsetMs: Number(request.lyricOffsetMs) || 0, jizuraTypesetLeadApplied: false },
       plan,
     };

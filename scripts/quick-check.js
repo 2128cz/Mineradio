@@ -312,6 +312,34 @@ function runPvPlannerCheck() {
   if (!releaseFiles.includes('pv-planner.js') || !betaFiles.includes('pv-planner.js')) {
     fail(`pv-planner.js must be listed in both packaging file manifests; release=${releaseFiles.includes('pv-planner.js')} beta=${betaFiles.includes('pv-planner.js')}`);
   }
+
+  // The lyric-tail repair: pv-planner.js owns it because the engine is hash-pinned and cannot be
+  // edited, and it is the only thing standing between JIZURA's chars*0.5 window and a song whose
+  // lyric shot runs out while the singer is still on the note.
+  const tailTestFile = path.join(appRoot, 'tests', 'pv-plan-tail-repair.test.js');
+  const tailTest = spawnSync(process.execPath, ['--test', tailTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (tailTest.status !== 0) {
+    process.stdout.write(tailTest.stdout || '');
+    process.stderr.write(tailTest.stderr || '');
+    fail(`PV lyric tail repair regression failed: ${rel(tailTestFile)}`);
+  }
+  if (!/function repairPlanTails\(/.test(plannerText) || !/module\.exports = \{[^}]*\brepairPlanTails\b/.test(plannerText)) {
+    fail('pv-planner.js must define repairPlanTails and export it; the repair is the only channel a line has back to its real length');
+  }
+  const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
+  if (!/repairPlanTails\(plan,/.test(serverText)) {
+    fail('server.js must repair the plan before the archive is written, or every cached song keeps the engine short window');
+  }
+  // The ends reach the repair through the payload; without this the repair falls back to the
+  // engine's own line end and the 12 s platform cap is lost.
+  const prefetchText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '08-pv-prefetch.js'), 'utf8');
+  if (!/lineEnds: lineEnds/.test(prefetchText) || !/endsOut: lineEnds/.test(prefetchText)) {
+    fail('the plan request must carry lineEnds (formatter endsOut -> payload.lineEnds)');
+  }
+  const archiveText = fs.readFileSync(path.join(appRoot, 'pv-archive.js'), 'utf8');
+  if (!/const PV_SCHEMA = 'mineradio-pv-v2';/.test(archiveText)) {
+    fail('PV_SCHEMA must stay at v2: v1 archives were written without the tail repair and would keep serving them');
+  }
   console.log('[OK] PV planner bridge is wired to the pinned vendored engine and ships in both packages.');
   if (runElectron) runPvPlannerProbe();
   else console.log('[SKIP] planner probe needs Electron (quick-check.bat full).');
