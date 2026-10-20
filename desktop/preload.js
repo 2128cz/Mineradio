@@ -1,5 +1,16 @@
 const { contextBridge, ipcRenderer, clipboard, webUtils } = require('electron');
 
+// Every global hotkey main sends gets answered, before the page sees it. Main times out on a
+// missing answer and records which half broke: no ack at all means the renderer never ran its
+// message queue (Chromium backgrounded it), an ack with zero listeners means the page had not
+// bound its hotkey handler yet.
+const globalHotkeyCallbacks = new Set();
+ipcRenderer.on('mineradio-global-hotkey', (_event, payload) => {
+  const seq = payload && payload.seq;
+  if (seq == null) return;
+  ipcRenderer.send('mineradio-global-hotkey-ack', { seq, listeners: globalHotkeyCallbacks.size });
+});
+
 contextBridge.exposeInMainWorld('desktopWindow', {
   isDesktop: true,
   minimize: () => ipcRenderer.invoke('desktop-window-minimize'),
@@ -99,9 +110,13 @@ contextBridge.exposeInMainWorld('desktopWindow', {
   saveCurrentFxAutosave: (payload) => ipcRenderer.invoke('mineradio-current-fx-autosave-save', payload || {}),
   onGlobalHotkey: (callback) => {
     if (typeof callback !== 'function') return () => {};
+    globalHotkeyCallbacks.add(callback);
     const listener = (_event, payload) => callback(payload || {});
     ipcRenderer.on('mineradio-global-hotkey', listener);
-    return () => ipcRenderer.removeListener('mineradio-global-hotkey', listener);
+    return () => {
+      globalHotkeyCallbacks.delete(callback);
+      ipcRenderer.removeListener('mineradio-global-hotkey', listener);
+    };
   },
   setDesktopLyricsEnabled: (enabled, payload) => ipcRenderer.invoke('mineradio-desktop-lyrics-set-enabled', !!enabled, payload || {}),
   updateDesktopLyrics: (payload) => ipcRenderer.invoke('mineradio-desktop-lyrics-update', payload || {}),

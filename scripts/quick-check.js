@@ -6305,6 +6305,33 @@ function runMediaSessionControlsCheck() {
   console.log('[OK] media session routes the previous/next keys and keeps updating while hidden.');
 }
 
+function runGlobalHotkeyRoundTripCheck() {
+  logStep('Global hotkey round trip (a hidden renderer answers, or the miss is recorded)');
+  const testFile = path.join(appRoot, 'tests', 'global-hotkey-roundtrip.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`global hotkey round trip regression failed: ${rel(testFile)}`);
+  }
+  // The ack must come from a listener the preload installs at load time. If it were sent from
+  // the page handler, a frozen renderer and a page that never bound would be indistinguishable.
+  const preloadText = fs.readFileSync(path.join(appRoot, 'desktop', 'preload.js'), 'utf8');
+  const ackAt = preloadText.indexOf("ipcRenderer.send('mineradio-global-hotkey-ack'");
+  const exposeAt = preloadText.indexOf("contextBridge.exposeInMainWorld('desktopWindow'");
+  if (ackAt < 0 || exposeAt < 0 || ackAt > exposeAt) {
+    fail('the preload must ack global hotkeys before the page gets a chance to bind a handler');
+  }
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  if (!/if \(!MAIN_WINDOW_BACKGROUND_THROTTLING\) \{[\s\S]{0,120}CHROMIUM_BACKGROUNDING_SWITCHES/.test(mainText)) {
+    fail('the anti-backgrounding switches must be applied by default; a paused player loses the audible-media exemption');
+  }
+  if (/MINERADIO_KEEP_BACKGROUND_RENDERING/.test(mainText)) {
+    fail('background rendering is no longer an opt-in; MINERADIO_THROTTLE_WHEN_HIDDEN=1 is the only measurement switch');
+  }
+  console.log('[OK] hotkey delivery is witnessed end to end, and Chromium backgrounding stays off by default.');
+}
+
 async function main() {
   console.log(`App root: ${appRoot}`);
   runNodeSyntaxCheck(jsCheckFiles());
@@ -6312,6 +6339,7 @@ async function main() {
   runPlaybackSourceFallbackTransactionCheck();
   runPlaybackSingleRepeatLoopRegressionCheck();
   runMediaSessionControlsCheck();
+  runGlobalHotkeyRoundTripCheck();
   runLocalMusicLibraryRegressionCheck();
   runBuiltInPlaylistRegressionCheck();
   runPvArchiveRegressionCheck();

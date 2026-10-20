@@ -780,7 +780,7 @@ async function main() {
       MINERADIO_APP_USER_MODEL_ID: `com.mineradio.we-lifecycle-qa.${runId}`,
       MINERADIO_NO_DESKTOP_SHORTCUT: '1',
       MINERADIO_CREATE_DESKTOP_SHORTCUT: '0',
-      ...(productionThrottling ? {} : { MINERADIO_KEEP_BACKGROUND_RENDERING: '1' }),
+      ...(productionThrottling ? { MINERADIO_THROTTLE_WHEN_HIDDEN: '1' } : {}),
     };
     child = spawn(executablePath, [`--remote-debugging-port=${port}`], {
       cwd: path.dirname(executablePath),

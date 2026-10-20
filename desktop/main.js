@@ -207,7 +207,8 @@ const WALLPAPER_ENGINE_CAPTURE_RETRY_DELAY_MS = 720;
 const WALLPAPER_ENGINE_MAX_CAPTURE_FPS = 240;
 const WALLPAPER_ENGINE_HOST_RESUME_TIMEOUT_MS = 30000;
 const GESTURE_CAMERA_PERMISSION_GRANT_MS = 45000;
-// MINERADIO_THROTTLE_WHEN_HIDDEN=1 restores Chromium's default for measurement.
+// The single switch-off for measurement: MINERADIO_THROTTLE_WHEN_HIDDEN=1 restores Chromium's
+// default background behaviour, both for this WebContents and process-wide.
 // A hidden player must still answer its own controls: Chromium clamps a backgrounded
 // renderer to one timer tick per minute, and finishWallpaperEngineVisibleHostResume()
 // re-arms exactly that on every minimize. The visual loop is idled by the renderer's own
@@ -495,9 +496,15 @@ const CHROMIUM_SAFE_PERFORMANCE_SWITCHES = [
 const CHROMIUM_OPT_IN_PERFORMANCE_SWITCHES = [
   ['ignore-gpu-blocklist', null, 'MINERADIO_IGNORE_GPU_BLOCKLIST'],
   ['force_high_performance_gpu', null, 'MINERADIO_FORCE_HIGH_PERFORMANCE_GPU'],
-  ['disable-background-timer-throttling', null, 'MINERADIO_KEEP_BACKGROUND_RENDERING'],
-  ['disable-renderer-backgrounding', null, 'MINERADIO_KEEP_BACKGROUND_RENDERING'],
-  ['disable-backgrounding-occluded-windows', null, 'MINERADIO_KEEP_BACKGROUND_RENDERING'],
+];
+// setBackgroundThrottling(false) only covers this WebContents' timers and Page Visibility.
+// Chromium still demotes the whole renderer process once the window is hidden or occluded,
+// and a paused player loses the audible-media exemption that kept it alive while playing -
+// that is why a global hotkey went unanswered until the user clicked the window.
+const CHROMIUM_BACKGROUNDING_SWITCHES = [
+  'disable-background-timer-throttling',
+  'disable-renderer-backgrounding',
+  'disable-backgrounding-occluded-windows',
 ];
 function appendChromiumSwitch(name, value) {
   if (value == null) app.commandLine.appendSwitch(name);
@@ -506,6 +513,9 @@ function appendChromiumSwitch(name, value) {
 for (const [name, value] of CHROMIUM_SAFE_PERFORMANCE_SWITCHES) appendChromiumSwitch(name, value);
 for (const [name, value, envName] of CHROMIUM_OPT_IN_PERFORMANCE_SWITCHES) {
   if (process.env[envName] === '1') appendChromiumSwitch(name, value);
+}
+if (!MAIN_WINDOW_BACKGROUND_THROTTLING) {
+  for (const name of CHROMIUM_BACKGROUNDING_SWITCHES) appendChromiumSwitch(name);
 }
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -1776,10 +1786,70 @@ function sendWindowState(win) {
   win.webContents.send('desktop-window-state', getWindowState(win));
 }
 
+// A global hotkey only lands if the renderer is awake enough to run its message queue.
+// A paused player sitting hidden used to freeze, so the keypress was taken by main and then
+// silently dropped - which reads to the user as "the shortcut stopped working until I click
+// the window". Ack the round trip and record which half failed before assuming anything.
+const GLOBAL_HOTKEY_ACK_TIMEOUT_MS = 1500;
+const GLOBAL_HOTKEY_ACK_SLOW_MS = 500;
+let globalHotkeySeq = 0;
+let globalHotkeyLastAckMs = null;
+const pendingGlobalHotkeyAcks = new Map();
+
+function recordGlobalHotkeyFailure(entry, reason, listeners) {
+  const win = mainWindow;
+  const alive = !!(win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed());
+  const flag = (name) => {
+    if (!alive) return null;
+    try { return win[name](); } catch (e) { return null; }
+  };
+  writeStartupState('global-hotkey-unanswered', {
+    action: entry.action,
+    seq: entry.seq,
+    reason,
+    waitedMs: Date.now() - entry.sentAt,
+    listeners: listeners == null ? null : listeners,
+    lastAckMs: globalHotkeyLastAckMs,
+    windowAlive: alive,
+    minimized: flag('isMinimized'),
+    visible: flag('isVisible'),
+    focused: flag('isFocused'),
+    registeredHotkeys: registeredGlobalHotkeys.size,
+  });
+}
+
 function sendGlobalHotkeyAction(action) {
   if (!mainWindow || mainWindow.isDestroyed() || !action) return;
-  mainWindow.webContents.send('mineradio-global-hotkey', { action });
+  const seq = ++globalHotkeySeq;
+  const entry = { action: String(action), seq, sentAt: Date.now(), timer: null };
+  entry.timer = setTimeout(() => {
+    pendingGlobalHotkeyAcks.delete(seq);
+    recordGlobalHotkeyFailure(entry, 'no-ack', null);
+  }, GLOBAL_HOTKEY_ACK_TIMEOUT_MS);
+  if (entry.timer && typeof entry.timer.unref === 'function') entry.timer.unref();
+  pendingGlobalHotkeyAcks.set(seq, entry);
+  mainWindow.webContents.send('mineradio-global-hotkey', { action, seq });
 }
+
+ipcMain.on('mineradio-global-hotkey-ack', (event, payload = {}) => {
+  const seq = Number(payload && payload.seq);
+  if (!Number.isFinite(seq)) return;
+  const entry = pendingGlobalHotkeyAcks.get(seq);
+  if (!entry) return;
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents || mainWindow.webContents.isDestroyed()) return;
+  if (event.sender.id !== mainWindow.webContents.id) return;
+  pendingGlobalHotkeyAcks.delete(seq);
+  clearTimeout(entry.timer);
+  globalHotkeyLastAckMs = Date.now() - entry.sentAt;
+  const listeners = Number(payload && payload.listeners);
+  if (listeners === 0) {
+    recordGlobalHotkeyFailure(entry, 'no-listener', 0);
+    return;
+  }
+  if (globalHotkeyLastAckMs >= GLOBAL_HOTKEY_ACK_SLOW_MS) {
+    recordGlobalHotkeyFailure(entry, 'slow-ack', listeners);
+  }
+});
 
 function unregisterMineradioGlobalHotkeys() {
   for (const accelerator of registeredGlobalHotkeys.keys()) {
@@ -1942,7 +2012,7 @@ async function getGpuDiagnostics() {
       safeGpuRasterization: true,
       ignoreGpuBlocklist: process.env.MINERADIO_IGNORE_GPU_BLOCKLIST === '1',
       forceHighPerformanceGpu: process.env.MINERADIO_FORCE_HIGH_PERFORMANCE_GPU === '1',
-      keepBackgroundRendering: process.env.MINERADIO_KEEP_BACKGROUND_RENDERING === '1',
+      keepBackgroundRendering: !MAIN_WINDOW_BACKGROUND_THROTTLING,
       mainWindowBackgroundThrottling: MAIN_WINDOW_BACKGROUND_THROTTLING,
       angle: 'd3d11',
     },
