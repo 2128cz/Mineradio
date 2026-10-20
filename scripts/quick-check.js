@@ -441,6 +441,12 @@ function runMainWindowRuntimeRecoveryRegressionCheck() {
   if (!/WINDOWS_SC_MINIMIZE && !hasLiveMainWindowMinimizeIntent\(win\)/.test(mainText)) {
     fail('the system-command hook must not relabel a minimize the app itself caused as a native command');
   }
+  // A minimized player that cannot answer its controls reads as a crashed one. Chromium clamps
+  // a hidden renderer to one timer tick per minute, and the wallpaper-engine host resume re-arms
+  // exactly that on every minimize, so the per-window default has to be unthrottled.
+  if (!/MINERADIO_THROTTLE_WHEN_HIDDEN === '1'/.test(mainText) || /KEEP_BACKGROUND_RENDERING === '1' \? false : true/.test(mainText)) {
+    fail('MAIN_WINDOW_BACKGROUND_THROTTLING must default to false; throttling is the opt-in now');
+  }
   const desktopText = fs.readFileSync(path.join(appRoot, 'desktop', 'full-desktop-mode-runtime.js'), 'utf8');
   if (/if \(snapshot\.minimized\) safeCall\(win, 'minimize', null\);/.test(desktopText)) {
     fail('full desktop mode must not replay a minimized snapshot');
@@ -477,11 +483,16 @@ function runWindowVisibilityTraceCheck() {
   }
   const minimized = mainText.match(/writeStartupState\('window-minimized',\s*\{([\s\S]*?)\}\);/);
   if (!minimized) fail('the minimize handler must keep recording window-minimized');
-  ['windowMinimizeReason', 'windowMinimizeIntentional', 'memUsedPercent'].forEach((field) => {
+  ['windowMinimizeReason', 'windowMinimizeIntentional', 'windowMinimizeCommandOrigin', 'memUsedPercent'].forEach((field) => {
     if (!minimized || !minimized[1].includes(field)) {
       fail(`window-minimized must carry ${field}`);
     }
   });
+  // SC_MINIMIZE is what a programmatic win.minimize() delivers too, so the reason field alone
+  // cannot say who minimized. Where the pointer was when the command arrived can.
+  if (!/probeMainWindowMinimizeCommandOrigin\(win\)/.test(mainText)) {
+    fail('the system-command hook must capture the pointer probe before the HWND goes iconic');
+  }
 
   // The reader has to identify the tree it judged, or a report from an older build reads
   // as if it described the current one.
@@ -6269,12 +6280,38 @@ function checkFirstLaunchDefaultsAndSplashGuard() {
   console.log(`[OK] ${keys.length} captured defaults match; splash motion is 5.2s/4.2s while entry stays ready at 1.5s/0.65s; archive actions stay in one row.`);
 }
 
+function runMediaSessionControlsCheck() {
+  logStep('Media session controls (keyboard next/previous, taskbar tile)');
+  const testFile = path.join(appRoot, 'tests', 'media-session-controls.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`media session controls regression failed: ${rel(testFile)}`);
+  }
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  if (!/05-playback\/19-media-session\.js/.test(loaderText)) {
+    fail('index-loader.js must load the media session module; the previous/next keys have no other route');
+  }
+  // The sync has to sit above the deep-background return, or a minimized window stops updating
+  // the tile and the keys that do arrive look dead.
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const animateBody = loopText.slice(loopText.indexOf('function animate()'));
+  const syncAt = animateBody.indexOf('syncMediaSession()');
+  const sleepAt = animateBody.indexOf('mainLoopDeepBackgroundSleeping()');
+  if (syncAt < 0 || sleepAt < 0 || syncAt > sleepAt) {
+    fail('animate() must call syncMediaSession() before the deep-background early return');
+  }
+  console.log('[OK] media session routes the previous/next keys and keeps updating while hidden.');
+}
+
 async function main() {
   console.log(`App root: ${appRoot}`);
   runNodeSyntaxCheck(jsCheckFiles());
   runPlaybackAudioGraphRegressionCheck();
   runPlaybackSourceFallbackTransactionCheck();
   runPlaybackSingleRepeatLoopRegressionCheck();
+  runMediaSessionControlsCheck();
   runLocalMusicLibraryRegressionCheck();
   runBuiltInPlaylistRegressionCheck();
   runPvArchiveRegressionCheck();

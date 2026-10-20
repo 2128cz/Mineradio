@@ -297,6 +297,9 @@ function targetMainDesktopOverlayFps(now) {
 function animate() {
   mainLoopAnimationRequested = false;
   scheduleNextMainLoopFrame();
+  // Runs before the deep-background early return: the taskbar media tile and the
+  // previous/next keys have to keep tracking the track even while the window is hidden.
+  if (typeof syncMediaSession === 'function') syncMediaSession();
   var perfProbe = window.__mineradioPerf;
   var framePerfStart = performance.now();
   var now = performance.now();
