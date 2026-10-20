@@ -1943,6 +1943,7 @@ async function getGpuDiagnostics() {
       ignoreGpuBlocklist: process.env.MINERADIO_IGNORE_GPU_BLOCKLIST === '1',
       forceHighPerformanceGpu: process.env.MINERADIO_FORCE_HIGH_PERFORMANCE_GPU === '1',
       keepBackgroundRendering: process.env.MINERADIO_KEEP_BACKGROUND_RENDERING === '1',
+      mainWindowBackgroundThrottling: MAIN_WINDOW_BACKGROUND_THROTTLING,
       angle: 'd3d11',
     },
   };
