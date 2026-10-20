@@ -207,7 +207,12 @@ const WALLPAPER_ENGINE_CAPTURE_RETRY_DELAY_MS = 720;
 const WALLPAPER_ENGINE_MAX_CAPTURE_FPS = 240;
 const WALLPAPER_ENGINE_HOST_RESUME_TIMEOUT_MS = 30000;
 const GESTURE_CAMERA_PERMISSION_GRANT_MS = 45000;
-const MAIN_WINDOW_BACKGROUND_THROTTLING = process.env.MINERADIO_KEEP_BACKGROUND_RENDERING === '1' ? false : true;
+// MINERADIO_THROTTLE_WHEN_HIDDEN=1 restores Chromium's default for measurement.
+// A hidden player must still answer its own controls: Chromium clamps a backgrounded
+// renderer to one timer tick per minute, and finishWallpaperEngineVisibleHostResume()
+// re-arms exactly that on every minimize. The visual loop is idled by the renderer's own
+// policy instead (mainLoopDeepBackgroundSleeping), so nothing heavy keeps running here.
+const MAIN_WINDOW_BACKGROUND_THROTTLING = process.env.MINERADIO_THROTTLE_WHEN_HIDDEN === '1';
 
 function wallpaperEngineTargetFps(display, requestedFps) {
   const displayFrequency = Math.max(24, Math.min(
@@ -3862,6 +3867,28 @@ function armMainWindowMinimizeIntent(win, reason) {
   win.__mineradioMinimizeIntentReason = String(reason || 'user');
 }
 
+// SC_MINIMIZE cannot tell a taskbar click from a programmatic win.minimize(), and both
+// overwrite an app-side reason, so the only usable witness is where the pointer was when
+// the shell command arrived. Nothing else in the record distinguishes them. The probe has
+// to run here: a minimized HWND reports its rect as (-32000,-32000,160,160).
+function probeMainWindowMinimizeCommandOrigin(win) {
+  if (!win || win.isDestroyed()) return { origin: 'window-gone' };
+  try {
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = win.getBounds();
+    const workArea = screen.getDisplayMatching(bounds).workArea;
+    const insideWindow = cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width
+      && cursor.y >= bounds.y && cursor.y < bounds.y + bounds.height;
+    let origin = 'outside-window';
+    if (insideWindow && cursor.y - bounds.y <= 56 && cursor.x >= bounds.x + bounds.width - 200) origin = 'title-bar-minimize';
+    else if (insideWindow) origin = 'inside-window';
+    else if (cursor.y >= workArea.y + workArea.height - 8) origin = 'taskbar-band';
+    return { origin, cursor, bounds };
+  } catch (_) {
+    return { origin: 'probe-failed' };
+  }
+}
+
 function hasLiveMainWindowMinimizeIntent(win) {
   if (!win || win.isDestroyed()) return false;
   return Number(win.__mineradioMinimizeIntentUntil || 0) >= Date.now();
@@ -3893,6 +3920,7 @@ function hookMainWindowMinimizeIntent(win) {
     win.hookWindowMessage(WINDOWS_WM_SYSCOMMAND, (wParam) => {
       const command = windowMessageUnsignedValue(wParam) & 0xFFF0;
       if (command === WINDOWS_SC_MINIMIZE && !hasLiveMainWindowMinimizeIntent(win)) armMainWindowMinimizeIntent(win, 'native-system-command');
+      if (command === WINDOWS_SC_MINIMIZE) win.__mineradioMinimizeCommandProbe = probeMainWindowMinimizeCommandOrigin(win);
     });
     win.__mineradioSystemCommandIntentHooked = true;
   } catch (error) {
@@ -5719,11 +5747,16 @@ async function createWindowOnce() {
   win.on('unmaximize', () => sendWindowState(win));
   win.on('minimize', () => {
     const minimizeIntent = consumeMainWindowMinimizeIntent(win);
+    const commandProbe = win.__mineradioMinimizeCommandProbe || {};
+    win.__mineradioMinimizeCommandProbe = null;
     const mem = systemMemory.getMemorySnapshot();
     writeStartupState('window-minimized', {
       windowMinimizedAt: Date.now(),
       windowMinimizeIntentional: minimizeIntent.intentional,
       windowMinimizeReason: minimizeIntent.reason || 'unexpected',
+      windowMinimizeCommandOrigin: commandProbe.origin || 'no-system-command',
+      windowMinimizeCursorX: commandProbe.cursor && commandProbe.cursor.x,
+      windowMinimizeCursorY: commandProbe.cursor && commandProbe.cursor.y,
       windowMinimizeFocused: win.isFocused() === true,
       windowMinimizeMaximized: win.isMaximized() === true,
       windowMinimizeDesktopMode: fullDesktopModeRuntime.getStatus('window-minimize').enabled === true,
