@@ -677,6 +677,41 @@ function runPvPresetCheck() {
   runPvPresetLiveProbe(modulePath);
 }
 
+function runPvDrawBenchGuardCheck() {
+  logStep('PV draw bench (the downgrade knobs still exist, and the tool is still runnable)');
+  const benchPath = path.join(appRoot, 'scripts', 'pv-draw-bench.js');
+  const testPath = path.join(appRoot, 'tests', 'pv-draw-bench-guard.test.js');
+  const docPath = path.join(appRoot, 'docs', 'pv-perf-baseline.md');
+  if (!fs.existsSync(benchPath)) fail('scripts/pv-draw-bench.js is missing; PV tier decisions would have no numbers behind them');
+  if (!fs.existsSync(docPath)) fail('docs/pv-perf-baseline.md is missing; the measured baseline is the reference the tiers are set against');
+  const syntax = spawnSync(process.execPath, ['--check', benchPath], { cwd: appRoot, encoding: 'utf8' });
+  if (syntax.status !== 0) {
+    process.stdout.write(syntax.stdout || '');
+    process.stderr.write(syntax.stderr || '');
+    fail(`pv-draw-bench.js does not parse: ${rel(benchPath)}`);
+  }
+  const result = spawnSync(process.execPath, ['--test', testPath], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`PV draw bench guard failed: ${rel(testPath)}`);
+  }
+  // Requiring it under plain node is the point: the bench must stay loadable without electron.
+  const bench = require(benchPath);
+  const engineText = fs.readFileSync(path.join(appRoot, 'vendor', 'jizura', 'jizura-engine.js'), 'utf8');
+  for (const knob of bench.PV_ENGINE_KNOBS) {
+    if (!engineText.match(knob.pattern)) fail(`engine knob opt.${knob.name} disappeared - the PV tier that sets it is now a no-op`);
+  }
+  const docText = fs.readFileSync(docPath, 'utf8');
+  if (!docText.includes('node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js')) {
+    fail('docs/pv-perf-baseline.md must carry the one command that reproduces the table');
+  }
+  for (const knob of ['fast', 'noGhost', 'noPost', 'noTrans']) {
+    if (!docText.includes(knob)) fail(`docs/pv-perf-baseline.md must report the measured cost of opt.${knob}`);
+  }
+  console.log(`[OK] PV draw bench pinned: ${bench.PV_ENGINE_KNOBS.length} knobs matched against the vendored engine.`);
+}
+
 function runPvPresetLiveProbe(modulePath) {
   const probe = path.join(appRoot, 'tmp', 'cdp-pv-preset-check.js');
   if (!fs.existsSync(probe)) {
@@ -6350,6 +6385,7 @@ async function main() {
   runPvPrefetchCheck();
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
+  runPvDrawBenchGuardCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
