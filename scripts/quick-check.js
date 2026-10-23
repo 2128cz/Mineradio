@@ -678,7 +678,7 @@ function runPvPresetCheck() {
 }
 
 function runPvDrawTierCheck() {
-  logStep('PV draw tier (自动 resolves without degrading, 性能档 only sends measured knobs)');
+  logStep('PV draw tier (自动 decides from measured cost only, 性能档 only sends measured knobs)');
   const testFile = path.join(appRoot, 'tests', 'pv-draw-tier.test.js');
   const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
@@ -687,8 +687,20 @@ function runPvDrawTierCheck() {
     fail(`PV draw tier regression failed: ${rel(testFile)}`);
   }
   const presetText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8');
-  if (!/function pvAutoDrawTier\(\) \{[\s\S]{0,40}return 'full';/.test(presetText)) {
-    fail('自动 must keep drawing the full picture until a measured, sustained-pressure decision exists; degrading on resolution alone breaks the low-spec doctrine');
+  // docs/LOW_SPEC_OPTIMIZATION_DOCTRINE.md allows a fallback only under sustained measured pressure,
+  // switched atomically at a boundary, explained in the log, and reversible by the user. Each of
+  // those is a call site, so each is pinned here; a future edit that drops one silently degrades
+  // the picture for a reason nobody measured.
+  const autoGuards = [
+    [/function pvAutoObserve\(cost\) \{[\s\S]{0,600}PV_AUTO_ENTER_WINDOWS/, '自动 must need several measured windows, not one bad frame'],
+    [/if \(boundary && s\.autoPending\)/, 'a decision must land on a cut boundary, never mid-cut'],
+    [/pvAutoBoundary\(t, started\);\n\s*var tier = pvDrawTier\(\);/, 'the decision must be made before the frame is drawn'],
+    [/pvAutoGiveUp\(/, 'a tier the engine cannot draw must fall back'],
+    [/pvAutoReset\('a manual tier was chosen'\)/, 'the user picking a tier by hand must overrule 自动'],
+    [/\[PvDrawTier\]/, 'every switch must say what it measured, in the log'],
+  ];
+  for (const [pattern, why] of autoGuards) {
+    if (!pattern.test(presetText)) fail(`PV 自动档 lost a doctrine guard: ${why}`);
   }
   const lean = /lean: function \(scale\) \{ return \{([^}]*)\}; \}/.exec(presetText);
   if (!lean) fail('the 性能档 option object cannot be inspected');
@@ -699,7 +711,7 @@ function runPvDrawTierCheck() {
     if (!name) continue;
     if (!allowed.has(name)) fail(`性能档 sends ${name}, which the draw bench does not pin to the vendored engine`);
   }
-  console.log(`[OK] PV draw tier wired; 性能档 sends ${lean[1].split(',').length} measured options.`);
+  console.log(`[OK] PV draw tier wired; 性能档 sends ${lean[1].split(',').length} measured options, 自动 guarded by ${autoGuards.length} doctrine checks.`);
 }
 
 function runPvDrawBenchGuardCheck() {

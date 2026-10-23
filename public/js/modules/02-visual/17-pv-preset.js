@@ -41,18 +41,22 @@ var PV_TIER_BUILDERS = {
   lean: function (scale) { return { scale: scale, fast: true, noTrans: true }; },
 };
 
-// 自动 resolves to a concrete tier. Until the measured-pressure decision exists it is 效果档:
-// docs/LOW_SPEC_OPTIMIZATION_DOCTRINE.md allows a cadence fallback only under sustained, measured
-// pressure, so an auto tier that guessed from resolution would be a silent visible downgrade.
-function pvAutoDrawTier() {
-  return 'full';
+// 自动 resolves to a concrete tier decided by pvAutoDrawTier() below; the manual tiers answer for
+// themselves and switch the auto machinery off entirely.
+function pvDrawMode() {
+  return typeof normalizePvDrawQuality === 'function'
+    ? normalizePvDrawQuality(fx && fx.pvDrawQuality)
+    : 'auto';
 }
 
 function pvDrawTier() {
-  var mode = typeof normalizePvDrawQuality === 'function'
-    ? normalizePvDrawQuality(fx && fx.pvDrawQuality)
-    : 'auto';
-  if (mode === 'full' || mode === 'lean') return mode;
+  var mode = pvDrawMode();
+  if (mode === 'full' || mode === 'lean') {
+    // Choosing a tier by hand is also the user rejecting what 自动 decided, so the automatic
+    // decision is dropped here instead of waiting in reserve for the next time 自动 is selected.
+    if (pvPresetState.autoTier !== 'full' || pvPresetState.autoPending) pvAutoReset('a manual tier was chosen');
+    return mode;
+  }
   return pvAutoDrawTier();
 }
 
@@ -80,6 +84,17 @@ var pvPresetState = {
   lastCostMs: 0,
   lastT: 0,
   tier: 'full',
+  autoTier: 'full',
+  autoPending: '',
+  autoCosts: [],
+  autoBadStreak: 0,
+  autoWindows: 0,
+  autoLastOver: 0,
+  autoChanges: 0,
+  autoSwitchAt: 0,
+  autoBlocked: '',
+  autoLog: '',
+  cutIndex: -1,
   fitMode: '',
   fitCrop: 0,
   bleedActive: false,
@@ -90,6 +105,138 @@ var pvPresetState = {
   drawsSinceWarm: 0,
   prefetchFollowing: false,
 };
+
+// The 自动 tier decides from measured draw cost alone. Canvas size is deliberately not an input:
+// docs/pv-perf-baseline.md measured 5.73ms at 0.69Mpx against 7.44ms at 3.50Mpx, so the work is
+// per glyph and per event, and a rule that read the resolution would cut the picture in front of a
+// machine that was never short of time (docs/LOW_SPEC_OPTIMIZATION_DOCTRINE.md 第二边界).
+var PV_AUTO_WINDOW_DRAWS = 24;        // two seconds of komas at PV_TARGET_FPS
+var PV_AUTO_BUDGET_MS = 1000 / 60;    // a draw over this blew the frame it ran in
+var PV_AUTO_ENTER_OVER = 14;          // 14 of 24 blown is "the layer is not keeping up"
+var PV_AUTO_ENTER_WINDOWS = 3;        // and it has to hold for three windows, which is what 持续 means
+var PV_AUTO_SEEK_BACK_S = 2;          // a rewind this large is a fresh listening pass: re-judge
+
+function pvAutoDrawTier() {
+  return pvPresetState.autoTier;
+}
+
+function pvAutoLog(fromTier, toTier, why) {
+  var line = '[PvDrawTier] ' + fromTier + ' -> ' + toTier + ': ' + why;
+  pvPresetState.autoLog = line;
+  if (typeof console !== 'undefined' && console && typeof console.info === 'function') console.info(line);
+  if (typeof window !== 'undefined' && window && window.__mineradioPerf &&
+      typeof window.__mineradioPerf.count === 'function') {
+    window.__mineradioPerf.count('pv.draw.tier.' + toTier);
+  }
+}
+
+// A new plan, a rewind, or a released layer is new evidence: the decision belongs to one song's
+// content density, so it starts again from the full picture instead of carrying over. A plan that
+// proved it cannot draw 性能档 is not new evidence - that stays blocked until the plan changes.
+function pvAutoReset(reason) {
+  var s = pvPresetState;
+  var from = s.autoTier;
+  s.autoTier = 'full';
+  s.autoPending = '';
+  s.autoCosts.length = 0;
+  s.autoBadStreak = 0;
+  s.autoWindows = 0;
+  s.autoLastOver = 0;
+  s.cutIndex = -1;
+  if (reason && from !== 'full') pvAutoLog(from, 'full', 'reset (' + reason + ')');
+}
+
+// A different song's content can draw fine even if the last one could not, so the block is the one
+// thing a rewind does not clear.
+function pvAutoNewPlan(reason) {
+  pvPresetState.autoBlocked = '';
+  pvAutoReset(reason);
+}
+
+// A tier the engine cannot draw is not a tier: go back to the full picture and stop 自动 trying for
+// the rest of this plan, so one broken cut cannot make the layer oscillate.
+function pvAutoGiveUp(why) {
+  var s = pvPresetState;
+  if (s.autoBlocked) return;
+  s.autoBlocked = why;
+  s.autoTier = 'full';
+  s.autoPending = '';
+  s.autoCosts.length = 0;
+  pvAutoLog('lean', 'full', 'auto disabled: ' + why);
+}
+
+// plan.cuts is sorted (the archive contract in pv-archive.js pins it), so the playhead's cut is a
+// binary search. A cut with no usable end is treated as one second long, the same stand-in the warm
+// pass uses.
+function pvCutStart(cut) { return Number(cut && cut.start) || 0; }
+function pvCutEnd(cut) {
+  var end = Number(cut && cut.end);
+  return isFinite(end) && end > 0 ? end : pvCutStart(cut) + 1;
+}
+function pvCutIndexAt(cuts, t) {
+  var lo = 0;
+  var hi = cuts.length - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    var cut = cuts[mid];
+    if (t < pvCutStart(cut)) hi = mid - 1;
+    else if (t >= pvCutEnd(cut)) lo = mid + 1;
+    else return mid;
+  }
+  return -1;
+}
+
+// Called before every real draw: keeps the cut cursor, and lands a pending decision on the first
+// koma of a new cut - never partway through one, because 性能档 changes what a transition looks like
+// and half of each would be the flash the doctrine forbids.
+function pvAutoBoundary(t, now) {
+  var s = pvPresetState;
+  if (s.lastT && (s.lastT - t) > PV_AUTO_SEEK_BACK_S + (1 / PV_TARGET_FPS)) {
+    pvAutoReset('rewound to ' + (Math.round(t * 10) / 10) + 's');
+  }
+  var cuts = s.plan && Array.isArray(s.plan.cuts) ? s.plan.cuts : null;
+  var index = cuts && cuts.length ? pvCutIndexAt(cuts, t) : -1;
+  var boundary = index >= 0 && index !== s.cutIndex;
+  if (index >= 0) s.cutIndex = index;
+  if (boundary && s.autoPending) {
+    var from = s.autoTier;
+    s.autoTier = s.autoPending;
+    s.autoPending = '';
+    s.autoBadStreak = 0;
+    s.autoChanges += 1;
+    s.autoSwitchAt = now;
+    pvAutoLog(from, s.autoTier,
+      s.autoLastOver + '/' + PV_AUTO_WINDOW_DRAWS + ' draws over ' + (Math.round(PV_AUTO_BUDGET_MS * 10) / 10) +
+      'ms, held for ' + PV_AUTO_ENTER_WINDOWS + ' windows (cut ' + index + ')');
+  }
+  return boundary;
+}
+
+// One real draw cost, sampled per window. Sticky by design: while 性能档 is on, a cheap frame only
+// proves the downgrade is working, and the only way to learn whether full quality fits again is to
+// pay for the frames it would drop - so recovery is the next plan, or the user picking 效果档.
+function pvAutoObserve(cost) {
+  var s = pvPresetState;
+  if (pvDrawMode() !== 'auto' || s.autoBlocked || s.autoTier !== 'full' || s.autoPending) {
+    s.autoCosts.length = 0;
+    return;
+  }
+  s.autoCosts.push(cost);
+  if (s.autoCosts.length < PV_AUTO_WINDOW_DRAWS) return;
+  var over = 0;
+  for (var i = 0; i < s.autoCosts.length; i++) {
+    if (s.autoCosts[i] > PV_AUTO_BUDGET_MS) over += 1;
+  }
+  s.autoCosts.length = 0;
+  s.autoWindows += 1;
+  s.autoLastOver = over;
+  if (over < PV_AUTO_ENTER_OVER) {
+    s.autoBadStreak = 0;
+    return;
+  }
+  s.autoBadStreak += 1;
+  if (s.autoBadStreak >= PV_AUTO_ENTER_WINDOWS) s.autoPending = 'lean';
+}
 
 function pvPresetIsActive() {
   return typeof fx !== 'undefined' && fx && Number(fx.preset) === PV_PRESET_INDEX;
@@ -172,6 +319,8 @@ function pvApplyPlan(song, lines, translationLines, opts) {
             pvPresetState.warmIndex = 0;
             pvPresetState.warmScale = 0;
             pvPresetState.drawsSinceWarm = 0;
+            // and new evidence for 自动, which is why the downgrade never carries into the next song
+            pvAutoNewPlan('plan ' + res.key);
             pvPresetState.planKey = res.key;
             pvPresetState.planSongKey = songKey;
             pvPresetState.renderer = typeof J.Renderer === 'function' ? new J.Renderer() : null;
@@ -272,6 +421,7 @@ function pvDrawLayerFrame(canvas, now) {
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
   var started = performance.now();
+  pvAutoBoundary(t, started);
   var tier = pvDrawTier();
   try {
     renderer.frame(ctx, plan, t, pvTierOptions(tier, w / planW));
@@ -281,13 +431,16 @@ function pvDrawLayerFrame(canvas, now) {
     pvPresetState.planError = 'draw:' + String((err && err.message) || err);
     pvPresetState.renderer = null;
     pvPresetState.planRetryAt = Date.now() + PV_PLAN_RETRY_MS;
+    if (tier === 'lean' && pvDrawMode() === 'auto') pvAutoGiveUp(pvPresetState.planError);
     return false;
   }
+  var cost = Math.round((performance.now() - started) * 100) / 100;
   pvPresetState.draws += 1;
   pvPresetState.tier = tier;
   pvPresetState.lastDrawAt = now;
-  pvPresetState.lastCostMs = Math.round((performance.now() - started) * 100) / 100;
+  pvPresetState.lastCostMs = cost;
   pvPresetState.lastT = t;
+  pvAutoObserve(cost);
   pvDrawBleedFrame(canvas, cssW, cssH, dispW, dispH, dpr);
   return true;
 }
@@ -391,6 +544,7 @@ function pvReleasePvLayer() {
   pvPresetState.warmIndex = 0;
   pvPresetState.warmScale = 0;
   pvPresetState.drawsSinceWarm = 0;
+  pvAutoReset();
   var layer = pvLayerElement();
   if (layer) layer.classList.remove('active');
   pvPresetState.active = false;
@@ -424,6 +578,20 @@ function pvPresetStatus() {
     tierSetting: typeof normalizePvDrawQuality === 'function' ? normalizePvDrawQuality(fx && fx.pvDrawQuality) : 'auto',
     tier: pvPresetState.tier,
     tierNow: pvDrawTier(),
+    auto: {
+      tier: pvPresetState.autoTier,
+      pending: pvPresetState.autoPending,
+      blocked: pvPresetState.autoBlocked,
+      badStreak: pvPresetState.autoBadStreak,
+      windows: pvPresetState.autoWindows,
+      lastOver: pvPresetState.autoLastOver,
+      windowDraws: PV_AUTO_WINDOW_DRAWS,
+      budgetMs: Math.round(PV_AUTO_BUDGET_MS * 10) / 10,
+      changes: pvPresetState.autoChanges,
+      switchAt: pvPresetState.autoSwitchAt,
+      cutIndex: pvPresetState.cutIndex,
+      log: pvPresetState.autoLog,
+    },
     fitMode: pvPresetState.fitMode,
     fitCrop: pvPresetState.fitCrop,
     bleed: (function () { var b = pvBleedElement(); return b ? { w: b.width, h: b.height, on: pvPresetState.bleedActive } : null; })(),
