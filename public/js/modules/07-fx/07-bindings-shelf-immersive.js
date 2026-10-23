@@ -368,6 +368,11 @@ function bindFxPanel() {
       setForegroundFpsMode(btn.getAttribute('data-foreground-fps'));
     });
   });
+  document.querySelectorAll('#pv-draw-quality-seg [data-pv-draw-quality]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      setPvDrawQualityMode(btn.getAttribute('data-pv-draw-quality'));
+    });
+  });
   updateFxInputs();
   if (typeof initFxConsoleSearchAndHistory === 'function') initFxConsoleSearchAndHistory();
 }

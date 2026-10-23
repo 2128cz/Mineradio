@@ -29,6 +29,38 @@ var PV_WARM_EVERY_DRAWS = 2;
 var PV_WARM_KOMA_PER_CUT = 3;
 var PV_WARM_MAX_HEIGHT = 240;     // buckets follow env.scale, which only depends on the width
 
+// Draw tiers, decided by the measurements in docs/pv-perf-baseline.md and not by the canvas size:
+// cost there tracks glyphs and events (0.69Mpx 5.73ms vs 3.50Mpx 7.44ms), so pixels are a weak
+// signal. 效果档 is what the layer has always sent. 性能档 adds the two options that flattened the
+// frame-time tail at 3.50Mpx - mean 7.44 -> 1.82ms, p95 16.6 -> 6.2ms, transition frames
+// 11.74 -> 1.93ms - against a 16.7ms budget. noGhost and noPost also measure well but take the
+// chroma depth and the whole post chain, so they stay out of the tier until the numbers say a
+// tier needs them.
+var PV_TIER_BUILDERS = {
+  full: function (scale) { return { scale: scale }; },
+  lean: function (scale) { return { scale: scale, fast: true, noTrans: true }; },
+};
+
+// 自动 resolves to a concrete tier. Until the measured-pressure decision exists it is 效果档:
+// docs/LOW_SPEC_OPTIMIZATION_DOCTRINE.md allows a cadence fallback only under sustained, measured
+// pressure, so an auto tier that guessed from resolution would be a silent visible downgrade.
+function pvAutoDrawTier() {
+  return 'full';
+}
+
+function pvDrawTier() {
+  var mode = typeof normalizePvDrawQuality === 'function'
+    ? normalizePvDrawQuality(fx && fx.pvDrawQuality)
+    : 'auto';
+  if (mode === 'full' || mode === 'lean') return mode;
+  return pvAutoDrawTier();
+}
+
+function pvTierOptions(tier, scale) {
+  var build = PV_TIER_BUILDERS[tier] || PV_TIER_BUILDERS.full;
+  return build(scale);
+}
+
 var pvPresetState = {
   active: false,
   engineReady: false,
@@ -47,6 +79,7 @@ var pvPresetState = {
   lastDrawAt: 0,
   lastCostMs: 0,
   lastT: 0,
+  tier: 'full',
   fitMode: '',
   fitCrop: 0,
   bleedActive: false,
@@ -239,8 +272,9 @@ function pvDrawLayerFrame(canvas, now) {
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
   var started = performance.now();
+  var tier = pvDrawTier();
   try {
-    renderer.frame(ctx, plan, t, { scale: w / planW });
+    renderer.frame(ctx, plan, t, pvTierOptions(tier, w / planW));
   } catch (err) {
     // One bad frame must not wedge the layer: report, drop the renderer, and let the retry
     // window rebuild it rather than throwing every frame.
@@ -250,6 +284,7 @@ function pvDrawLayerFrame(canvas, now) {
     return false;
   }
   pvPresetState.draws += 1;
+  pvPresetState.tier = tier;
   pvPresetState.lastDrawAt = now;
   pvPresetState.lastCostMs = Math.round((performance.now() - started) * 100) / 100;
   pvPresetState.lastT = t;
@@ -386,6 +421,9 @@ function pvPresetStatus() {
     released: pvPresetState.released,
     lastT: pvPresetState.lastT,
     lastCostMs: pvPresetState.lastCostMs,
+    tierSetting: typeof normalizePvDrawQuality === 'function' ? normalizePvDrawQuality(fx && fx.pvDrawQuality) : 'auto',
+    tier: pvPresetState.tier,
+    tierNow: pvDrawTier(),
     fitMode: pvPresetState.fitMode,
     fitCrop: pvPresetState.fitCrop,
     bleed: (function () { var b = pvBleedElement(); return b ? { w: b.width, h: b.height, on: pvPresetState.bleedActive } : null; })(),

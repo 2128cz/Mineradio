@@ -96,6 +96,21 @@ node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js --markdown
 - 日志要说明为什么切、切到哪一档，并且用户可以整体关掉；
 - 新的性能字段必须进入完整重启持久化 + MR2 末尾追加区，不得改动旧短码字段顺序。
 
+### 步骤 #8 验收实测
+
+命令：`node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js --sizes=1920x1080,1280x720 --dprs=1.5,1 --phases=full,fastNoTrans`（同一份档案 `lyrics-v1-d2eefa2d…json`，2026-10-23）。
+判定看两端：`full` 必须回到基线（证明效果档没被顺手改慢），`fastNoTrans` 必须压住尾部（这才是性能档存在的理由）。
+
+| 画布 | full 均值 / p95 / 超帧 | fastNoTrans 均值 / p95 / 超帧 | 相对 full |
+| --- | --- | --- | --- |
+| 2160×1620（3.50 Mpx，最接近 2K 全屏） | 7.29 / 16.4 / 5 of 120 | **1.86 / 5.4 / 0 of 120** | 74% |
+| 1440×1080（1.56 Mpx） | 7.49 / 18.3 / 8 | 1.65 / 5.0 / 1 | 78% |
+| 960×720（0.69 Mpx，小窗口） | 5.35 / 11.5 / 1 | 1.10 / 2.7 / 0 | 79% |
+
+`full` 三个盒子与 §3 基线（7.44 / 7.28 / 5.73）在 1–6% 内，说明这一档只是"不传额外选项"，没有引入成本。
+性能档在大盒子上均值 1.86 ms、p95 5.4 ms、120 帧 0 帧超 16.7 ms，验收通过。`cold` 行是每个盒子必跑的
+全新 renderer（字形缓存空），不代表任何一档。
+
 ## 6. 复现性
 
 同一命令连跑两次（含 JIT 预热与"第二遍才计时"两步，见 `scripts/pv-draw-bench.js` 的 `PAGE_SWEEP`）：

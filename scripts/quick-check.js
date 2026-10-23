@@ -677,6 +677,31 @@ function runPvPresetCheck() {
   runPvPresetLiveProbe(modulePath);
 }
 
+function runPvDrawTierCheck() {
+  logStep('PV draw tier (自动 resolves without degrading, 性能档 only sends measured knobs)');
+  const testFile = path.join(appRoot, 'tests', 'pv-draw-tier.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`PV draw tier regression failed: ${rel(testFile)}`);
+  }
+  const presetText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8');
+  if (!/function pvAutoDrawTier\(\) \{[\s\S]{0,40}return 'full';/.test(presetText)) {
+    fail('自动 must keep drawing the full picture until a measured, sustained-pressure decision exists; degrading on resolution alone breaks the low-spec doctrine');
+  }
+  const lean = /lean: function \(scale\) \{ return \{([^}]*)\}; \}/.exec(presetText);
+  if (!lean) fail('the 性能档 option object cannot be inspected');
+  const { PV_ENGINE_KNOBS } = require(path.join(appRoot, 'scripts', 'pv-draw-bench.js'));
+  const allowed = new Set(['scale'].concat(PV_ENGINE_KNOBS.map((knob) => knob.name)));
+  for (const part of lean[1].split(',')) {
+    const name = part.trim().split(':')[0].trim();
+    if (!name) continue;
+    if (!allowed.has(name)) fail(`性能档 sends ${name}, which the draw bench does not pin to the vendored engine`);
+  }
+  console.log(`[OK] PV draw tier wired; 性能档 sends ${lean[1].split(',').length} measured options.`);
+}
+
 function runPvDrawBenchGuardCheck() {
   logStep('PV draw bench (the downgrade knobs still exist, and the tool is still runnable)');
   const benchPath = path.join(appRoot, 'scripts', 'pv-draw-bench.js');
@@ -6385,6 +6410,7 @@ async function main() {
   runPvPrefetchCheck();
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
+  runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runWindowVisibilityTraceCheck();

@@ -1013,6 +1013,13 @@
             <button data-performance-quality="high">高</button>
             <button data-performance-quality="ultra">超高</button>
           </div>
+          <div class="fx-section-label">PV 动画绘制档位</div>
+          <div class="fx-seg" id="pv-draw-quality-seg" role="group" aria-label="PV 动画绘制档位"
+            title="只在播放 PV 动画歌词（预设 13）时生效。自动：画面保持完整，是否降档由实测帧时间决定，不按分辨率猜测（实测自适应尚未接入前始终等于效果档）；效果：永不降档；性能：关闭字形发光滤镜与镜头转场合成，换取不卡顿">
+            <button data-pv-draw-quality="auto">自动</button>
+            <button data-pv-draw-quality="full">效果</button>
+            <button data-pv-draw-quality="lean">性能</button>
+          </div>
           <div class="fx-section-label">前台帧率上限</div>
           <div class="fx-seg foreground-fps-seg" id="foreground-fps-seg" role="group"
             aria-label="前台帧率上限" title="默认跟随屏幕垂直同步；固定档位用于节能或降低负载">

@@ -267,6 +267,7 @@ var FX_CONSOLE_LAYOUT = [
       ] },
       { key: 'performance', title: '性能与后台', hint: '画质档位、后台渲染和直播保持', items: [
         fxConsoleItem('performance-quality-seg', '画质档位', '低配 中 高 超高 渲染质量'),
+        fxConsoleItem('pv-draw-quality-seg', 'PV 动画绘制档位', 'PV 歌词 动画 自动 效果 性能 帧时间 卡顿 降级'),
         fxConsoleItem('foreground-fps-seg', '前台帧率上限', 'FPS 跟随屏幕 垂直同步 VSync 高刷 节能 45 60 75 90 120'),
         fxConsoleItem('t-lyricLiveViewportFit', '歌词实时边界', '逐帧 投影 长歌词 屏幕余量 性能'),
         fxConsoleItem('t-lyricContextHighQuality', '上下句高清纹理', '歌词 高清 预热 GPU 显存'),
