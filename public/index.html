@@ -1114,6 +1114,10 @@
         <div class="fx-slider"><label>PV 故障强度</label><input id="fx-pvglitch" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('glitch', this.value)"><output></output></div>
         <div class="fx-slider"><label>PV 色散</label><input id="fx-pvchroma" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('chroma', this.value)"><output></output></div>
         <div class="fx-slider"><label>PV 颗粒与光</label><input id="fx-pvtexture" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('texture', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 更新节拍</label><input id="fx-pvkoma" type="range" min="6" max="24" step="1" oninput="setPvTuning('koma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 镜头密度</label><input id="fx-pvdensity" type="range" min="0.05" max="0.95" step="0.01" oninput="setPvTuning('density', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 统一感</label><input id="fx-pvunify" type="range" min="0" max="1" step="1" oninput="setPvTuning('unify', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" id="fx-pvreplan" onclick="pvTuningReplanClick(this)">重新生成当前歌</button></div>
       </div>
     </div>
 

@@ -133,11 +133,15 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-cineshake', '电影镜头', '镜头晃动 强度'),
         fxConsoleItem('t-cinema', '电影镜头开关', '动态镜头')
       ] },
-      { key: 'pv', title: '歌词 PV', hint: '分镜运动与调色，立即生效；分镜数量、样式与画幅属于档案，改后需要重新生成', items: [
+      { key: 'pv', title: '歌词 PV', hint: '前五项立即生效；镜头密度与统一感改的是分镜本身，要按“重新生成当前歌”才重算', items: [
         fxConsoleItem('fx-pvmotion', 'PV 运动量', '歌词PV 镜头 运动 动感 幅度'),
         fxConsoleItem('fx-pvglitch', 'PV 故障强度', '歌词PV 故障 干扰 抖动'),
         fxConsoleItem('fx-pvchroma', 'PV 色散', '歌词PV 色差 三色 重影'),
-        fxConsoleItem('fx-pvtexture', 'PV 颗粒与光', '歌词PV 颗粒 辉光 纹理 暗角')
+        fxConsoleItem('fx-pvtexture', 'PV 颗粒与光', '歌词PV 颗粒 辉光 纹理 暗角'),
+        fxConsoleItem('fx-pvkoma', 'PV 更新节拍', '歌词PV koma 帧率 每秒重绘'),
+        fxConsoleItem('fx-pvdensity', 'PV 镜头密度', '歌词PV 分镜数量 切镜频率 密度 需要重新生成'),
+        fxConsoleItem('fx-pvunify', 'PV 统一感', '歌词PV 统一 unify 重复行 版式复用 需要重新生成'),
+        fxConsoleItem({ selector: '.fx-pv-tuning .fx-actions' }, 'PV 重新生成', '刷新 重算 缓存 重新规划 bust')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
         fxConsoleItem('t-float', '浮空粒子层', '漂浮粒子'),

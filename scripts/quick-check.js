@@ -481,17 +481,19 @@ function runFxConsoleRegistrationCheck() {
     || !/\.fx-console-tab-empty\s*\{\s*display: *none/.test(cssText)) {
     fail('empty groups and tabs must have a display:none rule (the hidden attribute loses to .fx-fold display)');
   }
-  // The PV group is registered with the live dials only: cut counts/style/aspect are baked into
-  // the archive, so offering them here would silently do nothing until a re-plan.
+  // The PV group registers the live dials and the two plan-time ones plus the button that makes
+  // them take effect. Cut counts/style/aspect are baked into the archive, so they are not here.
   const pvGroup = /\{ key: 'pv', title: '[^']*', hint: '[^']*', items: \[([\s\S]*?)\] \}/.exec(workspace);
   if (!pvGroup) fail('the console layout must register the 歌词 PV group');
   else {
-    const items = (pvGroup[1].match(/fxConsoleItem\('/g) || []).length;
-    if (items !== 4) fail(`the 歌词 PV group must register exactly its four live dials (found ${items})`);
-    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture'].forEach(function (id) {
+    const items = (pvGroup[1].match(/fxConsoleItem\(/g) || []).length;
+    if (items !== 8) fail(`the 歌词 PV group must register its seven dials and the regenerate button (found ${items})`);
+    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity', 'fx-pvunify'].forEach(function (id) {
       if (pvGroup[1].indexOf(id) < 0) fail(`the 歌词 PV group is missing ${id}`);
       if (htmlText.indexOf('id="' + id + '"') < 0) fail(`index.html is missing the ${id} control the group points at`);
     });
+    if (pvGroup[1].indexOf(".fx-pv-tuning .fx-actions") < 0) fail('the regenerate button must resolve to the PV block, not the panel reset row');
+    if (htmlText.indexOf('id="fx-pvreplan"') < 0) fail('index.html must carry the regenerate button');
   }
   if (loaderText.indexOf("'js/modules/07-fx/10-pv-tuning.js'") < 0) {
     fail('the PV tuning module must be in the loader list, or its controls are dead');
@@ -499,10 +501,41 @@ function runFxConsoleRegistrationCheck() {
   if (!/plan\.fx\[key\] = pvTuning\[key\]/.test(tuning) || !/function applyPvTuningToPlan/.test(tuning)) {
     fail('a PV dial must write into the loaded plan.fx (draw-time dials, no re-plan)');
   }
-  if (!/if \(typeof applyPvTuningToPlan === 'function'\) applyPvTuningToPlan\(\)/.test(fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8'))) {
+  // Plan-time dials are only honest if they change the archive identity: otherwise a slider move
+  // would hit the old plan and draw exactly the same film.
+  const archiveText = fs.readFileSync(path.join(appRoot, 'pv-archive.js'), 'utf8');
+  if (!/REQUIRED_HEADER = \[[^\]]*'density'[^\]]*'unify'[^\]]*\]/.test(archiveText)) {
+    fail('the archive key must carry density and unify, or those dials cannot change a plan');
+  }
+  if (!/function remove\(key\)/.test(archiveText) || !/^\s+remove,$/m.test(archiveText)) {
+    fail('the archive store must expose remove() for 重新生成');
+  }
+  const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
+  if (!/density: recipe\.density,\s*\n\s*unify: recipe\.unify,/.test(serverText)) {
+    fail('the plan route must put density/unify into the archive key');
+  }
+  if (!/payload\.bust === true/.test(serverText) || !/pvArchive\.remove\(key\)/.test(serverText)) {
+    fail('the plan route must drop the stored archive when bust is asked for');
+  }
+  const plannerText = fs.readFileSync(path.join(appRoot, 'pv-planner.js'), 'utf8');
+  if (!/project\.fx\.density = Math\.min/.test(plannerText)) {
+    fail('the planner must pass density into the engine project');
+  }
+  const prefetchText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '08-pv-prefetch.js'), 'utf8');
+  if (!/pvTuningPlanParams\(\)/.test(prefetchText) || !/density: dials \? dials\.density : undefined/.test(prefetchText)) {
+    fail('the plan request must carry the console density/unify dials');
+  }
+  const presetText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8');
+  if (!/if \(typeof applyPvTuningToPlan === 'function'\) applyPvTuningToPlan\(\)/.test(presetText)) {
     fail('a newly loaded archive must receive the saved dials before its first drawing');
   }
-  console.log('[OK] console sync + PV dials registered.');
+  if (!/pvEnsurePlanNow\(song, lines, translationLines, \{ bust: opts\.bust === true \}\)/.test(presetText)) {
+    fail('the regenerate path must reach the route with bust set');
+  }
+  if (!/var fps = typeof pvTuningFps === 'function' \? pvTuningFps\(\) : PV_TARGET_FPS/.test(presetText)) {
+    fail('the koma dial must drive the frame gate, or 更新节拍 would do nothing');
+  }
+  console.log('[OK] console sync + PV dials (live + plan-time + regenerate) registered.');
 }
 
 function runWindowVisibilityTraceCheck() {

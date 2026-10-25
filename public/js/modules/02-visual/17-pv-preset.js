@@ -121,11 +121,26 @@ function pvPlanForSong(song, lines, translationLines, opts) {
   });
 }
 
+// The console's 重新生成: re-plan the song on screen with the current dials. The route drops the
+// stored archive for the key first (payload.bust), so this is a real rebuild even when no dial
+// changed; until the new plan lands the layer keeps drawing the old one.
+function pvRebuildPlanForCurrentSong() {
+  var song = pvCurrentSong();
+  var lines = typeof lyricsLines !== 'undefined' ? lyricsLines : null;
+  if (!song || !Array.isArray(lines) || !lines.length) return Promise.resolve({ ok: false, reason: 'no-lyrics' });
+  var translations = (typeof lyricsTranslationLines !== 'undefined' && Array.isArray(lyricsTranslationLines)) ? lyricsTranslationLines : [];
+  return pvApplyPlan(song, lines, translations, { bust: true }).then(function (ok) {
+    return ok
+      ? { ok: true, key: pvPresetState.planKey, cuts: pvPresetState.plan ? pvPresetState.plan.cuts.length : null }
+      : { ok: false, reason: pvPresetState.planError || 'rebuild-failed' };
+  });
+}
+
 function pvApplyPlan(song, lines, translationLines, opts) {
   opts = opts || {};
   var songKey = typeof pvSongKeyFor === 'function' ? pvSongKeyFor(song) : '';
   if (!songKey) { pvPresetState.planError = 'no-song-key'; return Promise.resolve(false); }
-  pvPresetState.planPromise = pvEnsurePlanNow(song, lines, translationLines)
+  pvPresetState.planPromise = pvEnsurePlanNow(song, lines, translationLines, { bust: opts.bust === true })
     .then(function (res) {
       if (!res || !res.ok) throw new Error('PV_PLAN_' + ((res && res.reason) || 'failed'));
       return fetch('/api/pv/archive?key=' + encodeURIComponent(res.key), { cache: 'no-store' })
@@ -416,8 +431,9 @@ function updatePvLayer(now, dt) {
   var canvas = pvCanvasElement();
   if (!canvas) return false;
   var gate = window.__mineradioMainFrameGates && window.__mineradioMainFrameGates.pv;
+  var fps = typeof pvTuningFps === 'function' ? pvTuningFps() : PV_TARGET_FPS;
   var step = gate && typeof consumeFrameGate === 'function'
-    ? consumeFrameGate(gate, now, dt, PV_TARGET_FPS, false, 'pv-layer')
+    ? consumeFrameGate(gate, now, dt, fps, false, 'pv-layer')
     : Math.max(0, Number(dt) || 0);
   if (step <= 0) { pvPresetState.skips += 1; return false; }
   var drew = pvDrawLayerFrame(canvas, now);

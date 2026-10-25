@@ -23,7 +23,10 @@ const FONT_TABLE_FILE = 'font-table.json';
 const MAX_ARCHIVE_BYTES = 6 * 1024 * 1024;
 const MAX_KEY_CHARS = 400;
 const REQUIRED_CUT_FIELDS = ['text', 'start', 'end', 'layout', 'enter', 'exit', 'hold'];
-const REQUIRED_HEADER = ['songKey', 'lyricHash', 'lang', 'aspect', 'res', 'seed', 'style', 'srcFingerprint'];
+// density and unify change the shots themselves (how many cuts a line gets, and whether repeated
+// lines reuse a layout), so they belong in the key: without them a slider move would hit the old
+// archive and draw exactly the same film.
+const REQUIRED_HEADER = ['songKey', 'lyricHash', 'lang', 'aspect', 'res', 'seed', 'style', 'density', 'unify', 'srcFingerprint'];
 
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -143,6 +146,21 @@ function createPvArchiveStore(options) {
     return !!(located && fs.existsSync(located.file));
   }
 
+  // The console's 重新生成 needs a real refresh: the key is derived from the song and the recipe,
+  // so re-asking with unchanged parameters is a hit by design. Dropping the file first makes the
+  // next request plan again for the same key, without inventing a new one.
+  function remove(key) {
+    const located = pathFor(key);
+    if (!located) return { ok: false, error: 'PV_KEY_INVALID' };
+    if (!fs.existsSync(located.file)) return { ok: true, removed: false, file: located.file };
+    try {
+      fs.unlinkSync(located.file);
+    } catch (e) {
+      return { ok: false, error: 'PV_ARCHIVE_REMOVE_FAILED', detail: String(e && e.message || e), file: located.file };
+    }
+    return { ok: true, removed: true, file: located.file };
+  }
+
   function write(archive) {
     if (!archive || !archive.archiveKey) return { ok: false, error: 'PV_WRITE_REQUIRES_ARCHIVE_KEY' };
     const verdict = validateArchive(archive);
@@ -245,6 +263,7 @@ function createPvArchiveStore(options) {
     validateArchive,
     read,
     has,
+    remove,
     write,
     trim,
     list,

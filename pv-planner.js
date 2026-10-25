@@ -183,6 +183,12 @@ function receiverSource() {
     '      project.typeset = payload.typeset === undefined ? defaults.typeset : !!payload.typeset;',
     '      project.unify = payload.unify === undefined ? defaults.unify : !!payload.unify;',
     '      project.fx = Object.assign({}, project.fx, { koma: Number(payload.koma) > 0 ? Number(payload.koma) : defaults.koma });',
+    // density sets the average shot length (engine: lerp(1.3, 0.5, density)), i.e. how many cuts
+    // a lyric line is broken into - it is a shot-level decision, made when the plan is built.
+    '      if (Number.isFinite(Number(payload.density)) && payload.density !== null && payload.density !== undefined) {',
+    '        var d = Number(payload.density);',
+    '        project.fx.density = Math.min(0.95, Math.max(0.05, d));',
+    '      }',
     '      var started = performance.now();',
     '      var plan = J.plan(project, null);',
     '      var json = JSON.stringify(J.planForAE(plan, project));',

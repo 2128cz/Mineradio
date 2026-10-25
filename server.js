@@ -927,6 +927,7 @@ async function handlePvPlan(body) {
     seed: payload.seed, style: payload.style || '', mood: payload.mood || null,
     aspect: payload.aspect || '', res: payload.res, fps: payload.fps,
     koma: payload.koma, typeset: false, unify: payload.unify !== false,
+    density: Number.isFinite(Number(payload.density)) && payload.density !== undefined ? Number(payload.density) : null,
   };
   const key = canonicalArchiveKey({
     songKey: song.key,
@@ -936,15 +937,27 @@ async function handlePvPlan(body) {
     res: payload.res,
     seed: payload.seed,
     style: payload.style || '',
+    // Both change the shots themselves, so they are part of the identity of this archive.
+    density: recipe.density,
+    unify: recipe.unify,
     srcFingerprint: fingerprint,
   });
+
+  // 重新生成: the key comes from the song and the recipe, so an unchanged request is a hit by
+  // design. Dropping the stored file first is what makes the button mean "plan it again".
+  const forceRefresh = payload.bust === true;
+  let busted = false;
+  if (forceRefresh) {
+    const dropped = pvArchive.remove(key);
+    busted = dropped.ok === true && dropped.removed === true;
+  }
 
   const cached = pvArchive.read(key);
   if (cached.ok) {
     // Same shape as the miss path (minus the plan itself): a caller that branches on
     // lyricFingerprint or srcFingerprint must not have to know which path answered.
     return {
-      ok: true, hit: true, planned: false, stored: true, key,
+      ok: true, hit: true, planned: false, stored: true, key, busted,
       cuts: cached.cuts, lines: cached.lines, events: cached.events,
       savedAt: cached.archive.savedAt, file: cached.file,
       srcFingerprint: fingerprint, lyricFingerprint, lyricHash,
@@ -1011,6 +1024,7 @@ async function handlePvPlan(body) {
       stored: stored.ok === true,
       storeReason: stored.ok ? '' : (stored.reason || stored.error || 'PV_PLAN_NOT_STORED'),
       key,
+      busted,
       cuts: out.cuts,
       lines: (plan.lines || []).length,
       events: (plan.events || []).length,
