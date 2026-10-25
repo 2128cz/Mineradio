@@ -140,7 +140,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-pvtexture', 'PV 颗粒与光', '歌词PV 颗粒 辉光 纹理 暗角'),
         fxConsoleItem('fx-pvkoma', 'PV 更新节拍', '歌词PV koma 帧率 每秒重绘'),
         fxConsoleItem('fx-pvdensity', 'PV 镜头密度', '歌词PV 分镜数量 切镜频率 密度 需要重新生成'),
-        fxConsoleItem('fx-pvunify', 'PV 统一感', '歌词PV 统一 unify 重复行 版式复用 需要重新生成'),
+        fxConsoleItem('t-pvunify', 'PV 统一感', '歌词PV 统一 unify 重复行 版式复用 需要重新生成'),
         fxConsoleItem({ selector: '.fx-pv-tuning .fx-actions' }, 'PV 重新生成', '刷新 重算 缓存 重新规划 bust')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

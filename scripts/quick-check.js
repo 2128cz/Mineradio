@@ -488,10 +488,20 @@ function runFxConsoleRegistrationCheck() {
   else {
     const items = (pvGroup[1].match(/fxConsoleItem\(/g) || []).length;
     if (items !== 8) fail(`the 歌词 PV group must register its seven dials and the regenerate button (found ${items})`);
-    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity', 'fx-pvunify'].forEach(function (id) {
+    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity', 't-pvunify'].forEach(function (id) {
       if (pvGroup[1].indexOf(id) < 0) fail(`the 歌词 PV group is missing ${id}`);
       if (htmlText.indexOf('id="' + id + '"') < 0) fail(`index.html is missing the ${id} control the group points at`);
     });
+    // A boolean belongs on the app's switch block, not a 0..1 slider.
+    if (!/class="fx-toggle" id="t-pvunify"/.test(htmlText)) {
+      fail('PV 统一感 must use the app\'s .fx-toggle switch, not a slider');
+    }
+    if (htmlText.indexOf('id="fx-pvunify"') >= 0) {
+      fail('the PV 统一感 slider must be gone once the switch exists');
+    }
+    if (!/document\.getElementById\('t-pv' \+ key\)/.test(tuning)) {
+      fail('the PV tuning module must drive the switch state through the toggle id');
+    }
     if (pvGroup[1].indexOf(".fx-pv-tuning .fx-actions") < 0) fail('the regenerate button must resolve to the PV block, not the panel reset row');
     if (htmlText.indexOf('id="fx-pvreplan"') < 0) fail('index.html must carry the regenerate button');
   }

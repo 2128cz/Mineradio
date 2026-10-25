@@ -16,7 +16,7 @@ var PV_TUNING_FIELDS = {
   texture: { def: 0.6, min: 0, max: 1, kind: 'percent' },
   koma: { def: 12, min: 6, max: 24, kind: 'count' },
   density: { def: 0.55, min: 0.05, max: 0.95, kind: 'percent', plan: true },
-  unify: { def: 1, min: 0, max: 1, kind: 'switch', plan: true }
+  unify: { def: 1, min: 0, max: 1, kind: 'bool', plan: true }
 };
 var pvTuningPlanDirty = false;
 
@@ -46,21 +46,32 @@ function pvTuningSave() {
 function pvTuningFormat(key) {
   var spec = PV_TUNING_FIELDS[key];
   if (!spec) return '';
-  if (spec.kind === 'switch') return pvTuning[key] >= 0.5 ? '开' : '关';
+  if (spec.kind === 'bool') return pvTuning[key] >= 0.5 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(pvTuning[key]));
   return Math.round(pvTuning[key] * 100) + '%';
 }
 
 function pvTuningSyncInputs() {
   Object.keys(PV_TUNING_FIELDS).forEach(function (key) {
+    var spec = PV_TUNING_FIELDS[key];
+    if (spec.kind === 'bool') {
+      // the app's own switch block, not a slider: .fx-toggle carries its state in the .on class
+      var toggle = document.getElementById('t-pv' + key);
+      if (toggle) toggle.classList.toggle('on', pvTuning[key] >= 0.5);
+      return;
+    }
     var input = document.getElementById('fx-pv' + key);
     if (!input) return;
-    input.value = String(PV_TUNING_FIELDS[key].kind === 'switch' ? (pvTuning[key] >= 0.5 ? 1 : 0) : pvTuning[key]);
+    input.value = String(pvTuning[key]);
     var output = input.parentNode ? input.parentNode.querySelector('output') : null;
     if (output) output.textContent = pvTuningFormat(key);
   });
   var button = document.getElementById('fx-pvreplan');
   if (button) button.textContent = pvTuningPlanDirty ? '有改动 · 重新生成当前歌' : '重新生成当前歌';
+}
+
+function togglePvUnify() {
+  return setPvTuning('unify', pvTuning.unify >= 0.5 ? 0 : 1);
 }
 
 // The plan-time pair, read by the recipe when a request is built (08-pv-prefetch.js).
