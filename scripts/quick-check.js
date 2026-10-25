@@ -852,6 +852,7 @@ function runHaloPresetCheck() {
     [/id: 'halo-layer'/, 'the takeover owner must be registered so the scene layers yield to the ring'],
     [/registerVisualTakeoverOwner\(\{/, 'the takeover owner must be registered through the shared registry'],
     [/haloReleaseHaloLayer/, 'releasing must clear the ring state, not only the pixels'],
+    [/if \(typeof registerVisualTakeoverOwner === 'function'\) \{/, 'the takeover registration is the module\'s only module-scope call, and it must be typeof-guarded: the module is concatenated into the loader, so a bare call throws at load if the registry is not there yet'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
   }
