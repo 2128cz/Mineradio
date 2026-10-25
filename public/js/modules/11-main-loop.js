@@ -170,7 +170,8 @@ var mainFrameGates = {
   skullParticles: createFrameGate('main.skullParticles', 45),
   homeAudio: createFrameGate('main.homeAudio', 15),
   desktopOverlay: createFrameGate('main.desktopOverlay', 12),
-  pv: createFrameGate('main.pv', 12)
+  pv: createFrameGate('main.pv', 12),
+  halo: createFrameGate('main.halo', 30)
 };
 window.__mineradioMainFrameGates = mainFrameGates;
 var mainLoopBackgroundTimer = 0;
@@ -633,6 +634,8 @@ function animate() {
   // PV (preset 13) draws into its own DOM layer, not the WebGL scene, so it is driven from the
   // frame loop but costs nothing while another preset is selected.
   if (typeof updatePvLayer === 'function') updatePvLayer(now, dt);
+  // HALO ring (preset 14) draws into its own DOM layer too, with its own frame gate.
+  if (typeof updateHaloLayer === 'function') updateHaloLayer(now, dt);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;

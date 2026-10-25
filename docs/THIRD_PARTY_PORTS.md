@@ -114,3 +114,56 @@ metrics object). A `typeof document` guard must be added there before the engine
 ever loaded outside the renderer (the archive prefetch route plans to do exactly
 that); adding it will change the bundle sha1, so update
 `vendor/jizura/engine-manifest.json` and this entry together.
+
+## HALOFLUX data-ring visual preset (`public/js/modules/02-visual/18-halo-ring-preset.js`)
+
+- Upstream: <https://github.com/Ryder191/haloflux> — "RYDER CODE / Ms MAIKEBAIs CAT"
+- Reference revision: `225e2b2862b3d64ae9f6e0b012b27ccbe004e3d0` (2026-10-23; checked out locally at `G:\SoftwareFile\haloflux`)
+- License: MIT (`Copyright (c) 2026 RYDER CODE / Ms MAIKEBAIs CAT`) — full text at `public/js/modules/02-visual/18-halo-ring-preset.LICENSE.txt`
+- Port date: 2026-10-25
+
+**No upstream file was vendored.** Unlike the JIZURA engine above — which is a
+whole engine that Mineradio loads at runtime — this is an *element* port: the
+upstream `lab.html` (94,575 B, sha1 `f5b3698e7fb6ba78836edc46a2e3a726b33970bc`)
+was read as a specification and re-implemented against Mineradio's own audio
+analysis, beat map, lyric timeline and frame gates. Mineradio's preset 14
+(光环 / HALO RING) draws into its own `#halo-layer` DOM canvas.
+
+Ported elements, with their upstream anchors in `lab.html`:
+
+| Element | Upstream anchor | Mineradio |
+| --- | --- | --- |
+| Ring with micro data panels | `buildCards` :829-839, `drawRing` :1007-1059 | `haloBuildSlots`, `haloRenderSlot`, `haloDrawRing` |
+| Outer beam layers | `buildOuter` :521-530, `drawStrands` :616-649 | outer-beams section |
+| Inner woven web / radial lines | `radialLines` :651-658, `hash` :650 | inner-web section |
+| Comets | `spawnComet` :457-477, `strokeComet` :479-486 | `haloSpawnComet`, `haloDrawComets` |
+| Fly-outs | `newFlyBand`/`newFlyer`/`spawnFlyBurst`/`drawFlyers` :659-722 | fly-outs section |
+| Haze / root flares | :544-554, `updateOuter` :565-599, `onBeatOuter` :601-609 | haze-and-flares section |
+| DOM callout | `drawCallout` :1191-1200 | `haloUpdateCalloutText`, `haloDrawCallout` |
+
+Written for Mineradio, not ported: the audio-driven spectrum spokes, the lyric
+dial (lyrics set radially around the circumference, the ring turning with the
+line), the beat-driven camera moves, the three-phase beat clock, the panel
+virtualization, and click-to-emit.
+
+Deliberate divergences from upstream:
+
+- **The glow buffer is gone.** Upstream composites a separate 1/3-resolution
+  glow canvas and blurs it (`glow` :1.1 in `BAKED_MINE`). The port uses wide
+  `lighter` strokes on the single canvas instead, so the layer costs one
+  rasterization pass instead of two plus a blur.
+- **Bokeh, atmosphere, vignette, ring shadow and depth blur are not ported.**
+  Upstream's own finalized defaults (`BAKED_MINE`, 2026-10-21) set `bokeh`,
+  `bokehBright`, `atmos`, `ringShadow`, `vignette`, `depthBlur` and `webBlur`
+  to 0, so these are off in the look the author shipped.
+- **Culling is analytic.** Upstream assumes an off-centre ring and culls with
+  half-angle and half-plane tests (`thV`/`thS` :371-372). A centred Mineradio
+  ring under a moving camera needs the analytic visible radius
+  (`haloVisibleRadius`), or the beams are culled while still on screen.
+- **The clock is real.** Upstream drives everything from a synthetic beat
+  clock; the port drives it from Mineradio's offline/realtime beat map, and the
+  comet's arrival is derived from the clock (`startAt`/`endAt`) so it lands on
+  the drum hit rather than on the frame the launch happened to land on.
+- **The callout shows lyrics.** Upstream draws small formulas; the port
+  replaces them with the current lyric line and its translation.
+

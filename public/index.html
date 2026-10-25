@@ -80,6 +80,16 @@
       <canvas id="pv-bleed" aria-hidden="true"></canvas>
       <canvas id="pv-canvas" aria-hidden="true"></canvas>
     </div>
+    <!-- HALO ring (preset 14): the data ring with the lyrics on its inner rim. Sits above the
+         PV layer and below the WebGL canvas. Inert unless the preset is active. -->
+    <div id="halo-layer" aria-hidden="true">
+      <canvas id="halo-canvas" aria-hidden="true"></canvas>
+      <div id="halo-callout">
+        <div class="halo-callout-k">LYRIC</div>
+        <div class="halo-callout-v" id="halo-callout-text"></div>
+        <div class="halo-callout-s" id="halo-callout-sub"></div>
+      </div>
+    </div>
     <div id="canvas-container"></div>
     <canvas id="idle-guide-canvas" aria-hidden="true"></canvas>
 

@@ -38,6 +38,7 @@
     'js/modules/02-visual/15-ripples-cover-depth.js',
     'js/modules/02-visual/16-visual-takeover.js',
     'js/modules/02-visual/17-pv-preset.js',
+    'js/modules/02-visual/18-halo-ring-preset.js',
     'sonic-topography-preset.js',
     'sonic-workshop-preset.js',
     'js/modules/03-beat/00-tempo-worker-cache-prefetch.js',

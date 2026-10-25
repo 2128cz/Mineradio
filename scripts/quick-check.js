@@ -799,6 +799,145 @@ function runPvPresetLiveProbe(modulePath) {
   }
 }
 
+// Preset 14 (HALO ring). The static half guards the source; there is no live half yet
+// because the ring needs a playing song, a lyric timeline and a renderer to measure against.
+function runHaloPresetCheck() {
+  logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const coreText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '00-state', '00-core-stores.js'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const cssText = fs.readFileSync(path.join(appRoot, 'public', 'css', 'index.css'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  if (!fs.existsSync(modulePath)) fail('02-visual/18-halo-ring-preset.js is missing; preset 14 would be an empty card');
+
+  const ceiling = Number((coreText.match(/MAX_VISUAL_PRESET_INDEX = (\d+)/) || [])[1]);
+  const haloIndex = Number((fs.readFileSync(modulePath, 'utf8').match(/HALO_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (!(haloIndex === ceiling)) {
+    fail(`HALO_PRESET_INDEX=${haloIndex} must track MAX_VISUAL_PRESET_INDEX=${ceiling}`);
+  }
+  if (!/光环/.test(archiveText) || !/HALO RING/.test(archiveText)) {
+    fail('the HALO preset must be a labelled, selectable card');
+  }
+  if (!/id="halo-layer"/.test(htmlText) || !/id="halo-canvas"/.test(htmlText) || !/#halo-layer\s*\{/.test(cssText)) {
+    fail('the HALO layer and its canvas must exist in index.html with styles');
+  }
+  if (htmlText.indexOf('id="halo-layer"') > htmlText.indexOf('id="canvas-container"')) {
+    fail('the HALO layer must come before the WebGL canvas container so it covers the background stack');
+  }
+  if (!/id="halo-callout"/.test(htmlText) || !/id="halo-callout-text"/.test(htmlText) || !/id="halo-callout-sub"/.test(htmlText)) {
+    fail('the lyric callout must exist in index.html: the formulas are replaced by lyrics');
+  }
+  if (!/js\/modules\/02-visual\/18-halo-ring-preset\.js/.test(loaderText)) {
+    fail('18-halo-ring-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (!/updateHaloLayer\(now, dt\)/.test(loopText)) {
+    fail('the main loop must drive the HALO layer through its own frame gate');
+  }
+  const haloText = fs.readFileSync(modulePath, 'utf8');
+  // The gate rate and the module's own target must be the same number, or the layer is either
+  // drawn more often than it budgets for or less often than it was measured at.
+  const haloFps = Number((haloText.match(/HALO_FPS = (\d+)/) || [])[1]);
+  const gateFps = Number((loopText.match(/halo: createFrameGate\('main\.halo', (\d+)\)/) || [])[1]);
+  if (!(haloFps && gateFps === haloFps)) {
+    fail(`the HALO frame gate (${gateFps}) must match the module's target FPS (${haloFps})`);
+  }
+  if (!/applyHaloPresetNow\(prev, p\)/.test(gridText)) {
+    fail('setPreset must apply the HALO layer immediately: the loop parks when nothing plays');
+  }
+  for (const [pattern, why] of [
+    [/canvas\.width = 2;/, 'releasing must zero the canvas backing store, not just hide the layer'],
+    [/id: 'halo-layer'/, 'the takeover owner must be registered so the scene layers yield to the ring'],
+    [/registerVisualTakeoverOwner\(\{/, 'the takeover owner must be registered through the shared registry'],
+    [/haloReleaseHaloLayer/, 'releasing must clear the ring state, not only the pixels'],
+  ]) {
+    if (!pattern.test(haloText)) fail(why);
+  }
+  // The beat has to arrive ON the drum hit, so the animation's progress must be a function of
+  // the clock, not of the frame the launch happened to land on. A frame-quantized arrival drifts
+  // by up to one frame and the drift is visible against the beat.
+  if (!/endAt: hitAt != null \? hitAt :/.test(haloText) || !/haloPlayheadSeconds\(\)/.test(haloText)) {
+    fail('the comet must derive its arrival from the clock so it lands on the beat, not on the launch frame');
+  }
+  // Three phases: prepare (pre-render the panels that swap in on the hit), launch (fly the
+  // comets out), hit (swap the panels and pulse the ring).
+  for (const [pattern, why] of [
+    [/haloBeatPrepare/, 'the beat must have a prepare phase'],
+    [/haloBeatLaunch/, 'the beat must have a launch phase'],
+    [/haloBeatHit/, 'the beat must have a hit phase'],
+    [/HALO_PREPARE_MS = (\d+);/, 'the prepare phase must be a fixed, stated lead time'],
+    [/e\.hitAt - HALO_PREPARE_MS \/ 1000/, 'the prepare phase must run before the hit, not on it'],
+    [/haloCameraScheduleMove/, 'a beat must be able to drive the camera'],
+  ]) {
+    if (!pattern.test(haloText)) fail(why);
+  }
+  const prepareMs = Number((haloText.match(/HALO_PREPARE_MS = (\d+);/) || [])[1]);
+  if (!(prepareMs >= 100 && prepareMs <= 600)) {
+    fail(`the prepare lead must stay in 100..600 ms (found ${prepareMs})`);
+  }
+  // The lyric dial: the ring turns with the lyric, and the lyric's own timing offset has to be
+  // applied or the turn lands a beat late on every song that uses an offset.
+  if (!/getActiveLyricTimingOffsetSeconds/.test(haloText)) {
+    fail('the lyric dial must apply the active lyric timing offset');
+  }
+  if (!/haloLyricUpdate/.test(haloText) || !/haloBuildLyricRing/.test(haloText)) {
+    fail('the ring must build and drive a lyric dial');
+  }
+  // Data virtualization: only the panels that are actually on screen are re-rendered.
+  if (!/haloSlotVisible/.test(haloText) || !/haloPickVisibleSlots/.test(haloText)) {
+    fail('the ring panels must be virtualized to the visible arc');
+  }
+  // Click emits a line from inside the ring outwards.
+  if (!/haloEmitFromPoint/.test(haloText)) {
+    fail('a click must be able to emit a line from inside the ring');
+  }
+  // The radiating lines behind the text replace the separate spectrum display, so they must be
+  // driven by the live audio level rather than by a fixed animation.
+  if (!/haloReadAudioBands/.test(haloText) || !/HALO_SPOKE_COUNT/.test(haloText)) {
+    fail('the spectrum spokes must be driven by the live audio bands');
+  }
+  // The offline half-plane culling of the original does not hold for a centred ring: a camera
+  // zoom has to be able to cull by the analytic visible radius instead.
+  if (!/haloVisibleRadius/.test(haloText)) {
+    fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
+  }
+  // MIT requires the notice and the licence text to travel with the copy, and this fork ships
+  // an installer: "the file exists somewhere in the repo" is not enough, so the sidecar has to
+  // be inside the packaged public/ tree and the two notices have to name the same revision.
+  const sidecarPath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.LICENSE.txt');
+  if (!fs.existsSync(sidecarPath)) {
+    fail('the HALO licence sidecar is missing: the MIT notice must travel with the ported code');
+  }
+  const sidecar = fs.readFileSync(sidecarPath, 'utf8');
+  if (!/MIT License/.test(sidecar) || !/Copyright \(c\) 2026 RYDER CODE \/ Ms MAIKEBAIs CAT/.test(sidecar)) {
+    fail('the HALO licence sidecar is not the upstream MIT licence with its copyright line');
+  }
+  const HALO_UPSTREAM_REV = '225e2b2862b3d64ae9f6e0b012b27ccbe004e3d0';
+  const noticeText = fs.readFileSync(path.join(appRoot, 'NOTICE.md'), 'utf8');
+  const portsText = fs.readFileSync(path.join(appRoot, 'docs', 'THIRD_PARTY_PORTS.md'), 'utf8');
+  for (const [where, text] of [['the licence sidecar', sidecar], ['NOTICE.md', noticeText], ['docs/THIRD_PARTY_PORTS.md', portsText]]) {
+    if (!text.includes(HALO_UPSTREAM_REV)) {
+      fail(`${where} must name the HALOFLUX upstream revision ${HALO_UPSTREAM_REV}; three places that disagree cannot be reconciled later`);
+    }
+  }
+  if (!/Ryder191\/haloflux/.test(noticeText) || !/Ryder191\/haloflux/.test(portsText)) {
+    fail('the HALOFLUX upstream repository must be named in NOTICE.md and docs/THIRD_PARTY_PORTS.md');
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
+  const buildFiles = (pkg.build && pkg.build.files) || [];
+  if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {
+    fail('build.files must include public/**/* so the HALO licence sidecar ships with the ported module');
+  }
+  for (const f of ['NOTICE.md', 'docs/THIRD_PARTY_PORTS.md']) {
+    if (!buildFiles.includes(f)) {
+      fail(`build.files must include ${f} so the HALOFLUX attribution ships in the installer`);
+    }
+  }
+  console.log(`[OK] HALO ring wired: preset ${haloIndex}, layer + takeover + release + beat clock + lyric dial present.`);
+}
+
 function runVisualTakeoverMaskCheck() {
   logStep('Visual takeover mask equivalence regression');
   const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
@@ -4091,10 +4230,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 13/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 14/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -6441,6 +6580,7 @@ async function main() {
   runPvPrefetchCheck();
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
+  runHaloPresetCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runFxConsoleRegistrationCheck();
   runWindowVisibilityTraceCheck();
