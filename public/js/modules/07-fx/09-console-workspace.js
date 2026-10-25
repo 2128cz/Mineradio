@@ -133,6 +133,12 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-cineshake', '电影镜头', '镜头晃动 强度'),
         fxConsoleItem('t-cinema', '电影镜头开关', '动态镜头')
       ] },
+      { key: 'pv', title: '歌词 PV', hint: '分镜运动与调色，立即生效；分镜数量、样式与画幅属于档案，改后需要重新生成', items: [
+        fxConsoleItem('fx-pvmotion', 'PV 运动量', '歌词PV 镜头 运动 动感 幅度'),
+        fxConsoleItem('fx-pvglitch', 'PV 故障强度', '歌词PV 故障 干扰 抖动'),
+        fxConsoleItem('fx-pvchroma', 'PV 色散', '歌词PV 色差 三色 重影'),
+        fxConsoleItem('fx-pvtexture', 'PV 颗粒与光', '歌词PV 颗粒 辉光 纹理 暗角')
+      ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
         fxConsoleItem('t-float', '浮空粒子层', '漂浮粒子'),
         fxConsoleItem('t-bloom', '粒子溢光', '粒子光晕'),
@@ -523,7 +529,56 @@ function organizeFxConsoleWorkspace() {
   });
   panel._fxConsoleWorkspaceOrganized = true;
   panel.setAttribute('data-console-layout', 'task-first-v2');
+  fxConsoleSyncGroupVisibility();
   setFxPanelTab(fxPanelTab);
+}
+
+// A group whose every item has been hidden for the current visual preset used to render as an
+// empty fold - the layout is static and only the items are gated, so "音域地形" stayed on screen
+// with nothing in it after switching to a preset those controls do not belong to. Visibility is
+// derived from the registered items instead of assumed from the layout.
+function fxConsoleItemVisible(node) {
+  if (!node) return false;
+  if (node.classList && node.classList.contains('fx-sonic-hidden')) return false;
+  if (node.hidden) return false;
+  if (node.style && node.style.display === 'none') return false;
+  return true;
+}
+
+function fxConsoleSyncGroupVisibility() {
+  var panel = document.getElementById('fx-panel');
+  if (!panel || !panel._fxConsoleWorkspaceOrganized) return false;
+  var changed = false;
+  var visibleByTab = {};
+  Object.keys(fxConsoleGroups).forEach(function (key) {
+    var fold = fxConsoleGroups[key];
+    if (!fold || !fold.isConnected) return;
+    var tab = key.split(':')[0];
+    var items = fold.querySelectorAll('[data-fx-console-entry]');
+    var any = false;
+    for (var i = 0; i < items.length; i++) {
+      if (fxConsoleItemVisible(items[i])) { any = true; break; }
+    }
+    var empty = !any;
+    if (fold.classList.contains('fx-console-empty') !== empty) {
+      fold.classList.toggle('fx-console-empty', empty);
+      changed = true;
+    }
+    if (any) visibleByTab[tab] = true;
+  });
+  var firstVisible = null;
+  Array.prototype.forEach.call(panel.querySelectorAll('#fx-panel-tabs [data-fx-tab]'), function (btn) {
+    var key = btn.getAttribute('data-fx-tab');
+    var empty = !visibleByTab[key];
+    if (btn.classList.contains('fx-console-tab-empty') !== empty) {
+      btn.classList.toggle('fx-console-tab-empty', empty);
+      changed = true;
+    }
+    if (!empty && !firstVisible) firstVisible = key;
+  });
+  // the open tab must stay one that has something in it
+  if (firstVisible && !visibleByTab[fxPanelTab]) setFxPanelTab(firstVisible);
+  return changed;
 }
 
 function fxConsoleEntryForElement(element) {

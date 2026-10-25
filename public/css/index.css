@@ -17244,6 +17244,16 @@ body.panel-reordering .mini-queue-item.is-reordering {
   background: rgba(255, 255, 255, .024)
 }
 
+/* Which controls exist depends on the active visual preset, but the console layout is static:
+   a group whose items were all hidden, and a tab left without any group, are dropped instead of
+   rendering as an empty fold. */
+#fx-panel .fx-console-group.fx-console-empty {
+  display: none
+}
+#fx-panel #fx-panel-tabs [data-fx-tab].fx-console-tab-empty {
+  display: none
+}
+
 #fx-panel .fx-console-group .fx-console-group-head {
   display: flex;
   width: 100%;

@@ -457,6 +457,54 @@ function runMainWindowRuntimeRecoveryRegressionCheck() {
   console.log('[OK] main-window runtime recovery green; the minimize-intent and desktop-replay fixes hold.');
 }
 
+function runFxConsoleRegistrationCheck() {
+  logStep('Visual console registration (empty groups collapse, PV dials registered)');
+  const workspace = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const perf = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '05-fx-panel-performance.js'), 'utf8');
+  const tuning = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '10-pv-tuning.js'), 'utf8');
+  const cssText = fs.readFileSync(path.join(appRoot, 'public', 'css', 'index.css'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+
+  // Which controls exist depends on the visual preset, but the console layout is static: a group
+  // whose every item was hidden has to collapse, or the user is left with an empty fold.
+  if (!/function fxConsoleSyncGroupVisibility\(\)/.test(workspace)) {
+    fail('the console must collapse groups whose items are all hidden for the current preset');
+  }
+  if (!/fxConsoleSyncGroupVisibility\(\);\s*\n\s*setFxPanelTab\(fxPanelTab\)/.test(workspace)) {
+    fail('the console must sync visibility right after organizing');
+  }
+  if (!/setFxPanelControlsHidden[\s\S]{0,400}fxConsoleSyncGroupVisibility\(\)/.test(perf)) {
+    fail('hiding preset-specific controls must re-sync the console groups');
+  }
+  if (!/\.fx-console-group\.fx-console-empty\s*\{\s*display: *none/.test(cssText)
+    || !/\.fx-console-tab-empty\s*\{\s*display: *none/.test(cssText)) {
+    fail('empty groups and tabs must have a display:none rule (the hidden attribute loses to .fx-fold display)');
+  }
+  // The PV group is registered with the live dials only: cut counts/style/aspect are baked into
+  // the archive, so offering them here would silently do nothing until a re-plan.
+  const pvGroup = /\{ key: 'pv', title: '[^']*', hint: '[^']*', items: \[([\s\S]*?)\] \}/.exec(workspace);
+  if (!pvGroup) fail('the console layout must register the 歌词 PV group');
+  else {
+    const items = (pvGroup[1].match(/fxConsoleItem\('/g) || []).length;
+    if (items !== 4) fail(`the 歌词 PV group must register exactly its four live dials (found ${items})`);
+    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture'].forEach(function (id) {
+      if (pvGroup[1].indexOf(id) < 0) fail(`the 歌词 PV group is missing ${id}`);
+      if (htmlText.indexOf('id="' + id + '"') < 0) fail(`index.html is missing the ${id} control the group points at`);
+    });
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/10-pv-tuning.js'") < 0) {
+    fail('the PV tuning module must be in the loader list, or its controls are dead');
+  }
+  if (!/plan\.fx\[key\] = pvTuning\[key\]/.test(tuning) || !/function applyPvTuningToPlan/.test(tuning)) {
+    fail('a PV dial must write into the loaded plan.fx (draw-time dials, no re-plan)');
+  }
+  if (!/if \(typeof applyPvTuningToPlan === 'function'\) applyPvTuningToPlan\(\)/.test(fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8'))) {
+    fail('a newly loaded archive must receive the saved dials before its first drawing');
+  }
+  console.log('[OK] console sync + PV dials registered.');
+}
+
 function runWindowVisibilityTraceCheck() {
   logStep('Window visibility trace (hide/minimize/restore recorded, collector reads them)');
   const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
@@ -6351,6 +6399,7 @@ async function main() {
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
+  runFxConsoleRegistrationCheck();
   runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();

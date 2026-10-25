@@ -135,6 +135,8 @@ function pvApplyPlan(song, lines, translationLines, opts) {
           return pvEnsureEngine().then(function (J) {
             if (!J) throw new Error('PV_ENGINE_' + (pvPresetState.engineError || 'unavailable'));
             pvPresetState.plan = data.archive.plan;
+            // the console's live dials override the archived fx before the first drawing
+            if (typeof applyPvTuningToPlan === 'function') applyPvTuningToPlan();
             // a new plan means new characters: start the warm pass over
             pvPresetState.warmIndex = 0;
             pvPresetState.warmScale = 0;

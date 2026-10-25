@@ -175,6 +175,8 @@ function setFxPanelControlsHidden(ids, hidden) {
     var node = fxPanelControlBlockById(id);
     if (node) node.classList.toggle('fx-sonic-hidden', !!hidden);
   });
+  // The console's groups are static, so hiding every item of one has to collapse the fold too.
+  if (typeof fxConsoleSyncGroupVisibility === 'function') fxConsoleSyncGroupVisibility();
 }
 function updateSonicSeriesControlVisibility() {
   var preset = Number(fx && fx.preset) || 0;
