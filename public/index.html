@@ -80,15 +80,12 @@
       <canvas id="pv-bleed" aria-hidden="true"></canvas>
       <canvas id="pv-canvas" aria-hidden="true"></canvas>
     </div>
-    <!-- HALO ring (preset 14): the data ring with the lyrics on its inner rim. Sits above the
-         PV layer and below the WebGL canvas. Inert unless the preset is active. -->
+    <!-- HALO ring (preset 14): the data ring with the lyric list bent over its outer rim.
+         Sits above the PV layer and below the WebGL canvas. Inert unless the preset is
+         active. The pointer is handled on the window: this layer sits below the WebGL
+         canvas, so it never sees an event of its own. -->
     <div id="halo-layer" aria-hidden="true">
       <canvas id="halo-canvas" aria-hidden="true"></canvas>
-      <div id="halo-callout">
-        <div class="halo-callout-k">LYRIC</div>
-        <div class="halo-callout-v" id="halo-callout-text"></div>
-        <div class="halo-callout-s" id="halo-callout-sub"></div>
-      </div>
     </div>
     <div id="canvas-container"></div>
     <canvas id="idle-guide-canvas" aria-hidden="true"></canvas>
@@ -1130,6 +1127,31 @@
           <span>PV 统一感</span><span class="dot"></span>
         </div>
         <div class="fx-actions"><button class="fx-mini-btn" id="fx-pvreplan" onclick="pvTuningReplanClick(this)">重新生成当前歌</button></div>
+      </div>
+      <!-- The HALO ring's own knobs (preset 14). The console moves these into 动效 → 光环.
+           The text size is not here: it reuses the app's own 歌词大小 (fx.lyricScale). -->
+      <div class="fx-halo-tuning">
+        <div class="fx-slider"><label>圆环水平位置</label><input id="fx-halocenterX" type="range" min="-1.2" max="1.2" step="0.01" oninput="setHaloTuning('centerX', this.value)"><output></output></div>
+        <div class="fx-slider"><label>圆环垂直位置</label><input id="fx-halocenterY" type="range" min="-0.5" max="1.5" step="0.01" oninput="setHaloTuning('centerY', this.value)"><output></output></div>
+        <div class="fx-slider"><label>圆环大小</label><input id="fx-haloradiusK" type="range" min="0.12" max="0.9" step="0.005" oninput="setHaloTuning('radiusK', this.value)"><output></output></div>
+        <div class="fx-slider"><label>数据环宽度</label><input id="fx-halobandK" type="range" min="0.04" max="0.4" step="0.005" oninput="setHaloTuning('bandK', this.value)"><output></output></div>
+        <div class="fx-slider"><label>数据块高度</label><input id="fx-halopanelHeight" type="range" min="8" max="120" step="1" oninput="setHaloTuning('panelHeight', this.value)"><output></output></div>
+        <div class="fx-slider"><label>内网线条数</label><input id="fx-halowebCurves" type="range" min="60" max="1200" step="10" oninput="setHaloTuning('webCurves', this.value)"><output></output></div>
+        <div class="fx-slider"><label>内网流光数</label><input id="fx-halorunners" type="range" min="0" max="400" step="4" oninput="setHaloTuning('runners', this.value)"><output></output></div>
+        <div class="fx-slider"><label>外圈光线密度</label><input id="fx-halostrandDensity" type="range" min="0.05" max="1" step="0.01" oninput="setHaloTuning('strandDensity', this.value)"><output></output></div>
+        <div class="fx-slider"><label>外圈光线长度</label><input id="fx-halobeamLength" type="range" min="0.1" max="1.2" step="0.01" oninput="setHaloTuning('beamLength', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雾光强度</label><input id="fx-halohazeAmount" type="range" min="0" max="2" step="0.01" oninput="setHaloTuning('hazeAmount', this.value)"><output></output></div>
+        <div class="fx-slider"><label>飞线强度</label><input id="fx-halostreakAmount" type="range" min="0" max="2" step="0.01" oninput="setHaloTuning('streakAmount', this.value)"><output></output></div>
+        <div class="fx-slider"><label>频谱增益</label><input id="fx-halospectrumGain" type="range" min="0" max="3" step="0.01" oninput="setHaloTuning('spectrumGain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点缩放</label><input id="fx-halopulseScale" type="range" min="0" max="0.4" step="0.005" oninput="setHaloTuning('pulseScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点抖动</label><input id="fx-haloshakePx" type="range" min="0" max="40" step="1" oninput="setHaloTuning('shakePx', this.value)"><output></output></div>
+        <div class="fx-slider"><label>读词位置</label><input id="fx-haloreadAngle" type="range" min="-180" max="180" step="1" oninput="setHaloTuning('readAngle', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词离环距离</label><input id="fx-halotextGap" type="range" min="0" max="160" step="1" oninput="setHaloTuning('textGap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词行距</label><input id="fx-halolineGap" type="range" min="0" max="120" step="1" oninput="setHaloTuning('lineGap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>转环提前量</label><input id="fx-halorotLead" type="range" min="0" max="4" step="0.05" oninput="setHaloTuning('rotLead', this.value)"><output></output></div>
+        <div class="fx-slider"><label>转环时长</label><input id="fx-halorotDur" type="range" min="0.05" max="4" step="0.05" oninput="setHaloTuning('rotDur', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点刷新块数</label><input id="fx-halopanelRefresh" type="range" min="1" max="12" step="1" oninput="setHaloTuning('panelRefresh', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetHaloTuning()">恢复光环默认</button></div>
       </div>
     </div>
 

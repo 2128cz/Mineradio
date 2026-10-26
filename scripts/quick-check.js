@@ -827,16 +827,44 @@ function runHaloPresetCheck() {
   if (htmlText.indexOf('id="halo-layer"') > htmlText.indexOf('id="canvas-container"')) {
     fail('the HALO layer must come before the WebGL canvas container so it covers the background stack');
   }
-  if (!/id="halo-callout"/.test(htmlText) || !/id="halo-callout-text"/.test(htmlText) || !/id="halo-callout-sub"/.test(htmlText)) {
-    fail('the lyric callout must exist in index.html: the formulas are replaced by lyrics');
+  // The lyric callout was removed with the rework: the lyrics are the ring's own list now,
+  // and a second copy of the line in a popup was a duplicate. Its markup must not come back.
+  if (/id="halo-callout"/.test(htmlText) || /#halo-callout/.test(cssText)) {
+    fail('the lyric callout was removed with the rework: the lyrics live on the ring itself');
   }
   if (!/js\/modules\/02-visual\/18-halo-ring-preset\.js/.test(loaderText)) {
     fail('18-halo-ring-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (!/js\/modules\/07-fx\/11-halo-tuning\.js/.test(loaderText)) {
+    fail('11-halo-tuning.js must be listed in index-loader.js; without it the ring has no knob store');
   }
   if (!/updateHaloLayer\(now, dt\)/.test(loopText)) {
     fail('the main loop must drive the HALO layer through its own frame gate');
   }
   const haloText = fs.readFileSync(modulePath, 'utf8');
+  // The camera belongs to the user. A beat that moved it read as jumping around the screen,
+  // so the old camera scheduler must be gone, not merely unused.
+  if (/haloCameraScheduleMove|haloCamMove|haloCamTarget|haloCameraUpdate/.test(haloText)) {
+    fail('the camera must not be driven by the beat any more; the user pans and zooms it');
+  }
+  for (const [pattern, why] of [
+    [/function haloPanBy\(/, 'the user must be able to pan the ring'],
+    [/function haloZoomAt\(/, 'the user must be able to zoom the ring'],
+    [/window\.addEventListener\('pointermove', haloOnPointerMove/, 'the drag must be handled on the window: the halo layer sits below the WebGL canvas and never sees an event'],
+    [/window\.addEventListener\('wheel', haloOnWheel/, 'the wheel must be handled on the window for the same reason'],
+    [/isPointerOverUi\(ev\)/, 'the ring must leave the app\'s own controls alone'],
+  ]) {
+    if (!pattern.test(haloText)) fail(why);
+  }
+  // The beat's whole job now: the ring pops out and shakes where it stands.
+  for (const [pattern, why] of [
+    [/haloState\.ringPulse = 1;/, 'the beat must set the ring\'s pulse envelope'],
+    [/haloParam\('pulseScale'\)/, 'the scale pop must be a knob'],
+    [/haloParam\('shakePx'\)/, 'the shake must be a knob'],
+    [/s\.shakeX =/, 'the shake must reach the transform'],
+  ]) {
+    if (!pattern.test(haloText)) fail(why);
+  }
   // The gate rate and the module's own target must be the same number, or the layer is either
   // drawn more often than it budgets for or less often than it was measured at.
   const haloFps = Number((haloText.match(/HALO_FPS = (\d+)/) || [])[1]);
@@ -870,7 +898,6 @@ function runHaloPresetCheck() {
     [/haloBeatHit/, 'the beat must have a hit phase'],
     [/HALO_PREPARE_MS = (\d+);/, 'the prepare phase must be a fixed, stated lead time'],
     [/e\.hitAt - HALO_PREPARE_MS \/ 1000/, 'the prepare phase must run before the hit, not on it'],
-    [/haloCameraScheduleMove/, 'a beat must be able to drive the camera'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
   }
@@ -894,15 +921,87 @@ function runHaloPresetCheck() {
   if (!/haloEmitFromPoint/.test(haloText)) {
     fail('a click must be able to emit a line from inside the ring');
   }
-  // The radiating lines behind the text replace the separate spectrum display, so they must be
-  // driven by the live audio level rather than by a fixed animation.
-  if (!/haloReadAudioBands/.test(haloText) || !/HALO_SPOKE_COUNT/.test(haloText)) {
-    fail('the spectrum spokes must be driven by the live audio bands');
+  // The spectrum drives the ring's outermost beams. The coloured spoke wheel that used to
+  // sit inside the dial is gone, so it must not come back.
+  if (!/function haloSpectrumBand\(/.test(haloText)) {
+    fail('the spectrum must be mapped onto the ring\'s own beams');
+  }
+  if (/HALO_SPOKE_COUNT|haloDrawSpectrumSpokes/.test(haloText)) {
+    fail('the coloured spoke wheel inside the dial was removed; the spectrum drives the outer beams');
+  }
+  if (!/wedge\.av/.test(haloText)) {
+    fail('every beam must read the spectrum band its own angle sits on');
+  }
+  // The lyrics are an ordinary left-aligned list bent over the ring's edge: each line
+  // starts on its own radial line at the rim and runs outward from there.
+  for (const [pattern, why] of [
+    [/haloParam\('textGap'\)/, 'the distance between the rim and the lyrics must be a knob'],
+    [/ctx\.translate\(flip \? -\(textR \+ width\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
+    [/ctx\.scale\(item\.scale, item\.scale\)/, 'a line that does not fit its own ray must be scaled down'],
+    [/function haloLyricFontPx\(/, 'the lyric size must be resolved in one place'],
+    [/fx\.lyricScale/, 'the lyric size must reuse the app\'s own fx.lyricScale'],
+  ]) {
+    if (!pattern.test(haloText)) fail(why);
   }
   // The offline half-plane culling of the original does not hold for a centred ring: a camera
   // zoom has to be able to cull by the analytic visible radius instead.
   if (!/haloVisibleRadius/.test(haloText)) {
     fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
+  }
+  // The knobs: the store, the console group, and one slider per knob. A knob that is in
+  // the schema but not on a slider is a knob the user cannot reach.
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js');
+  if (!fs.existsSync(tuningPath)) {
+    fail('07-fx/11-halo-tuning.js is missing; the ring would have knobs without a store');
+  }
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  for (const [pattern, why] of [
+    [/mineradio-halo-tuning-v1/, 'the store must persist under its own key'],
+    [/function setHaloTuning\(/, 'the console needs one setter for the knobs'],
+    [/function haloTuningSyncInputs\(/, 'the console must be able to write the knob values back into the sliders'],
+    [/function haloTuningApply\(/, 'a knob change must reach the layer'],
+  ]) {
+    if (!pattern.test(tuningText)) fail(why);
+  }
+  if (!/key: 'halo'/.test(consoleText) || !/title: '光环'/.test(consoleText)) {
+    fail('the visual console needs a 光环 group in the 动效 tab');
+  }
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let schemaMatch;
+  while ((schemaMatch = schemaRe.exec(haloText))) {
+    schema.set(schemaMatch[1], {
+      def: Number(schemaMatch[2]),
+      min: Number(schemaMatch[3]),
+      max: Number(schemaMatch[4]),
+      kind: schemaMatch[5],
+      rebuild: schemaMatch[6]
+    });
+  }
+  if (schema.size < 20) {
+    fail(`the ring's knob schema must be complete (found ${schema.size} knobs, expected at least 20)`);
+  }
+  for (const [key, spec] of schema) {
+    const id = 'fx-halo' + key;
+    const slider = htmlText.match(new RegExp('id="' + id + '"[^>]*min="(-?[\\d.]+)"[^>]*max="(-?[\\d.]+)"'));
+    if (!slider) {
+      fail(`the knob ${key} has no slider (${id}) in index.html`);
+      continue;
+    }
+    if (Number(slider[1]) !== spec.min || Number(slider[2]) !== spec.max) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max} (found ${slider[1]}..${slider[2]})`);
+    }
+    if (!htmlText.includes(`setHaloTuning('${key}', this.value)`)) {
+      fail(`the slider ${id} must call setHaloTuning('${key}')`);
+    }
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) {
+      fail(`the knob ${key} must be listed in the console's 光环 group`);
+    }
+  }
+  const sliderCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length;
+  if (sliderCount !== schema.size) {
+    fail(`the halo sliders in index.html (${sliderCount}) must match the knob schema (${schema.size})`);
   }
   // MIT requires the notice and the licence text to travel with the copy, and this fork ships
   // an installer: "the file exists somewhere in the repo" is not enough, so the sidecar has to
@@ -936,7 +1035,7 @@ function runHaloPresetCheck() {
       fail(`build.files must include ${f} so the HALOFLUX attribution ships in the installer`);
     }
   }
-  console.log(`[OK] HALO ring wired: preset ${haloIndex}, layer + takeover + release + beat clock + lyric dial present.`);
+  console.log(`[OK] HALO ring wired: preset ${haloIndex}, user camera + beat pulse + spectrum beams + ring-side lyrics + ${schema.size} knobs.`);
 }
 
 function runVisualTakeoverMaskCheck() {

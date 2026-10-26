@@ -12,38 +12,70 @@
 // layers - the beat and the spectrum come from Mineradio, and the author's own final
 // defaults (BAKED_MINE) have those four layers off.
 //
-// Three deliberate departures from the original, all in docs/PLAN_HALO_RING.md §0.2:
-//   - the dial is centred; the original pins it to the left edge (cx = W * 0.07), which
-//     puts half the circumference - and therefore half the lyrics - off screen.
-//   - the lyric lines ride the inner rim, so the current line can be read at the top.
+// Five deliberate departures from the original, all in docs/PLAN_HALO_RING.md §0.2:
+//   - the camera never moves by itself. The original flies between random marks on every
+//     beat, which reads as jumping around the screen; here the camera belongs to the
+//     user (drag to pan, wheel to zoom) and the beat only makes the ring pop and shake.
+//   - the dial's centre sits off the left edge, so only the ring's right side is on
+//     screen. The original pinned it to cx = W * 0.07 and lost half the circumference.
+//   - the lyrics are a left-aligned list bent along the radial lines outside the rim,
+//     not characters distributed around the inner rim.
+//   - the spectrum drives the outermost beams; the coloured spoke wheel that used to sit
+//     inside the dial is gone.
 //   - the glow composite is replaced by wide 'lighter' strokes on the single canvas,
 //     so the layer costs one rasterization pass instead of two plus a blur.
 //
 // The ring turns with the lyrics rather than at random: the rotation target is derived
-// from the line's own start time, and the turn begins HALO_ROT_LEAD seconds before the
-// line is sung, so the line lands on the read mark exactly when it starts.
+// from the line's own start time, and the turn begins rotLead seconds before the line is
+// sung, so the line lands on the read mark exactly when it starts.
 
 var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four places)
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_RENDER_SCALE = 1;         // internal resolution multiplier; devicePixelRatio is NOT used
-var HALO_RADIUS_K = 0.34;          // ring radius as a fraction of min(width, height)
-var HALO_BAND_K = 0.155;           // ring band thickness as a fraction of the radius
-var HALO_WEB_CURVES = 320;         // baked inner web curves (the original bakes 2600)
-var HALO_RUNNER_COUNT = 96;        // travelling streaks on the web (the original: 336..788)
-var HALO_STRAND_DENSITY = 0.4;     // multiplier on the original wedge density
-var HALO_SLOT_MIN_PX = 16;         // ring data panel heights
-var HALO_SLOT_MAX_PX = 62;
-var HALO_LYRIC_FONT_PX = 15;       // lyric text size on the dial
-var HALO_LYRIC_GAP_PX = 30;        // clear space between two lyric arcs
-var HALO_READ_ANGLE = -Math.PI / 2;// the top of the dial: where the current line is read
-var HALO_ROT_LEAD = 0.55;          // the ring starts turning this long before the line is sung
-var HALO_ROT_DUR = 0.55;           // how long that turn takes
+var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
 var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
 var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
-var HALO_PANEL_REFRESH_MIN = 3;    // panels refreshed on a beat
-var HALO_PANEL_REFRESH_MAX = 8;
+var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
+var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
+
+// The ring's knobs. The schema lives here so the defaults have exactly one home; the
+// store and the console bindings live in 07-fx/11-halo-tuning.js.
+//
+// rebuild: 'stage' re-bakes the web, the panels and the beams, 'lyric' re-lays the lyric
+// list, 'live' is read every frame and only needs a redraw.
+var HALO_TUNING_SCHEMA = {
+  centerX: { def: -0.2, min: -1.2, max: 1.2, kind: 'ratio', rebuild: 'stage' },
+  centerY: { def: 0.5, min: -0.5, max: 1.5, kind: 'ratio', rebuild: 'stage' },
+  radiusK: { def: 0.36, min: 0.12, max: 0.9, kind: 'ratio', rebuild: 'stage' },
+  bandK: { def: 0.155, min: 0.04, max: 0.4, kind: 'ratio', rebuild: 'stage' },
+  panelHeight: { def: 38, min: 8, max: 120, kind: 'px', rebuild: 'stage' },
+  webCurves: { def: 320, min: 60, max: 1200, kind: 'count', rebuild: 'stage' },
+  runners: { def: 96, min: 0, max: 400, kind: 'count', rebuild: 'stage' },
+  strandDensity: { def: 0.4, min: 0.05, max: 1, kind: 'ratio', rebuild: 'live' },
+  beamLength: { def: 0.55, min: 0.1, max: 1.2, kind: 'ratio', rebuild: 'live' },
+  hazeAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  streakAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  spectrumGain: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
+  shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
+  readAngle: { def: 0, min: -180, max: 180, kind: 'deg', rebuild: 'lyric' },
+  textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
+  lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
+  rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
+  rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
+  panelRefresh: { def: 5, min: 1, max: 12, kind: 'count', rebuild: 'live' }
+};
+
+// The live value of a knob. The store is built by a later module, so the schema default
+// is the path until 07-fx/11-halo-tuning.js has run.
+function haloParam(key) {
+  var store = (typeof haloTuning !== 'undefined') ? haloTuning : null;
+  if (store && store[key] !== undefined && store[key] !== null) return store[key];
+  var spec = HALO_TUNING_SCHEMA[key];
+  return spec ? spec.def : 0;
+}
 
 var HALO_TAU = Math.PI * 2;
 var HALO_FONT = '"JetBrains Mono","Microsoft YaHei",Consolas,monospace';
@@ -75,12 +107,21 @@ var haloState = {
   time: 0,
   ringRot: 0,
   webRot: 0,
-  idleSpin: 0
+  idleSpin: 0,
+  ringPulse: 0,      // the beat's envelope: 1 at the hit, decaying after it
+  pulse: 1,          // the scale the whole ring is drawn at
+  shakeX: 0,
+  shakeY: 0,
+  basePanX: 0,       // the framing knobs' own pan, in world units
+  basePanY: 0
 };
 
-var haloCam = { x: 0, y: 0, z: 1 };
-var haloCamMove = null;            // {fromX, fromY, fromZ, toX, toY, toZ, startAt, endAt}
-var haloCamTarget = null;
+// The camera is the user's: a pan in world units and a zoom. Nothing in the layer moves
+// it by itself - a beat that moved it read as jumping around the screen.
+var haloCam = { panX: 0, panY: 0, zoom: 1 };
+
+// The pointer's own state: a drag pans the ring, a click without a drag emits.
+var haloPointerState = { down: false, moved: false, x: 0, y: 0 };
 
 var haloSlotList = [];
 var haloWeb = null;                // baked inner web canvas
@@ -130,7 +171,6 @@ function haloPresetIsActive() {
 
 function haloLayerElement() { return document.getElementById('halo-layer'); }
 function haloCanvasElement() { return document.getElementById('halo-canvas'); }
-function haloCalloutElement() { return document.getElementById('halo-callout'); }
 
 function haloRand(a, b) { return a + Math.random() * (b - a); }
 function haloPick(list) { return list[(Math.random() * list.length) | 0]; }
@@ -154,13 +194,19 @@ function haloLayoutStage(w, h) {
   var s = haloState;
   s.w = Math.max(2, w);
   s.h = Math.max(2, h);
-  s.cx = s.w / 2;
-  s.cy = s.h / 2;
-  s.R = Math.max(24, Math.min(s.w, s.h) * HALO_RADIUS_K);
-  s.band = s.R * HALO_BAND_K;
+  // The ring's centre sits where the framing knobs put it. The default is off the left
+  // edge, so only the ring's right side is on screen.
+  s.cx = s.w * haloParam('centerX');
+  s.cy = s.h * haloParam('centerY');
+  s.R = Math.max(24, s.w * haloParam('radiusK'));
+  s.band = s.R * haloParam('bandK');
   s.RO = s.R + s.band;
-  s.RMAX = Math.hypot(s.w - s.cx, s.h / 2) + 60;
+  s.RMAX = Math.hypot(s.w - s.cx, s.h - s.cy) + 60;
   s.dpr = HALO_RENDER_SCALE;
+  // The base pan is what puts the ring's centre at the framing knobs' position; the
+  // user's own pan is added on top of it.
+  s.basePanX = (0.5 - haloParam('centerX')) * s.w;
+  s.basePanY = (0.5 - haloParam('centerY')) * s.h;
 }
 
 function haloResize() {
@@ -185,72 +231,65 @@ function haloResize() {
 
 // ---------------------------------------------------------------- camera
 
+// The camera is the user's. The ring sits where the framing knobs put it and the user
+// pans and zooms on top of that; no beat, no lyric line and no timer moves it.
+function haloPanTotalX() { return haloState.basePanX + haloCam.panX; }
+function haloPanTotalY() { return haloState.basePanY + haloCam.panY; }
+
+// The linear factor of the transform: the user's zoom, the beat's scale pop and the
+// layer's own depth (a layer drawn further back is a touch smaller).
+function haloSceneZoom(depth) {
+  var s = haloState;
+  var back = depth == null ? 1 : (1 - (1 - depth) * 0.12);
+  return haloCam.zoom * s.pulse * back;
+}
+
 function haloApplyCameraTransform(ctx, scale, depth) {
-  var cam = haloCam;
-  var z = 1 + (cam.z - 1) * depth;
-  var x = haloState.w / 2 + (cam.x - haloState.w / 2) * depth;
-  var y = haloState.h / 2 + (cam.y - haloState.h / 2) * depth;
-  ctx.setTransform(scale * z, 0, 0, scale * z, scale * (haloState.w / 2 - x * z), scale * (haloState.h / 2 - y * z));
+  var s = haloState;
+  var z = haloSceneZoom(depth);
+  var ex = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
+  var ey = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
+  ctx.setTransform(scale * z, 0, 0, scale * z, scale * ex, scale * ey);
 }
 
 function haloToScreen(x, y) {
-  var cam = haloCam;
-  return {
-    x: (x - cam.x) * cam.z + haloState.w / 2,
-    y: (y - cam.y) * cam.z + haloState.h / 2
-  };
-}
-
-// The camera holds on the last mark and travels to the next one, arriving exactly on the
-// beat: the interpolation is a function of the time to the beat, not of the frame phase.
-function haloCameraUpdate(t) {
-  var move = haloCamMove;
-  if (!move) {
-    haloCam.x = haloState.w / 2;
-    haloCam.y = haloState.h / 2;
-    haloCam.z = 1;
-    return;
-  }
-  var span = Math.max(0.05, move.endAt - move.startAt);
-  var k = haloClamp((t - move.startAt) / span, 0, 1);
-  var e = haloEaseIO(k);
-  haloCam.x = move.fromX + (move.toX - move.fromX) * e;
-  haloCam.y = move.fromY + (move.toY - move.fromY) * e;
-  haloCam.z = move.fromZ + (move.toZ - move.fromZ) * e;
-}
-
-// Pick the next mark. Three shapes: push in, travel along the ring, pull out. The choice
-// follows the beat's weight so a heavy beat pushes in.
-function haloCameraPickTarget(weight, at) {
   var s = haloState;
-  var mid = (s.R + s.RO) / 2;
-  var ang = haloRand(0, HALO_TAU);
-  var deep = weight > 0.62;
-  var zoom = deep ? haloRand(1.7, 2.4) : (weight < 0.32 ? haloRand(0.86, 1.0) : haloRand(1.1, 1.5));
-  var radius = deep ? haloRand(0.55, 0.85) * mid : haloRand(0.9, 1.5) * mid;
+  var z = haloSceneZoom(1);
   return {
-    x: s.cx + Math.cos(ang) * radius,
-    y: s.cy + Math.sin(ang) * radius,
-    z: zoom
+    x: (x - s.cx) * z - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX,
+    y: (y - s.cy) * z - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY
   };
 }
 
-function haloCameraScheduleMove(hitAt, weight, startAt) {
+// The world point under a screen pixel: the inverse of haloToScreen.
+function haloToWorld(sx, sy) {
   var s = haloState;
-  var target = haloCameraPickTarget(weight, hitAt);
-  haloCamMove = {
-    fromX: haloCam.x, fromY: haloCam.y, fromZ: haloCam.z,
-    toX: target.x, toY: target.y, toZ: target.z,
-    startAt: startAt != null ? startAt : haloPlayheadSeconds(),
-    endAt: hitAt
+  var z = haloSceneZoom(1);
+  return {
+    x: s.cx + (sx - s.w / 2 - s.shakeX + haloCam.zoom * haloPanTotalX()) / z,
+    y: s.cy + (sy - s.h / 2 - s.shakeY + haloCam.zoom * haloPanTotalY()) / z
   };
 }
 
-function haloCameraSnapToCentre() {
-  haloCam.x = haloState.w / 2;
-  haloCam.y = haloState.h / 2;
-  haloCam.z = 1;
-  haloCamMove = null;
+// A drag moves the world with the pointer, one screen pixel per screen pixel.
+function haloPanBy(dx, dy) {
+  var z = Math.max(0.2, haloCam.zoom);
+  haloCam.panX -= dx / z;
+  haloCam.panY -= dy / z;
+}
+
+// The wheel zooms towards the cursor: the world point under it stays under it.
+function haloZoomAt(sx, sy, factor) {
+  var s = haloState;
+  var before = haloToWorld(sx, sy);
+  var next = haloClamp(haloCam.zoom * factor, 0.35, 3.2);
+  if (next === haloCam.zoom) return;
+  haloCam.zoom = next;
+  var z = haloSceneZoom(1);
+  var panX = ((before.x - s.cx) * z + s.w / 2 - sx) / next;
+  var panY = ((before.y - s.cy) * z + s.h / 2 - sy) / next;
+  haloCam.panX = panX - s.basePanX;
+  haloCam.panY = panY - s.basePanY;
 }
 
 // ---------------------------------------------------------------- audio
@@ -395,12 +434,10 @@ function haloRunBeatEvents(t) {
 }
 
 function haloBeatPrepare(e) {
-  // The camera move has to start before the beat so it can arrive on it.
-  var startAt = e.late ? haloPlayheadSeconds() : Math.max(haloPlayheadSeconds(), e.hitAt - 0.45);
-  haloCameraScheduleMove(e.hitAt, e.weight, startAt);
   // Pre-render the panels that will flash. The fresh canvas waits in slot.next, so the
   // swap at the hit is a pointer assignment and cannot hitch the frame.
-  var slots = haloPickVisibleSlots(HALO_PANEL_REFRESH_MIN, HALO_PANEL_REFRESH_MAX);
+  var count = Math.max(1, Math.round(haloParam('panelRefresh')));
+  var slots = haloPickVisibleSlots(Math.max(1, Math.floor(count / 2)), count);
   e.slots = slots;
   for (var i = 0; i < slots.length; i++) slots[i].next = haloRenderSlot(slots[i]);
 }
@@ -424,7 +461,10 @@ function haloBeatHit(e) {
     }
     slot.flash = 0.85;
   }
+  // The beat's whole job now: the ring pops out and shakes where it stands. The camera
+  // stays where the user left it.
   haloState.ringPulse = 1;
+  haloStrandBeat(e.weight);
 }
 
 // ---------------------------------------------------------------- lyric dial
@@ -449,8 +489,19 @@ function haloLyricSignature() {
   return (h >>> 0).toString(36) + ':' + lines.length;
 }
 
-// The lyric lines are laid out on the inner rim. Each line owns an arc whose length is its
-// own measured width, so the ring turns exactly one line's worth per line.
+// The text size follows the app's own lyric size knob, so the two never disagree.
+function haloLyricFontPx() {
+  var scale = 1;
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricScale))) scale = Number(fx.lyricScale);
+  return Math.max(9, Math.min(48, HALO_LYRIC_BASE_PX * haloClamp(scale, 0.35, 1.65)));
+}
+
+// Where the current line is read: the rim segment the list scrolls past.
+function haloReadAngle() { return haloParam('readAngle') * Math.PI / 180; }
+
+// The lyrics are an ordinary left-aligned list that has been bent over the ring's edge:
+// every line starts on its own radial line at the rim and runs outward from there, so the
+// block still reads top to bottom, one row per line.
 function haloBuildLyricRing() {
   var canvas = haloCanvasElement();
   var ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
@@ -462,17 +513,19 @@ function haloBuildLyricRing() {
   haloLyric.current = -1;
   haloLyric.pending = -1;
   haloLyric.tween = null;
-  haloLyric.rot = HALO_READ_ANGLE;
+  haloLyric.rot = haloReadAngle();
   haloLyric.baseAngle = 0;
-  var fontPx = HALO_LYRIC_FONT_PX;
+  var fontPx = haloLyricFontPx();
   var measure = ctx || null;
-  // The characters are measured with the font they will be drawn in, otherwise the arc
-  // lengths are computed against the default 10px face and the dial does not close.
+  // The characters are measured with the font they will be drawn in, otherwise the line
+  // lengths are computed against the default 10px face and the list does not line up.
   if (measure) {
     measure.save();
     measure.font = '600 ' + fontPx + 'px ' + HALO_FONT;
   }
-  var maxArcPx = Math.max(120, haloState.R * 1.5);
+  var textR = haloState.RO + haloParam('textGap');
+  // One row per line: the step is a line height plus the gap the user asked for.
+  var step = (fontPx * 1.45 + haloParam('lineGap')) / Math.max(1, haloState.RO);
   var acc = 0;
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
@@ -487,8 +540,9 @@ function haloBuildLyricRing() {
       widths.push(w);
       total += w;
     }
-    var scale = total > maxArcPx ? Math.max(0.42, maxArcPx / total) : 1;
-    var arcPx = total * scale + HALO_LYRIC_GAP_PX;
+    // The line may not run past the edge of the screen on its own ray.
+    var maxW = Math.max(60, haloVisibleRadius(acc + haloLyric.rot) - textR);
+    var scale = total > maxW ? maxW / total : 1;
     var item = {
       index: haloLyric.items.length,
       text: text,
@@ -496,15 +550,13 @@ function haloBuildLyricRing() {
       widths: widths,
       scale: scale,
       totalWidth: total * scale,
-      arc: arcPx / Math.max(1, haloState.R),
-      angle: 0,
+      angle: acc,
       startAt: Math.max(0, (Number(line.t) || 0) + offset),
       sub: ''
     };
     if (translations[i] && translations[i].text) item.sub = String(translations[i].text).trim();
-    item.angle = acc + item.arc / 2;
-    acc += item.arc;
     haloLyric.items.push(item);
+    acc += step;
   }
   if (measure) measure.restore();
   haloLyric.songKey = haloLyricSignature();
@@ -540,18 +592,18 @@ function haloLyricUpdate(t) {
   if (haloLyric.current < 0) {
     // First line: put it on the mark straight away.
     haloLyric.current = next;
-    haloLyric.rot = HALO_READ_ANGLE - items[next].angle;
+    haloLyric.rot = haloReadAngle() - items[next].angle;
     return;
   }
   var lead = items[next].startAt - t;
-  if (lead > HALO_ROT_LEAD) {
-    // The turn starts HALO_ROT_LEAD before the line; until then the mark stays put.
+  if (lead > haloParam('rotLead')) {
+    // The turn starts before the line; until then the mark stays put.
     return;
   }
   if (lead < -1.5) {
     // A seek jumped the clock: snap instead of spinning.
     haloLyric.current = next;
-    haloLyric.rot = HALO_READ_ANGLE - items[next].angle;
+    haloLyric.rot = haloReadAngle() - items[next].angle;
     var rebase2 = items[next].angle;
     for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
     haloLyric.rot += rebase2;
@@ -561,9 +613,9 @@ function haloLyricUpdate(t) {
   haloLyric.tween = {
     item: next,
     from: haloLyric.rot,
-    to: HALO_READ_ANGLE - items[next].angle,
+    to: haloReadAngle() - items[next].angle,
     startAt: t,
-    dur: Math.max(0.08, lead)
+    dur: Math.max(0.08, Math.min(lead, haloParam('rotDur')))
   };
 }
 
@@ -594,7 +646,7 @@ function haloBuildWeb() {
   ctx.arc(0, 0, s.R, 0, HALO_TAU);
   ctx.clip();
   haloWebCurves = [];
-  for (var i = 0; i < HALO_WEB_CURVES; i++) {
+  for (var i = 0; i < Math.round(haloParam('webCurves')); i++) {
     var a1 = Math.random() * HALO_TAU;
     var a2 = a1 + haloRand(0.6, Math.PI * 1.4);
     var curve = {
@@ -689,7 +741,8 @@ function haloCurvePoint(curve, t) {
 // through a full-size trail buffer; we keep a small pool and draw the streak directly.
 function haloBuildRunners() {
   haloRunnerList = [];
-  for (var i = 0; i < HALO_RUNNER_COUNT; i++) haloRunnerList.push(haloNewRunner(true));
+  var count = Math.round(haloParam('runners'));
+  for (var i = 0; i < count; i++) haloRunnerList.push(haloNewRunner(true));
 }
 
 function haloNewRunner(init) {
@@ -726,44 +779,13 @@ function haloUpdateRunners(dt, surge) {
   }
 }
 
-// The spectrum lives inside the dial: eight bands mapped onto eight groups of spokes, low
-// frequencies near the centre and high ones near the rim. This is the readout that the
-// separate spectrum panel used to provide.
-var HALO_SPOKE_COUNT = 64;
-var HALO_SPOKE_BANDS = [
-  'rgba(150,190,255,', 'rgba(140,205,235,', 'rgba(140,225,205,', 'rgba(170,235,175,',
-  'rgba(215,235,150,', 'rgba(240,220,150,', 'rgba(245,190,175,', 'rgba(230,175,235,'
-];
-
-function haloDrawSpectrumSpokes(ctx) {
-  var s = haloState;
-  var bands = haloAudio.bands;
-  var level = haloAudio.level;
-  var r0 = s.R * 0.14;
-  var span = s.R * 0.76;
-  ctx.lineCap = 'round';
-  for (var i = 0; i < HALO_SPOKE_COUNT; i++) {
-    var band = Math.floor(i * haloAudio.bands.length / HALO_SPOKE_COUNT);
-    var value = bands[band] || 0;
-    var a = (i / HALO_SPOKE_COUNT) * HALO_TAU + haloState.webRot * 0.4;
-    var len = span * (0.06 + 0.94 * value * value);
-    var alpha = 0.10 + 0.72 * value;
-    ctx.strokeStyle = HALO_SPOKE_BANDS[band] + alpha.toFixed(3) + ')';
-    ctx.lineWidth = 1 + 2.4 * value;
-    ctx.beginPath();
-    ctx.moveTo(s.cx + Math.cos(a) * r0, s.cy + Math.sin(a) * r0);
-    ctx.lineTo(s.cx + Math.cos(a) * (r0 + len), s.cy + Math.sin(a) * (r0 + len));
-    ctx.stroke();
-  }
-  if (level > 0.02) {
-    var g = ctx.createRadialGradient(s.cx, s.cy, 0, s.cx, s.cy, s.R);
-    g.addColorStop(0, 'rgba(190,200,255,' + (0.10 * level).toFixed(3) + ')');
-    g.addColorStop(1, 'rgba(190,200,255,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(s.cx, s.cy, s.R, 0, HALO_TAU);
-    ctx.fill();
-  }
+// The spectrum drives the ring's outermost beams. The eight bands are mapped across the
+// visible arc, so the beams along the ring's edge read as a spectrum analyser; there is
+// no coloured wheel inside the dial any more.
+function haloSpectrumBand(angle) {
+  var rel = haloNormAngle(angle - haloReadAngle());
+  var t = haloClamp(rel / HALO_BAND_SPREAD + 0.5, 0, 0.9999);
+  return Math.min(haloAudio.bands.length - 1, Math.floor(t * haloAudio.bands.length));
 }
 
 // ---------------------------------------------------------------- ring panels
@@ -789,7 +811,8 @@ function haloBuildSlots() {
   var mid = s.R + s.band * 0.42;
   var a = 0;
   while (a < HALO_TAU - 0.03) {
-    var hpx = haloRand(HALO_SLOT_MIN_PX, HALO_SLOT_MAX_PX);
+    var ph = haloParam('panelHeight');
+    var hpx = haloRand(ph * 0.42, ph * 1.6);
     var da = hpx / mid;
     var gap = haloRand(3, 9) / mid;
     haloSlotList.push({ a: a + da / 2, da: da, hpx: hpx, c: null, next: null, flash: 0 });
@@ -1145,7 +1168,7 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
   var step = stepDeg * Math.PI / 180;
   var nb = Math.floor(HALO_TAU / step);
   var wedges = [];
-  var count = Math.max(1, Math.round(nb * cover * HALO_STRAND_DENSITY / ((nMin + nMax) / 2)));
+  var count = Math.max(1, Math.round(nb * cover * haloParam('strandDensity') / ((nMin + nMax) / 2)));
   for (var j = 0; j < count; j++) {
     var n = nMin + ((Math.random() * (nMax - nMin)) | 0);
     var bright = Math.random() < brightP;
@@ -1155,6 +1178,7 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
       base: haloRand(0.35, 1),
       len: haloRand(0.1, 0.5),
       kick: 0,
+      av: 0,             // the spectrum band this wedge sits on, smoothed
       ph: Math.random() * HALO_TAU,
       ph2: Math.random() * HALO_TAU,
       f1: haloRand(0.22, 0.6),
@@ -1192,24 +1216,22 @@ function haloBuildStrands() {
   haloPulseList = [];
 }
 
-// How far out the screen reaches along a given direction. The dial is centred, so the
-// visible radius is the distance from the ring's centre to the viewport edge.
+// How far out the screen reaches along a given direction: the distance from the ring's
+// centre to the viewport edge, measured along that ray.
 function haloVisibleRadius(angle) {
   var s = haloState;
-  var cam = haloCam;
-  var hw = (s.w / 2) / cam.z;
-  var hh = (s.h / 2) / cam.z;
-  var ox = s.cx - cam.x;
-  var oy = s.cy - cam.y;
+  var z = haloSceneZoom(1);
+  var sx0 = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
+  var sy0 = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
   var ca = Math.cos(angle);
   var sa = Math.sin(angle);
   var t = Infinity;
-  if (ca > 1e-6) t = Math.min(t, (hw - ox) / ca);
-  else if (ca < -1e-6) t = Math.min(t, (-hw - ox) / ca);
-  if (sa > 1e-6) t = Math.min(t, (hh - oy) / sa);
-  else if (sa < -1e-6) t = Math.min(t, (-hh - oy) / sa);
+  if (ca > 1e-6) t = Math.min(t, (s.w - sx0) / (z * ca));
+  else if (ca < -1e-6) t = Math.min(t, (0 - sx0) / (z * ca));
+  if (sa > 1e-6) t = Math.min(t, (s.h - sy0) / (z * sa));
+  else if (sa < -1e-6) t = Math.min(t, (0 - sy0) / (z * sa));
   if (!isFinite(t)) return 1e9;
-  return t;
+  return t > 0 ? t : 0;
 }
 
 function haloWedgeVisible(wedge, layer) {
@@ -1234,6 +1256,11 @@ function haloUpdateStrands(dt, env) {
       var am = haloNormAngle((wedge.i0 + wedge.n / 2) * layer.step + rot);
       wedge.vis = haloWedgeVisible(wedge, layer);
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
+      // The spectrum drives the outer beams: a wedge reads the band its own angle sits
+      // on, and that band pushes the beam further out and brightens it.
+      var band = haloSpectrumBand(am);
+      var av = haloClamp((haloAudio.bands[band] || 0) * haloParam('spectrumGain'), 0, 1);
+      wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? 10 : 2.6) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
         continue;
@@ -1246,14 +1273,14 @@ function haloUpdateStrands(dt, env) {
       }
       if (layer.dyn === 'bounce') {
         var idle = wedge.base * (0.36 + 0.14 * Math.sin(s.time * 0.9 + wedge.ph));
-        var target = Math.min(1, idle + hit * 0.75 + wedge.kick * 0.6);
+        var target = Math.min(1, idle + hit * 0.75 + wedge.kick * 0.6 + wedge.av * 0.75);
         wedge.kick *= Math.exp(-dt * 2.4);
         wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? 15 : 2.2) * dt);
       } else {
         var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
         var n2 = 0.5 + 0.5 * Math.sin(s.time * wedge.f2 + wedge.ph2);
         var idle2 = wedge.base * (0.4 + 0.34 * n1 + 0.14 * n2);
-        var target2 = Math.min(1.05, (idle2 + hit * 0.7 + wedge.kick * 0.55) * wedge.lenS);
+        var target2 = Math.min(1.05, (idle2 + hit * 0.7 + wedge.kick * 0.55 + wedge.av * 0.8) * wedge.lenS);
         wedge.kick *= Math.exp(-dt * 1.8);
         wedge.len += (target2 - wedge.len) * Math.min(1, (target2 > wedge.len ? 5 : 1.3) * dt);
       }
@@ -1307,7 +1334,7 @@ function haloBuildGradients() {
 
 function haloDrawStrands(ctx, layer, collect) {
   var s = haloState;
-  var span = s.RMAX - s.RO - 20;
+  var span = (s.RMAX - s.RO - 20) * haloParam('beamLength');
   var r0 = s.RO + 3;
   var rot = s.ringRot * layer.rotK + layer.off;
   var edgeAlpha = [0.28, 0.62, 1];
@@ -1319,7 +1346,7 @@ function haloDrawStrands(ctx, layer, collect) {
     if (L < 3) continue;
     var a0 = haloNormAngle(wedge.i0 * layer.step + rot);
     var a1 = a0 + wedge.n * layer.step;
-    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * (layer.dyn === 'bounce' ? 1.3 : 1));
+    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * (layer.dyn === 'bounce' ? 1.3 : 1) * (1 + wedge.av * 0.8));
     if (alpha < 0.005) continue;
     var lwW = layer.lw * wedge.lwK;
     var paths = [new Path2D(), new Path2D(), new Path2D()];
@@ -1612,7 +1639,7 @@ function haloDrawFlyers(ctx, bursts) {
     var arr = buckets[key2];
     var f0 = arr[0];
     ctx.strokeStyle = f0.tint ? (haloGradient.s1 || '#fff') : (haloGradient.s0 || '#fff');
-    ctx.globalAlpha = Math.min(1, HALO_FLY_A[f0.lv] * (f0.burst ? 1.4 : 0.9));
+    ctx.globalAlpha = Math.min(1, HALO_FLY_A[f0.lv] * (f0.burst ? 1.4 : 0.9) * haloParam('streakAmount'));
     ctx.lineWidth = ((key2 % 1000) >= 100 ? 1.5 : 0.8);
     ctx.beginPath();
     for (var k = 0; k < arr.length; k += 2) {
@@ -1727,7 +1754,7 @@ function haloDrawHaze(ctx) {
   haloBuildHazeGradients();
   var span = s.RMAX - s.RO - 20;
   var r0 = s.RO + 3;
-  var step = HALO_HAZE_STEP * 0.55 / Math.max(0.15, HALO_STRAND_DENSITY);
+  var step = HALO_HAZE_STEP * 0.55 / Math.max(0.15, haloParam('strandDensity'));
   ctx.globalCompositeOperation = 'lighter';
   for (var i = 0; i < haloHazeList.length; i++) {
     var h = haloHazeList[i];
@@ -1738,10 +1765,11 @@ function haloDrawHaze(ctx) {
     var mid = h.a + s.ringRot + h.drift * h.age;
     haloRadialLines(ctx, mid - h.w / 2, mid + h.w / 2, step, r0, L, h.seed, 0.45);
     ctx.strokeStyle = haloGradient['h' + h.tint] || haloGradient.h1;
-    ctx.globalAlpha = Math.min(1, h.alpha * e * 0.05);
+    var haze = haloParam('hazeAmount');
+    ctx.globalAlpha = Math.min(1, h.alpha * e * 0.05 * haze);
     ctx.lineWidth = 2.2;
     ctx.stroke();
-    ctx.globalAlpha = Math.min(1, h.alpha * e * 0.6);
+    ctx.globalAlpha = Math.min(1, h.alpha * e * 0.6 * haze);
     ctx.lineWidth = 0.55;
     ctx.stroke();
   }
@@ -1753,7 +1781,7 @@ function haloDrawFlares(ctx) {
   var s = haloState;
   var span = s.RMAX - s.RO - 20;
   var r0 = s.RO + 3;
-  var step = HALO_HAZE_STEP * 0.45 / Math.max(0.15, HALO_STRAND_DENSITY);
+  var step = HALO_HAZE_STEP * 0.45 / Math.max(0.15, haloParam('strandDensity'));
   ctx.globalCompositeOperation = 'lighter';
   ctx.strokeStyle = haloGradient.s0 || '#fff';
   for (var i = 0; i < haloFlareList.length; i++) {
@@ -1923,53 +1951,47 @@ function haloDrawRim(ctx) {
   ctx.stroke();
 }
 
-// The lyric lines ride the inner rim. Each character is set on the tangent of its own
-// angle; the lower half is flipped so the text is never upside down.
+// The lyric list is an ordinary left-aligned list that has been bent over the ring's
+// edge: every line starts on its own radial line at the rim and runs outward from
+// there, so the block still reads top to bottom, one row per line.
 function haloDrawLyricText(ctx) {
   var s = haloState;
   var items = haloLyric.items;
   if (!items.length) return;
-  var radius = s.R - Math.max(11, s.band * 0.2);
+  var fontPx = haloLyricFontPx();
+  var textR = s.RO + haloParam('textGap');
   ctx.save();
   ctx.translate(s.cx, s.cy);
-  ctx.font = '600 ' + HALO_LYRIC_FONT_PX + 'px ' + HALO_FONT;
-  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
     var center = item.angle + s.ringRot;
-    if (haloVisibleRadius(center) < radius) continue;
+    if (haloVisibleRadius(center) < s.RO) continue;
     var current = i === haloLyric.current;
-    var near = Math.abs(haloNormAngle(center - HALO_READ_ANGLE));
+    var near = Math.abs(haloNormAngle(center - haloReadAngle()));
     var focus = current ? 1 : Math.max(0.12, 1 - near * 1.6);
     var alpha = current ? 1 : 0.16 + 0.5 * focus;
-    var size = current ? HALO_LYRIC_FONT_PX : HALO_LYRIC_FONT_PX * 0.92;
+    var size = current ? fontPx : fontPx * 0.92;
+    // The line runs away from the centre. On the left half of the ring that would put
+    // the glyphs upside down, so there the line is turned around and anchored by its
+    // far end instead; the reading direction stays left to right either way.
+    var flip = Math.cos(center) < 0;
+    ctx.save();
+    ctx.rotate(flip ? center + Math.PI : center);
     ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
+    var width = ctx.measureText(item.text).width * item.scale;
+    // Anchored at the rim, then scaled, so a long line still fits on its own ray.
+    ctx.translate(flip ? -(textR + width) : textR, 0);
+    ctx.scale(item.scale, item.scale);
+    ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(238,241,248,' + alpha.toFixed(3) + ')';
-    var acc = 0;
-    for (var c = 0; c < item.chars.length; c++) {
-      var w = item.widths[c] * item.scale;
-      var a = center + (acc + w / 2 - item.totalWidth / 2) / radius;
-      acc += w;
-      var ca = Math.cos(a);
-      var sa = Math.sin(a);
-      var flip = sa > 0;
-      ctx.save();
-      ctx.translate(ca * radius, sa * radius);
-      ctx.rotate(flip ? a - Math.PI / 2 : a + Math.PI / 2);
-      ctx.fillText(item.chars[c], 0, 0);
-      ctx.restore();
-    }
+    ctx.fillText(item.text, 0, 0);
     if (item.sub && (current || near < 0.9)) {
-      var mid = center;
-      ctx.save();
-      ctx.translate(Math.cos(mid) * (radius - HALO_LYRIC_FONT_PX * 1.5), Math.sin(mid) * (radius - HALO_LYRIC_FONT_PX * 1.5));
-      ctx.rotate(Math.sin(mid) > 0 ? mid - Math.PI / 2 : mid + Math.PI / 2);
-      ctx.font = '400 11px ' + HALO_FONT;
-      ctx.fillStyle = 'rgba(226,230,240,' + (alpha * 0.5).toFixed(3) + ')';
-      ctx.fillText(item.sub, 0, 0);
-      ctx.restore();
+      ctx.font = '400 ' + (size * 0.62).toFixed(1) + 'px ' + HALO_FONT;
+      ctx.fillStyle = 'rgba(226,230,240,' + (alpha * 0.55).toFixed(3) + ')';
+      ctx.fillText(item.sub, 0, size * 0.95);
     }
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -1980,11 +2002,9 @@ var haloEmitList = [];
 
 function haloEmitFromPoint(px, py) {
   var s = haloState;
-  var cam = haloCam;
-  var wx = (px - s.w / 2) / cam.z + cam.x;
-  var wy = (py - s.h / 2) / cam.z + cam.y;
-  var dx = wx - s.cx;
-  var dy = wy - s.cy;
+  var w = haloToWorld(px, py);
+  var dx = w.x - s.cx;
+  var dy = w.y - s.cy;
   var r = Math.hypot(dx, dy);
   var ang = Math.atan2(dy, dx);
   var inner = Math.min(r, s.R * 0.82);
@@ -2045,64 +2065,6 @@ function haloDrawEmits(ctx) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// ---------------------------------------------------------------- callout
-
-var HALO_CALLOUT_ANGLE = -Math.PI * 0.74;
-var haloCalloutState = { text: null, sub: null, shown: false, w: 220, h: 64 };
-
-function haloUpdateCalloutText() {
-  var el = haloCalloutElement();
-  if (!el) return;
-  var items = haloLyric.items;
-  var idx = haloLyric.current;
-  if (idx < 0 || idx >= items.length) {
-    if (haloCalloutState.shown) {
-      el.style.opacity = '0';
-      haloCalloutState.shown = false;
-    }
-    return;
-  }
-  var item = items[idx];
-  if (item.text !== haloCalloutState.text || item.sub !== haloCalloutState.sub) {
-    haloCalloutState.text = item.text;
-    haloCalloutState.sub = item.sub;
-    var body = document.getElementById('halo-callout-text');
-    var sub = document.getElementById('halo-callout-sub');
-    if (body) body.textContent = item.text;
-    if (sub) {
-      sub.textContent = item.sub || '';
-      sub.style.display = item.sub ? '' : 'none';
-    }
-    haloCalloutState.w = el.offsetWidth || 220;
-    haloCalloutState.h = el.offsetHeight || 64;
-  }
-  if (!haloCalloutState.shown) {
-    el.style.opacity = '1';
-    haloCalloutState.shown = true;
-  }
-}
-
-function haloDrawCallout(ctx) {
-  var el = haloCalloutElement();
-  if (!el) return;
-  haloUpdateCalloutText();
-  var s = haloState;
-  var anchor = haloToScreen(s.cx + Math.cos(HALO_CALLOUT_ANGLE) * (s.RO + 18), s.cy + Math.sin(HALO_CALLOUT_ANGLE) * (s.RO + 18));
-  var bw = haloCalloutState.w;
-  var bh = haloCalloutState.h;
-  var bx = haloClamp(anchor.x - bw - 26, 12, Math.max(12, s.w - bw - 12));
-  var by = haloClamp(anchor.y - bh / 2, 12, Math.max(12, s.h - bh - 12));
-  el.style.transform = 'translate(' + bx.toFixed(1) + 'px,' + by.toFixed(1) + 'px)';
-  ctx.strokeStyle = 'rgba(230,233,238,0.55)';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.moveTo(anchor.x, anchor.y);
-  ctx.lineTo(bx + bw, by + bh / 2);
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(anchor.x - 1.5, anchor.y - 1.5, 3, 3);
-}
-
 // ---------------------------------------------------------------- frame
 
 function haloDrawStrandTips(ctx, collect) {
@@ -2141,11 +2103,9 @@ function haloDrawFrame(ctx, dt) {
   ctx.fillStyle = '#08090b';
   ctx.fillRect(0, 0, s.w * scale, s.h * scale);
 
-  // the mesh and the spectrum sit a little further back than the ring
+  // the mesh sits a little further back than the ring
   haloApplyCameraTransform(ctx, scale, 0.9);
   haloDrawWeb(ctx);
-  haloApplyCameraTransform(ctx, scale, 0.94);
-  haloDrawSpectrumSpokes(ctx);
 
   haloApplyCameraTransform(ctx, scale, 1);
   haloDrawComets(ctx);
@@ -2168,7 +2128,6 @@ function haloDrawFrame(ctx, dt) {
 
   haloDrawRing(ctx, dt);
   haloDrawLyricText(ctx);
-  haloDrawCallout(ctx);
 }
 
 // ---------------------------------------------------------------- lifecycle
@@ -2181,7 +2140,12 @@ function haloEnsureLayer() {
   if (!layer || !canvas) return false;
   if (!haloLayerBound) {
     haloLayerBound = true;
-    canvas.addEventListener('pointerdown', haloOnPointerDown);
+    // The layer sits below the WebGL canvas, so the canvas would never see a pointer
+    // event. The handlers live on the window instead and leave the UI alone.
+    window.addEventListener('pointerdown', haloOnPointerDown, true);
+    window.addEventListener('pointermove', haloOnPointerMove, true);
+    window.addEventListener('pointerup', haloOnPointerUp, true);
+    window.addEventListener('wheel', haloOnWheel, { passive: true });
     window.addEventListener('resize', function () {
       if (haloPresetIsActive()) haloRebuild();
     });
@@ -2189,16 +2153,63 @@ function haloEnsureLayer() {
   return true;
 }
 
+// The pointer position in the canvas' own pixels.
+function haloCanvasPoint(ev) {
+  var canvas = haloCanvasElement();
+  if (!canvas) return null;
+  var rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  var s = haloState;
+  return {
+    x: (ev.clientX - rect.left) * (s.w / rect.width),
+    y: (ev.clientY - rect.top) * (s.h / rect.height),
+    scale: s.w / rect.width
+  };
+}
+
+function haloPointerOverUi(ev) {
+  return typeof isPointerOverUi === 'function' && isPointerOverUi(ev);
+}
+
 function haloOnPointerDown(ev) {
   if (!haloPresetIsActive()) return;
-  var canvas = haloCanvasElement();
-  if (!canvas) return;
-  var rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-  var s = haloState;
-  var px = (ev.clientX - rect.left) * (s.w / rect.width);
-  var py = (ev.clientY - rect.top) * (s.h / rect.height);
-  haloEmitFromPoint(px, py);
+  if (haloPointerOverUi(ev)) return;
+  if (typeof ev.button === 'number' && ev.button !== 0) return;
+  haloPointerState.down = true;
+  haloPointerState.moved = false;
+  haloPointerState.x = ev.clientX;
+  haloPointerState.y = ev.clientY;
+}
+
+// A drag pans the ring; the pointer keeps holding the same world point.
+function haloOnPointerMove(ev) {
+  if (!haloPointerState.down) return;
+  var dx = ev.clientX - haloPointerState.x;
+  var dy = ev.clientY - haloPointerState.y;
+  if (!haloPointerState.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) haloPointerState.moved = true;
+  if (!haloPointerState.moved) return;
+  var p = haloCanvasPoint(ev);
+  haloPanBy(dx * (p ? p.scale : 1), dy * (p ? p.scale : 1));
+  haloPointerState.x = ev.clientX;
+  haloPointerState.y = ev.clientY;
+}
+
+// A click without a drag shoots a line out of the dial.
+function haloOnPointerUp(ev) {
+  if (!haloPointerState.down) return;
+  haloPointerState.down = false;
+  if (haloPointerState.moved) return;
+  var p = haloCanvasPoint(ev);
+  if (p) haloEmitFromPoint(p.x, p.y);
+}
+
+// The wheel zooms towards the cursor.
+function haloOnWheel(ev) {
+  if (!haloPresetIsActive()) return;
+  if (haloPointerOverUi(ev)) return;
+  var p = haloCanvasPoint(ev);
+  if (!p) return;
+  haloZoomAt(p.x, p.y, ev.deltaY > 0 ? 0.92 : 1.08);
 }
 
 // The lyric arc depends on the radius, so a resize rebuilds the dial as well.
@@ -2214,11 +2225,17 @@ function haloRenderFrame(canvas, now, dt) {
   if (!s.ready) return false;
   var t = haloPlayheadSeconds();
   s.time = t;
+  // The beat's own job: the ring pops out and shakes where it stands. The camera is
+  // the user's and nothing here moves it.
+  s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt * HALO_PULSE_DECAY);
+  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse;
+  var shake = haloParam('shakePx') * s.ringPulse;
+  s.shakeX = Math.sin(s.time * 47.3) * shake;
+  s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived).
   if (haloLyricSignature() !== haloLyric.songKey) {
     haloBuildLyricRing();
   }
-  haloCameraUpdate(t);
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
   haloReadAudioBands(t);
@@ -2233,7 +2250,6 @@ function haloRenderFrame(canvas, now, dt) {
   haloUpdateEmits(dt);
   haloSwapFreshPanels();
   s.webRot += dt * (0.03 + env * 0.12);
-  s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt * 2.4);
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
   var started = performance.now();
@@ -2251,7 +2267,9 @@ function haloRenderFrame(canvas, now, dt) {
 }
 
 // Called from the main loop every frame (cheap when the preset is not selected).
-function updateHaloLayer(now, dt) {
+// `force` skips the frame gate: the console edits land at once, even when the loop
+// is parked because nothing is playing.
+function updateHaloLayer(now, dt, force) {
   if (!haloPresetIsActive()) {
     if (haloPresetState.active) haloReleaseHaloLayer();
     return false;
@@ -2266,9 +2284,9 @@ function updateHaloLayer(now, dt) {
     if (!haloRebuild()) return false;
   }
   var gate = window.__mineradioMainFrameGates && window.__mineradioMainFrameGates.halo;
-  var step = gate && typeof consumeFrameGate === 'function'
-    ? consumeFrameGate(gate, now, dt, HALO_FPS, false, 'halo-layer')
-    : Math.max(0, Number(dt) || 0);
+  var step = (force || !gate || typeof consumeFrameGate !== 'function')
+    ? Math.max(0, Number(dt) || 0)
+    : consumeFrameGate(gate, now, dt, HALO_FPS, false, 'halo-layer');
   if (step <= 0) {
     haloPresetState.skips += 1;
     return false;
@@ -2280,7 +2298,7 @@ function updateHaloLayer(now, dt) {
 // parks, so a frame-driven-only switch would leave the layer stale.
 function applyHaloPresetNow() {
   try {
-    updateHaloLayer(typeof performance !== 'undefined' ? performance.now() : Date.now(), 16);
+    updateHaloLayer(typeof performance !== 'undefined' ? performance.now() : Date.now(), 1 / HALO_FPS, true);
   } catch (_) {}
   if (typeof applyVisualTakeoverNow === 'function') applyVisualTakeoverNow();
   return haloPresetStatus();
@@ -2298,9 +2316,17 @@ function haloReleaseHaloLayer() {
   }
   var layer = haloLayerElement();
   if (layer) layer.classList.remove('active');
-  var callout = haloCalloutElement();
-  if (callout) callout.style.opacity = '0';
   haloState.ready = false;
+  haloState.ringPulse = 0;
+  haloState.pulse = 1;
+  haloState.shakeX = 0;
+  haloState.shakeY = 0;
+  haloPointerState.down = false;
+  haloPointerState.moved = false;
+  // The camera goes back to the framing knobs' default when the preset is left.
+  haloCam.panX = 0;
+  haloCam.panY = 0;
+  haloCam.zoom = 1;
   haloPresetState.active = false;
   haloSlotList = [];
   haloRunnerList = [];
@@ -2319,9 +2345,6 @@ function haloReleaseHaloLayer() {
   haloLyric.pending = -1;
   haloLyric.tween = null;
   haloLyric.songKey = '';
-  haloCalloutState.shown = false;
-  haloCalloutState.text = null;
-  haloCalloutState.sub = null;
   haloPresetState.released += 1;
 }
 
@@ -2339,6 +2362,16 @@ function haloPresetStatus() {
       strands: haloStrandLayers.length
     },
     lyric: { lines: haloLyric.items.length, current: haloLyric.current, key: haloLyric.songKey },
+    camera: {
+      panX: Math.round(haloCam.panX),
+      panY: Math.round(haloCam.panY),
+      zoom: Math.round(haloCam.zoom * 1000) / 1000
+    },
+    tuning: (function () {
+      var out = {};
+      for (var key in HALO_TUNING_SCHEMA) out[key] = haloParam(key);
+      return out;
+    })(),
     beat: { source: haloBeat.source, count: haloBeat.count },
     audio: {
       level: Math.round(haloAudio.level * 1000) / 1000,
