@@ -31,7 +31,6 @@
 
 var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four places)
 var HALO_FPS = 30;                 // the layer's own frame gate
-var HALO_RENDER_SCALE = 1;         // internal resolution multiplier; devicePixelRatio is NOT used
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
 var HALO_LYRIC_MIN_SCALE = 0.5;     // a line never shrinks below this
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
@@ -91,7 +90,26 @@ var haloPresetState = {
   lastT: 0,
   frames: 0,
   costSamples: [],
-  engineError: ''
+  engineError: '',
+  tier: 'full',
+  autoTier: 'full',
+  autoPending: '',
+  autoIntervals: [],
+  autoLastAt: 0,
+  autoBadStreak: 0,
+  autoWindows: 0,
+  autoLastOver: 0,
+  autoChanges: 0,
+  autoSwitchAt: 0,
+  autoBlocked: '',
+  autoLog: '',
+  autoLine: -1,
+  probeCost: -1,
+  probeVerdict: '',
+  probeLog: '',
+  probeError: '',
+  probePending: false,
+  probeSamples: [],
 };
 
 var haloState = {
@@ -171,6 +189,234 @@ function haloPresetIsActive() {
   return typeof fx !== 'undefined' && fx && Number(fx.preset) === HALO_PRESET_INDEX;
 }
 
+// ---------------------------------------------------------------- draw tier
+//
+// The tier is the app's one setting (fx.pvDrawQuality, the same one the PV layer reads), and
+// this preset answers for it in its own terms: the two presets draw with different engines, so
+// "lean" is not the same set of switches here. What is shared is the promise - 效果档 never
+// degrades, 性能档 is the cheaper picture, and 自动 only degrades when this layer is itself the
+// one that cannot keep up, and then only on a line boundary.
+//
+// The cheaper picture here is the same picture at fewer pixels, and that is what the measurement
+// says (scripts/halo-draw-bench.js, 1920x1080): one frame of the ring costs about 3ms plus
+// 8.6ms per megapixel, and taking whole parts of the drawing away barely moves it - the parts
+// overlap, so their neighbours still shade the same pixels. What does move it is the pixel
+// count: at three quarters of the resolution the identical frame costs a third less.
+//
+// Nothing of the picture is removed and nothing of it moves. The text keeps the size it has on
+// screen and the ring keeps its place; only the resolution the ring is rasterised at changes,
+// which makes the edges softer. That is the one thing 性能档 is allowed to spend.
+var HALO_FULL_SCALE = 1;           // 效果档 draws every pixel of the canvas
+var HALO_LEAN_SCALE = 0.75;        // 性能档 draws the same picture at three quarters of them
+var haloTierScale = HALO_FULL_SCALE;   // the resolution the canvas is at right now
+
+// The 自动 tier decides from this layer's own cost. The window is the same two seconds the PV
+// layer uses, counted in the ring's own frames: 60 frames at 30fps.
+var HALO_AUTO_WINDOW_FRAMES = 60;
+var HALO_FRAME_BUDGET_MS = 1000 / 30;  // the ring draws at 30fps; this is one of its periods
+var HALO_AUTO_ENTER_OVER = 35;        // 35 of 60 is the same share PV uses (14 of 24)
+var HALO_AUTO_ENTER_WINDOWS = 3;      // and it has to hold for three such windows
+var HALO_AUTO_SEEK_BACK_S = 2;        // a rewind this large is a fresh listening pass
+var HALO_PROBE_SAMPLES = 3;           // frames the capability probe measures
+var HALO_PROBE_COOLDOWN_MS = 30000;   // how long a verdict of "this is not the ring" is believed
+
+function haloTierMode() {
+  return typeof normalizePvDrawQuality === 'function'
+    ? normalizePvDrawQuality(fx && fx.pvDrawQuality)
+    : 'auto';
+}
+
+function haloAutoDrawTier() {
+  return haloPresetState.autoTier;
+}
+
+function haloAutoLog(fromTier, toTier, why) {
+  var line = '[HaloDrawTier] ' + fromTier + ' -> ' + toTier + ': ' + why;
+  haloPresetState.autoLog = line;
+  if (typeof console !== 'undefined' && console && typeof console.info === 'function') console.info(line);
+  if (typeof window !== 'undefined' && window && window.__mineradioPerf &&
+      typeof window.__mineradioPerf.count === 'function') {
+    window.__mineradioPerf.count('halo.draw.tier.' + toTier);
+  }
+}
+
+// A new song, a rewind, or a released layer is new evidence: the decision belongs to one song's
+// content, so it starts again from the full picture instead of carrying over.
+function haloAutoReset(reason) {
+  var s = haloPresetState;
+  var from = s.autoTier;
+  s.autoTier = 'full';
+  s.autoPending = '';
+  s.autoIntervals.length = 0;
+  s.autoLastAt = 0;
+  s.autoBadStreak = 0;
+  s.autoWindows = 0;
+  s.autoLastOver = 0;
+  s.autoLine = -1;
+  if (reason && from !== 'full') haloAutoLog(from, 'full', 'reset (' + reason + ')');
+}
+
+// The tier this frame is drawn with. A tier chosen by hand is also the user rejecting what
+// 自动 decided, so the automatic decision is dropped here instead of waiting in reserve.
+function haloTier() {
+  var mode = haloTierMode();
+  if (mode === 'full' || mode === 'lean') {
+    if (haloPresetState.autoTier !== 'full' || haloPresetState.autoPending) {
+      haloAutoReset('a manual tier was chosen');
+    }
+    return mode;
+  }
+  return haloAutoDrawTier();
+}
+
+// The resolution the tier draws at. The canvas is resized in place and the frame that follows
+// draws the whole picture again, so nothing of the picture is lost; the resize and the redraw
+// happen in the same task, so the cleared canvas is never the one the user sees.
+function haloApplyTierScale(tier) {
+  var canvas = haloCanvasElement();
+  var s = haloState;
+  if (!canvas || !s.ready) return false;
+  var scale = tier === 'lean' ? HALO_LEAN_SCALE : HALO_FULL_SCALE;
+  if (Math.abs(scale - haloTierScale) < 0.001) return false;
+  haloTierScale = scale;
+  s.dpr = scale;
+  canvas.width = Math.max(2, Math.round(s.w * scale));
+  canvas.height = Math.max(2, Math.round(s.h * scale));
+  return true;
+}
+
+// The boundary is a lyric line: the ring turns to the next line, and a tier change lands on
+// that turn - never in the middle of one, which is the rule the PV layer follows for its cuts.
+function haloAutoBoundary(t, now) {
+  var s = haloPresetState;
+  if (s.lastT && (s.lastT - t) > HALO_AUTO_SEEK_BACK_S) {
+    haloAutoReset('rewound to ' + (Math.round(t * 10) / 10) + 's');
+  }
+  var line = haloLyric.current;
+  var boundary = line >= 0 && line !== s.autoLine;
+  if (line >= 0) s.autoLine = line;
+  if (boundary && s.autoPending) {
+    var from = s.autoTier;
+    s.autoTier = s.autoPending;
+    s.autoPending = '';
+    s.autoBadStreak = 0;
+    s.autoChanges += 1;
+    s.autoSwitchAt = now;
+    haloAutoLog(from, s.autoTier,
+      s.autoLastOver + '/' + HALO_AUTO_WINDOW_FRAMES + ' frames late, held for ' + HALO_AUTO_ENTER_WINDOWS +
+      ' windows; the ring costs ' + s.probeCost + 'ms of its ' + (Math.round(HALO_FRAME_BUDGET_MS * 10) / 10) +
+      'ms budget (line ' + line + ')');
+  }
+  return boundary;
+}
+
+// The probe answers one question: can this machine draw the ring's full picture inside the
+// ring's own frame budget? If it can, the slowness the app is feeling is not the ring's, and
+// the ring keeps its picture - the doctrine's second boundary, no visible downgrade for a
+// reason that has nothing to do with this layer.
+//
+// The measurement is taken in the render loop, around the frame the app draws anyway. It has
+// to be the live canvas: a throwaway canvas is rasterised but never composited, and the
+// compositing is most of what the ring costs. Measured at 1920x1080 for the same frame: the
+// live canvas 16.2ms, a throwaway canvas 5.5ms - the throwaway reads a third of the truth.
+// Reading the live canvas back does not cost it its acceleration: fifty readbacks in a row
+// left it drawing at the same speed.
+function haloAutoProbe() {
+  var s = haloPresetState;
+  s.autoProbeAt = Date.now();
+  s.probePending = true;
+  s.probeSamples.length = 0;
+  s.probeVerdict = 'measuring';
+}
+
+// The baseline for one measured frame. The first readback is not timed: it waits for
+// whatever the previous frame left pending, so the second one has nothing new to rasterise
+// and pays for the transfer alone. That is the number the frame's cost is subtracted from.
+function haloProbeBaseline(ctx) {
+  try {
+    ctx.getImageData(0, 0, 1, 1);
+    var t0 = performance.now();
+    ctx.getImageData(0, 0, 1, 1);
+    return performance.now() - t0;
+  } catch (err) {
+    var s = haloPresetState;
+    s.probeError = String((err && err.message) || err);
+    s.probePending = false;
+    s.probeVerdict = 'failed';
+    s.probeLog = '[HaloDrawTier] probe failed: ' + (s.probeError || 'no measurement');
+    return -1;
+  }
+}
+
+// The frame's cost: how long the readback after the drawing took, less the baseline.
+function haloProbeSample(ctx, base) {
+  var s = haloPresetState;
+  var t0 = performance.now();
+  try {
+    ctx.getImageData(0, 0, 1, 1);
+  } catch (err) {
+    s.probeError = String((err && err.message) || err);
+    s.probePending = false;
+    s.probeVerdict = 'failed';
+    s.probeLog = '[HaloDrawTier] probe failed: ' + (s.probeError || 'no measurement');
+    return;
+  }
+  var cost = Math.round((performance.now() - t0 - base) * 100) / 100;
+  s.probeSamples.push(cost);
+  if (s.probeSamples.length < HALO_PROBE_SAMPLES) return;
+  s.probePending = false;
+  var sorted = s.probeSamples.slice().sort(function (a, b) { return a - b; });
+  var median = sorted[Math.floor(sorted.length / 2)];
+  s.probeCost = median;
+  var budget = Math.round(HALO_FRAME_BUDGET_MS * 10) / 10;
+  var size = Math.round(haloState.w) + 'x' + Math.round(haloState.h);
+  if (median > HALO_FRAME_BUDGET_MS) {
+    s.probeVerdict = 'over';
+    s.probeLog = '[HaloDrawTier] probe: the ring costs ' + median + 'ms of its ' + budget + 'ms budget at ' + size;
+    s.autoPending = 'lean';
+  } else {
+    s.probeVerdict = 'within';
+    s.probeLog = '[HaloDrawTier] probe: the ring costs ' + median + 'ms of its ' + budget + 'ms budget at ' + size +
+      ' - the ring is not what is slow';
+  }
+  if (typeof console !== 'undefined' && console && typeof console.info === 'function') console.info(s.probeLog);
+}
+
+// One window of the ring's own frames, sampled per window. Sticky by design, exactly like the
+// PV layer: while 性能档 is on, a cheap frame only proves the downgrade is working, so the
+// recovery is the next song or the user picking 效果档.
+function haloAutoObserve(now) {
+  var s = haloPresetState;
+  if (haloTierMode() !== 'auto' || s.autoBlocked || s.autoTier !== 'full' || s.autoPending) {
+    s.autoIntervals.length = 0;
+    return;
+  }
+  var last = s.autoLastAt;
+  s.autoLastAt = now;
+  if (!last) return;
+  s.autoIntervals.push(now - last);
+  if (s.autoIntervals.length < HALO_AUTO_WINDOW_FRAMES) return;
+  var over = 0;
+  for (var i = 0; i < s.autoIntervals.length; i++) {
+    if (s.autoIntervals[i] > HALO_FRAME_BUDGET_MS) over += 1;
+  }
+  s.autoIntervals.length = 0;
+  s.autoWindows += 1;
+  s.autoLastOver = over;
+  if (over < HALO_AUTO_ENTER_OVER) {
+    s.autoBadStreak = 0;
+    return;
+  }
+  s.autoBadStreak += 1;
+  if (s.autoBadStreak < HALO_AUTO_ENTER_WINDOWS) return;
+  // The ring's frames are late. That alone says nothing about who is late - the app's main
+  // loop, the WebGL background or this layer can all be the reason - so the probe is what
+  // decides, and its verdict is only re-asked after a cooldown.
+  if (s.probePending) return;
+  if (s.probeVerdict === 'within' && (Date.now() - s.autoProbeAt) < HALO_PROBE_COOLDOWN_MS) return;
+  haloAutoProbe();
+}
+
 function haloLayerElement() { return document.getElementById('halo-layer'); }
 function haloCanvasElement() { return document.getElementById('halo-canvas'); }
 
@@ -204,7 +450,7 @@ function haloLayoutStage(w, h) {
   s.band = s.R * haloParam('bandK');
   s.RO = s.R + s.band;
   s.RMAX = Math.hypot(s.w - s.cx, s.h - s.cy) + 60;
-  s.dpr = HALO_RENDER_SCALE;
+  s.dpr = haloTierScale;
   // The base pan is what puts the ring's centre at the framing knobs' position; the
   // user's own pan is added on top of it.
   s.basePanX = (0.5 - haloParam('centerX')) * s.w;
@@ -218,8 +464,8 @@ function haloResize() {
   var w = layer.clientWidth || window.innerWidth || 1280;
   var h = layer.clientHeight || window.innerHeight || 720;
   haloLayoutStage(w, h);
-  canvas.width = Math.max(2, Math.round(w * HALO_RENDER_SCALE));
-  canvas.height = Math.max(2, Math.round(h * HALO_RENDER_SCALE));
+  canvas.width = Math.max(2, Math.round(w * haloTierScale));
+  canvas.height = Math.max(2, Math.round(h * haloTierScale));
   canvas.style.width = '100%';
   canvas.style.height = '100%';
   haloBuildWeb();
@@ -228,6 +474,14 @@ function haloResize() {
   haloBuildFlyers();
   haloBuildGradients();
   haloState.ready = true;
+  // The probe's verdict belongs to one size: after a resize the machine may well be able to
+  // draw the picture at the new size, so the verdict is asked again.
+  haloPresetState.probeCost = -1;
+  haloPresetState.probeVerdict = '';
+  haloPresetState.probeLog = '';
+  haloPresetState.probePending = false;
+  haloPresetState.probeSamples.length = 0;
+  haloPresetState.autoProbeAt = 0;
   return true;
 }
 
@@ -507,6 +761,9 @@ function haloReadAngle() { return haloParam('readAngle') * Math.PI / 180; }
 function haloBuildLyricRing() {
   var canvas = haloCanvasElement();
   var ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+  // A different list of lines is new evidence for 自动, the same way a new plan is for the PV
+  // layer: the decision belongs to one song's content and does not carry into the next.
+  var prevKey = haloLyric.songKey;
   var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
   var translations = (typeof lyricsTranslationLines !== 'undefined' && Array.isArray(lyricsTranslationLines)) ? lyricsTranslationLines : [];
   var offset = 0;
@@ -560,6 +817,7 @@ function haloBuildLyricRing() {
   if (measure) measure.restore();
   haloLyric.builtFontPx = fontPx;
   haloLyric.songKey = haloLyricSignature();
+  if (prevKey !== haloLyric.songKey) haloAutoReset('a new lyric list');
   return haloLyric.items.length;
 }
 
@@ -2289,16 +2547,27 @@ function haloRenderFrame(canvas, now, dt) {
   var ctx = canvas.getContext('2d');
   if (!ctx) return false;
   var started = performance.now();
+  haloAutoBoundary(t, started);
+  // The tier is read once per frame, not per part: a tier change has to be a decision for the
+  // whole frame, never half a frame in one quality and half in another. The change resizes
+  // the canvas, so it happens before anything is drawn into it.
+  haloApplyTierScale(haloTier());
+  // The probe takes its baseline before the drawing and its reading after it, around the frame
+  // the app draws anyway - that is the only place the ring's real cost can be seen.
+  var probeBase = haloPresetState.probePending ? haloProbeBaseline(ctx) : -1;
   try {
     haloDrawFrame(ctx, dt);
   } catch (err) {
     haloPresetState.engineError = String((err && err.message) || err);
     return false;
   }
+  if (probeBase >= 0) haloProbeSample(ctx, probeBase);
   haloPresetState.draws += 1;
   haloPresetState.lastDrawAt = now;
   haloPresetState.lastCostMs = Math.round((performance.now() - started) * 100) / 100;
   haloPresetState.lastT = t;
+  haloPresetState.tier = haloTier();
+  haloAutoObserve(now);
   return true;
 }
 
@@ -2357,6 +2626,11 @@ function haloReleaseHaloLayer() {
   haloState.pulse = 1;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
+  // A released layer is not evidence for 自动: the next song starts from the full picture.
+  haloAutoReset();
+  // The clock starts again with the layer: the gap between the last frame of the old layer
+  // and the first of the new one is not a slow frame.
+  haloPresetState.autoLastAt = 0;
   haloPointerState.down = false;
   haloPointerState.moved = false;
   // The camera goes back to the framing knobs' default when the preset is left.
@@ -2398,6 +2672,27 @@ function haloPresetStatus() {
       strands: haloStrandLayers.length
     },
     lyric: { lines: haloLyric.items.length, current: haloLyric.current, key: haloLyric.songKey },
+    tierSetting: haloTierMode(),
+    tier: haloPresetState.tier,
+    tierNow: haloTier(),
+    scale: haloTierScale,
+    auto: {
+      tier: haloPresetState.autoTier,
+      pending: haloPresetState.autoPending,
+      blocked: haloPresetState.autoBlocked,
+      badStreak: haloPresetState.autoBadStreak,
+      windows: haloPresetState.autoWindows,
+      lastOver: haloPresetState.autoLastOver,
+      windowFrames: HALO_AUTO_WINDOW_FRAMES,
+      budgetMs: Math.round(HALO_FRAME_BUDGET_MS * 10) / 10,
+      changes: haloPresetState.autoChanges,
+      switchAt: haloPresetState.autoSwitchAt,
+      line: haloPresetState.autoLine,
+      log: haloPresetState.autoLog,
+      probeCost: haloPresetState.probeCost,
+      probeVerdict: haloPresetState.probeVerdict,
+      probeLog: haloPresetState.probeLog,
+    },
     camera: {
       panX: Math.round(haloCam.panX),
       panY: Math.round(haloCam.panY),

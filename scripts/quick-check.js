@@ -885,6 +885,64 @@ function runPvDrawBenchGuardCheck() {
   console.log(`[OK] PV draw bench pinned: ${bench.PV_ENGINE_KNOBS.length} knobs matched against the vendored engine.`);
 }
 
+function runHaloDrawTierCheck() {
+  logStep('HALO draw tier (自动 decides from the ring\'s measured cost, 性能档 keeps the picture)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
+  const testFile = path.join(appRoot, 'tests', 'halo-draw-tier.test.js');
+  const benchPath = path.join(appRoot, 'scripts', 'halo-draw-bench.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`HALO draw tier regression failed: ${rel(testFile)}`);
+  }
+  const haloText = fs.readFileSync(modulePath, 'utf8');
+  // The doctrine asks for a downgrade only under sustained measured pressure, switched
+  // atomically at a boundary, explained in the log, and reversible by the user. Each of those
+  // is a call site, so each is pinned here.
+  const autoGuards = [
+    [/var HALO_AUTO_ENTER_WINDOWS = (\d+);/, '自动 must need several measured windows, not one bad frame'],
+    [/if \(boundary && s\.autoPending\)/, 'a decision must land on a lyric line boundary, never mid-line'],
+    [/haloAutoBoundary\(t, started\);/, 'the decision must be made before the frame is drawn'],
+    [/if \(s\.probePending\) return;/, 'a probe that is still measuring must not be asked again'],
+    [/\[HaloDrawTier\]/, 'every switch must say what it measured, in the log'],
+    [/haloAutoReset\('a manual tier was chosen'\)/, 'the user picking a tier by hand must overrule 自动'],
+  ];
+  for (const [pattern, why] of autoGuards) {
+    if (!pattern.test(haloText)) fail(`HALO 自动档 lost a doctrine guard: ${why}`);
+  }
+  // 性能档 is the same picture at fewer pixels. If a part of the picture were quietly dropped
+  // instead, the ring would lose something the user can see - the second boundary.
+  if (!/var HALO_LEAN_SCALE = ([\d.]+);/.test(haloText)) fail('the 性能档 resolution cannot be inspected');
+  const leanScale = Number(/var HALO_LEAN_SCALE = ([\d.]+);/.exec(haloText)[1]);
+  if (!(leanScale > 0.5 && leanScale < 1)) {
+    fail(`the 性能档 resolution must be a real reduction (found ${leanScale})`);
+  }
+  // The probe measures the live canvas: a canvas that is not on screen is rasterised but never
+  // composited, and it reads a third of the truth. The probe's own functions must not build a
+  // canvas of their own - only the ring's baking may.
+  const probeText = haloText.slice(haloText.indexOf('function haloProbeBaseline'), haloText.indexOf('function haloAutoObserve'));
+  if (!probeText) fail('the probe functions are missing; the ring would never know what it costs');
+  if (/createElement/.test(probeText)) {
+    fail('the probe must measure the canvas that is on screen, not a throwaway one');
+  }
+  if (!/var probeBase = haloPresetState\.probePending \? haloProbeBaseline\(ctx\) : -1;/.test(haloText)) {
+    fail('the probe must take its baseline on the context the frame is drawn into');
+  }
+  if (!/ctx\.getImageData\(0, 0, 1, 1\)/.test(haloText)) {
+    fail('the probe must read the canvas back to see the rasterisation');
+  }
+  // The bench has to stay loadable and parse, or the numbers behind the tier are lost.
+  const syntax = spawnSync(process.execPath, ['--check', benchPath], { cwd: appRoot, encoding: 'utf8' });
+  if (syntax.status !== 0) {
+    process.stdout.write(syntax.stdout || '');
+    process.stderr.write(syntax.stderr || '');
+    fail(`halo-draw-bench.js does not parse: ${rel(benchPath)}`);
+  }
+  require(benchPath);
+  console.log(`[OK] HALO draw tier wired; 性能档 draws at ${leanScale}x, 自动 guarded by ${autoGuards.length} doctrine checks.`);
+}
+
 function runPvPresetLiveProbe(modulePath) {
   const probe = path.join(appRoot, 'tmp', 'cdp-pv-preset-check.js');
   if (!fs.existsSync(probe)) {
@@ -6928,6 +6986,7 @@ async function main() {
   runHaloPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
+  runHaloDrawTierCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runFxConsoleRegistrationCheck();
   runWindowVisibilityTraceCheck();
