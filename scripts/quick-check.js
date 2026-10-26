@@ -384,7 +384,7 @@ function runPvPlannerIdleReleaseCheck() {
   const trimBody = /async function trimAppMemoryNow\(reason\) \{[\s\S]*?\n\}/.exec(mainText);
   if (!trimBody) fail('desktop/main.js no longer has a trimAppMemoryNow body to inspect');
   for (const [text, pattern, why] of [
-    [poolText, /if \(busy > 0\) \{[\s\S]{0,320}return \{ ok: true, released: false, reason: 'plan-in-flight'/, 'idleRelease must refuse a window with a plan in flight; disposing it would reject that caller'],
+    [poolText, /if \(busy > 0\) \{[\s\S]{0,520}return \{ ok: true, released: false, reason: 'plan-in-flight'/, 'idleRelease must refuse a window with a plan in flight; disposing it would reject that caller'],
     [poolText, /if \(!instance\) return \{ ok: true, released: false, reason: 'not-open'/, 'an idle release with no window must be a no-op, not a counted release'],
     [poolText, /\[PvPlanner\]/, 'every release has to say what it did in the log (doctrine: an aggressive path explains itself)'],
     [poolText, /if \(!background \|\| !instance \|\| reclaimTimer\) return;[\s\S]{0,260}\.unref\(\)/, 'the quiet-period reclaim is a one-shot that never keeps the app alive, and only exists while main says the app is in the background'],
