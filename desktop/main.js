@@ -1784,6 +1784,12 @@ function configureLocalAppPermissions() {
 function sendWindowState(win) {
   if (!win || win.isDestroyed()) return;
   win.webContents.send('desktop-window-state', getWindowState(win));
+  // The planner pool cannot see the window, so the one fact it needs - is the app out of the way -
+  // is pushed from here, the place every window-state change passes through. Backgrounding arms its
+  // one-shot quiet-period reclaim; coming back to the foreground cancels it.
+  if (win === mainWindow && localServer && typeof localServer.setPvPlannerBackground === 'function') {
+    localServer.setPvPlannerBackground(!isMainWindowForegroundVisible());
+  }
 }
 
 // A global hotkey only lands if the renderer is awake enough to run its message queue.
@@ -2057,10 +2063,18 @@ async function trimAppMemoryNow(reason) {
   lastAppMemoryTrimAt = Date.now();
   lastAppMemoryTrimReason = trimReason;
   try {
+    // The PV planner owns a hidden window holding a whole renderer process with the engine in it,
+    // and it only earns that while PVs are being planned. This function is already unreachable
+    // while the main window is visible in the foreground, so this is the idle/background path the
+    // doctrine allows reclaim on; the pool additionally refuses while a plan is in flight, and the
+    // next PV request rebuilds the window.
+    const plannerRelease = localServer && typeof localServer.idleReleasePvPlanner === 'function'
+      ? localServer.idleReleasePvPlanner(trimReason)
+      : null;
     const before = systemMemory.getMemorySnapshot();
     const trim = await systemMemory.trimAppWorkingSets(collectAppTrimPids());
     const after = systemMemory.getMemorySnapshot();
-    return { ok: true, reason: lastAppMemoryTrimReason, before, trim, after };
+    return { ok: true, reason: lastAppMemoryTrimReason, plannerRelease, before, trim, after };
   } catch (e) {
     return { ok: false, reason: lastAppMemoryTrimReason, error: e.message || 'APP_MEMORY_TRIM_FAILED', snapshot: systemMemory.getMemorySnapshot() };
   } finally {
@@ -2120,6 +2134,12 @@ async function runMemoryAutoTick(reason = 'auto') {
     memoryAutoState.lastReason = reason + ':foreground-visible';
     memoryAutoState.lastResult = { ok: true, skipped: true, reason: 'foreground-visible' };
     return { ok: true, skipped: true, reason: 'foreground-visible', state: memoryAutoState };
+  }
+  // The planner window is offered back here as well. The app-memory trim runs once per minimize and
+  // the background PV prefetch can rebuild the window right after it, so this existing recurring
+  // idle tick is the second chance; the user's own 自动内存 switch is also what turns it off.
+  if (localServer && typeof localServer.idleReleasePvPlanner === 'function') {
+    localServer.idleReleasePvPlanner(reason + ':memory-auto');
   }
   const snapshot = await systemMemory.getMemorySnapshotExtended();
   const threshold = Number(memoryAutoState.thresholdPercent) || 0;

@@ -276,7 +276,7 @@ function runPvPlannerCheck() {
   // the renderer at /pv-engine.js (preset 13 loads it on demand instead of concatenating 2.1MB
   // into every page load). A third reader is how a stale copy reappears.
   const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'pv-planner.js'), path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
+  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'pv-planner.js'), path.join(appRoot, 'pv-planner-pool.js'), path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
     .filter((file) => /\.js$/.test(file) && /jizura-engine\.js/.test(stripComments(fs.readFileSync(file, 'utf8'))))
     .map((file) => path.basename(file))
     .sort();
@@ -309,8 +309,10 @@ function runPvPlannerCheck() {
   const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
   const releaseFiles = (releasePkg.build && releasePkg.build.files) || [];
   const betaFiles = betaPkg.files || [];
-  if (!releaseFiles.includes('pv-planner.js') || !betaFiles.includes('pv-planner.js')) {
-    fail(`pv-planner.js must be listed in both packaging file manifests; release=${releaseFiles.includes('pv-planner.js')} beta=${betaFiles.includes('pv-planner.js')}`);
+  for (const packaged of ['pv-planner.js', 'pv-planner-pool.js']) {
+    if (!releaseFiles.includes(packaged) || !betaFiles.includes(packaged)) {
+      fail(`${packaged} must be listed in both packaging file manifests; release=${releaseFiles.includes(packaged)} beta=${betaFiles.includes(packaged)}`);
+    }
   }
 
   // The lyric-tail repair: pv-planner.js owns it because the engine is hash-pinned and cannot be
@@ -365,10 +367,48 @@ function runPvPlannerProbe() {
   }
 }
 
+// Releasing the planner's hidden window is the one PV path that touches memory while the app is
+// not in the foreground, so it is pinned twice: the pool must refuse a busy window and keep saying
+// what it did, and the only caller must be the app's existing idle/background trim path.
+function runPvPlannerIdleReleaseCheck() {
+  logStep('PV planner idle release (hidden window given back on the idle path, never mid-plan)');
+  const testFile = path.join(appRoot, 'tests', 'pv-planner-idle-release.test.js');
+  const run = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (run.status !== 0) {
+    process.stdout.write(run.stdout || '');
+    process.stderr.write(run.stderr || '');
+    fail(`PV planner idle release regression failed: ${rel(testFile)}`);
+  }
+  const poolText = fs.readFileSync(path.join(appRoot, 'pv-planner-pool.js'), 'utf8');
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  const trimBody = /async function trimAppMemoryNow\(reason\) \{[\s\S]*?\n\}/.exec(mainText);
+  if (!trimBody) fail('desktop/main.js no longer has a trimAppMemoryNow body to inspect');
+  for (const [text, pattern, why] of [
+    [poolText, /if \(busy > 0\) \{[\s\S]{0,320}return \{ ok: true, released: false, reason: 'plan-in-flight'/, 'idleRelease must refuse a window with a plan in flight; disposing it would reject that caller'],
+    [poolText, /if \(!instance\) return \{ ok: true, released: false, reason: 'not-open'/, 'an idle release with no window must be a no-op, not a counted release'],
+    [poolText, /\[PvPlanner\]/, 'every release has to say what it did in the log (doctrine: an aggressive path explains itself)'],
+    [poolText, /if \(!background \|\| !instance \|\| reclaimTimer\) return;[\s\S]{0,260}\.unref\(\)/, 'the quiet-period reclaim is a one-shot that never keeps the app alive, and only exists while main says the app is in the background'],
+    [poolText, /out\[field\] = totals\[field\] \+ \(Number\(current\[field\]\) \|\| 0\)/, 'counters must stay cumulative over a release, or reclaim blinds the pipeline reading'],
+    // The doctrine gate: reclaim is only allowed on the idle/background/minimized path. That gate
+    // lives in trimAppMemoryNow, so the call has to be inside it rather than beside it.
+    [trimBody[0], /localServer\.idleReleasePvPlanner\(/, 'the planner window must be released from the app memory trim path'],
+    [mainText, /idleReleasePvPlanner\(reason \+ ':memory-auto'\)/, 'the memory-auto tick must offer the planner window back too; the trim runs once per minimize and the background prefetch can rebuild it'],
+    // The pool has no eyes of its own: main.js, which owns the window, pushes visibility from the one
+    // function every state change passes through. Anything else is a flag that can drift.
+    [mainText, /localServer\.setPvPlannerBackground\(!isMainWindowForegroundVisible\(\)\)/, 'the planner pool must be told the real window posture, from sendWindowState'],
+    [trimBody[0], /isMainWindowForegroundVisible\(\) && trimReason !== 'manual-force'/, 'trimAppMemoryNow must still skip the foreground, or an idle release becomes a mid-playback teardown'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if (/setInterval\([\s\S]{0,120}idleReleasePvPlanner/.test(mainText) || /setTimeout\([\s\S]{0,120}idleReleasePvPlanner/.test(mainText)) {
+    fail('the planner release must ride the existing trim path, not a new timer of its own');
+  }
+  console.log('[OK] PV planner window is given back on the idle path, refuses mid-plan, and stays counted after release.');
+}
+
 // Route wiring for the planning pipeline, plus the live end-to-end when an app happens to be
 // running with a writable cache (script tmp/pv-pipeline-e2e.js).
-function runPvPipelineCheck() {
-  logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
+function runPvPipelineCheck() {  logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
   const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
   for (const [pattern, why] of [
     [/pn === '\/api\/pv\/plan'/, 'server.js no longer exposes the planning route'],
@@ -379,10 +419,15 @@ function runPvPipelineCheck() {
     [/canonicalArchiveKey\(\{[\s\S]{0,240}lyricHash: lyricFingerprint/, 'the archive key must be keyed on the derived lyric fingerprint, not on a caller-supplied hash'],
     [/delete plan\.fontTable/, 'the archive must not keep the inline font table (validateArchive rejects it)'],
     [/pvPlanInFlight/, 'concurrent requests for one key must share a single plan'],
-    [/let pvPlannerInstance = null/, 'the planner window must be created lazily, not at boot'],
+    [/pvPlannerPool\.get\(\)\.plan\(/, 'planning must go through the pool, which spawns the hidden window on first use'],
+    // The pool refuses to release a window with a caller wedged on it; that judgement only exists
+    // if server.js actually hands it the in-flight count.
+    [/isBusy: \(\) => pvPlanInFlight\.size/, 'the planner pool must be told when a plan is in flight, or an idle trim would fail that caller'],
+    [/server\.idleReleasePvPlanner = idleReleasePvPlanner/, 'the main process must be able to release the planner window on its idle path'],
   ]) {
     if (!pattern.test(serverText)) fail(why);
   }
+  runPvPlannerIdleReleaseCheck();
 
   const e2e = path.join(appRoot, 'tmp', 'pv-pipeline-e2e.js');
   if (!fs.existsSync(e2e)) {
