@@ -1,9 +1,10 @@
 # PV 绘制性能基线（preset 13 / JIZURA 引擎）
 
-更新日期：2026-10-23
+更新日期：2026-10-26
 测量工具：`scripts/pv-draw-bench.js`（离线、只读、不改动产品代码路径）
-护栏：`tests/pv-draw-bench-guard.test.js`（knob 仍存在于 vendor 引擎）与
-`tests/pv-draw-tier.test.js`（档位选项与自动档状态机），两者都已接入 `scripts/quick-check.js`
+护栏：`tests/pv-draw-bench-guard.test.js`（knob 仍存在于 vendor 引擎）、
+`tests/pv-draw-tier.test.js`（档位选项与自动档状态机）与
+`tests/pv-planner-idle-release.test.js`（规划窗口的空闲释放，步骤 #10），三者都已接入 `scripts/quick-check.js`
 
 ## 1. 这份基线回答的第一个问题：瓶颈在"制定"还是"播放"
 
@@ -11,6 +12,7 @@
 
 - 制定跑在一个独立的隐藏 renderer 进程（`pv-planner.js`，`createPvPlanner`，串行队列、8 秒超时），
   引擎以文本注入，返回值是 JSON 字符串。渲染主进程根本不与它共享一帧的时间片。
+  这个窗口现在归 `pv-planner-pool.js` 管，应用安静下来时会被回收（§6）。
 - 实测 `J.plan` 引擎内部耗时 81.9 / 60.0 ms，首次调用墙钟 267 ms（含建窗口 + 求值 2.1 MB 引擎），
   窗口复用时 65 ms。产物 plan JSON 约 342 KB。
 - 渲染侧拿到 plan 之后的成本可以忽略：`JSON.parse` 0.98–1.07 ms，`repairPlanTails` 0.23–0.4 ms。
@@ -162,7 +164,90 @@ node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js --markdown
 其中"边界"和"绕开档位"两条由那两个跑真模块的用例抓到：`loadLive()` 把整个 preset 模块装进 vm，
 用一个只在引擎里推进的假时钟喂耗时，所以"哪一帧拿到了哪组选项"是被执行出来的，不是正则匹配出来的。
 
-## 6. 复现性
+## 6. 规划隐藏窗口的空闲释放（步骤 #10）
+
+§1 说了制定不挤占播放帧，但它仍是一个活着的 renderer 进程：`pv-planner.js` 建出来的 480×320 隐藏窗口
+一旦为某首歌建过，就永远开着，里面驻着 2.1 MB 引擎文本和它求值出来的字形/缓存。之前只有手动释放
+（`POST /api/pv/planner {release:true}`），没人会去点。步骤 #10 要的是：应用自己安静下来的时候，把这个
+窗口还给系统，并且不能为此制造新的 bug。
+
+实现拆成三块，池子在 `pv-planner-pool.js`（`createPvPlannerPool`，依赖全部注入：`appRoot` /
+`createPlanner` / `isBusy` / `log` / `idleReleaseMs`），`server.js` 只提供 `isBusy: () => pvPlanInFlight.size`
+和日志，真正的"什么时候算空闲"由 `desktop/main.js` 决定。
+
+### 6.1 释放只挂在已有的空闲路径上
+
+| 路径 | 挂在哪 | 为什么算空闲 |
+| --- | --- | --- |
+| 手动内存整理 | `trimAppMemoryNow()`，在 `foreground-visible` 闸门之后第一句 | 这个闸门本来就在，释放只是它已经判定为后台的顺带动作 |
+| 定时内存整理 | `runMemoryAutoTick()`，紧接着它的 `foreground-visible` return | 同上，且沿用用户已有的 `memoryAutoTrimApp` / `memoryAutoTrimOnBackground` 开关当关闭入口 |
+| 窗口状态变化 | `sendWindowState()`（24 个调用点的唯一出口）把 `!isMainWindowForegroundVisible()` 推给 `setPvPlannerBackground` | 最小化/隐藏后进入"安静期"计时 |
+
+原则禁止"前台可见播放时强行回收"，所以这里没有任何新的定时器或轮询去主动找时机——`main.js` 里
+`idleReleasePvPlanner` 附近不许出现 `setInterval` / `setTimeout`，这条由 `scripts/quick-check.js` 正则钉住。
+
+安静期的回收是**一次性**的：后台状态下每次取用窗口都重新武装 45 秒（`PV_IDLE_RELEASE_MS`，
+可用 `MINERADIO_PV_PLANNER_IDLE_MS` 覆盖），到点只在没有计划在路上时才关。定时器 `.unref()`，
+不为了等它而让进程多活一秒。回到前台立刻取消武装。
+
+### 6.2 三个不能省的边界
+
+- **有计划在飞就不动**。`isBusy()` 读的是 `server.js` 的请求去重表：两个调用方共享一份计划仍是一次计划，
+  而在飞的计划意味着有个窗口正卡在它的 `executeJavaScript` 上。被拒时不重试，而是重新武装等下一个安静期，
+  并累加 `refusedWhileBusy`、打一行 `[PvPlanner] idle release (…) refused: N plan(s) in flight`。
+- **计数跨窗口累加**。`liveStats()` 把已销毁窗口的计数与当前窗口的相加，"最新值"类字段才覆盖。
+  否则每次重建就把 `windowsCreated` 抹回 1，一个"绿色"读数恰好掩盖了它一直在抖动重建这件事——
+  而这正是本次要观察的现象。
+- **引擎指纹不匹配仍然记住**。`failure` 存进池子，`idleRelease` 不清除，免得每首歌都重建一次窗口再
+  每首都失败。
+
+手动释放路由保持无条件（哪怕有计划在飞也照关，调用方拿到 `PV_PLAN_TIMEOUT` 是它自己要求的），
+文档化的理由是：它就是调试口，不能变成空闲路径——空闲路径必须无条件地"不打断正在干的活"。
+
+### 6.3 验收：单元测试 12 例
+
+`tests/pv-planner-idle-release.test.js`（已进 `scripts/quick-check.js`，跟随 `runPvPipelineCheck()`）。
+假窗口记下构造参数，假计划用 `blockOn` 把执行卡在 `executeJavaScript` 中间来制造"在飞"：
+
+| 组 | 断言 |
+| --- | --- |
+| 建窗 | 懒创建；`options.show === false`；`backgroundThrottling === false`（否则后台根本不会被调用） |
+| 释放与重建 | 释放真的 `destroy()`；下一份计划重建窗口且照样出结果 |
+| 在飞拒绝 | `reason:'plan-in-flight'` + `refusedWhileBusy` 增加，而那份计划仍然正常返回 |
+| 计数 | 跨两次窗口：`windowsCreated` 2 / `plans` 3 / `releases` 2 / `lastEngineMs` 7 |
+| 日志与命名 | `[PvPlanner] … tray-hide`；`not-open` 是空操作且一行日志都不打 |
+| 失败记忆 | 指纹不匹配的失败活过一次 `idleRelease`（`createCalls === 1`） |
+| 手动 vs 空闲 | `release('manual')` 在调用方卡住时仍无条件关闭 |
+| 安静期 | 后台静默 45 秒后自动回收（`lastReleaseReason:'background-quiet'`）；后台重建的窗口会被再收一次（`releases` 2）；回前台取消武装；被在飞拒绝后重新武装 |
+
+### 6.4 验收：实机探针与两次不一致的运行
+
+探针 `tmp/pv-planner-idle-live.js`（HTTP 打 `GET /api/pv/planner` + `POST /api/pv/plan`，
+合成歌曲键 `__idle-release-probe__` 保证缓存必然 miss；CDP 驱动 `trimAppMemory` / `minimize` / `restore`）。
+判定与观察分开写，因为"释放发生过"和"读取时窗口还开着"是两件事：
+
+- 前台时 `trimAppMemoryNow` 返回 `foreground-visible`，窗口 `open:true` 不变——**这条边界实测到了**。
+- 最小化后走定时整理路径，释放发生过：一次全绿运行里读到 `open:false releases:1 lastReleaseReason:'minimize'`，
+  随后 plan B 把它重建，`windowsCreated:2 plans:2`，计数没有被抹掉。引擎内部耗时在 16.8–22.4 ms。
+- `tmp/pv-planner-idle-live.log` 存的是另一次运行：最小化成功（`minimized:true visible:false`），
+  但 +5.99 秒应用把自己的窗口恢复了（`window-restored`，`windowMinimizeIntentional:true`，
+  没有 `window-minimize-recovered`），于是 +4 秒那次定时整理回答 `foreground-visible` 而跳过，
+  整个探针读到 `releases:0`。
+
+两次不一致各暴露一个真实问题，也都已经处理：
+
+1. **后台的 PV 预取会在释放后几秒把窗口重新建起来**。所以回收不做成"后台就关一次"，而是"每次取用后
+   重新计时、静默才关"，并额外测了"后台重建的窗口会被再收一次"这一例。
+2. **应用会在最小化后约 4–6 秒自行恢复窗口**。这与用户报的"自动最小化"是同一个方向的现象，
+   还没有归因（嫌疑：`focusMainWindow` `desktop/main.js:2184`、`showMainWindowSafe` `desktop/main.js:5407`、
+   wallpaper-engine 的 suspend/resume；已排除 `restoreUnexpectedMainWindowMinimize`，因为它必写
+   `window-minimize-recovered`）。这一步不修它，但要记在这里：**任何依赖"最小化后仍保持最小化"的
+   内存回收，实际回收量都会被这个自恢复打折。**
+
+还没测的：**每个 renderer 进程实际省下多少 MB**。池子的计数器证明窗口确实关了，但没测回内存的量；
+要测需要在释放前后各读一次 `app.getProcessMemoryInfo()`，属于步骤 #12 的实机清单。
+
+## 7. 复现性
 
 同一命令连跑两次（含 JIT 预热与"第二遍才计时"两步，见 `scripts/pv-draw-bench.js` 的 `PAGE_SWEEP`）：
 
@@ -184,7 +269,7 @@ node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js --markdown
 未加预热前，同一档位同一尺寸在两次运行里给过 9.15 / 5.68 ms 的差距，这就是 `PAGE_SWEEP` 里
 `warmup` 和"跑两遍只取第二遍"存在的原因；删掉它们，这张表就退回不可比。
 
-## 7. 护栏为什么必须存在
+## 8. 护栏为什么必须存在
 
 `fast` / `noGhost` / `noPost` / `noTrans` / `noHud` 只是 vendor 引擎读取的 `opt` 字段名。vendor 是
 sha1 钉住的、不允许修改的第三方文件；一旦哪天换了指纹或上游改了参数名，设置里那一档会照旧"生效"、
@@ -192,7 +277,7 @@ sha1 钉住的、不允许修改的第三方文件；一旦哪天换了指纹或
 源码的具体表达式上（例如 `/this\.filterOK && !opt\.fast/`），并把同一份源码改名后重跑一遍，证明护栏
 确实会红。这条检查已经进 `node scripts/quick-check.js`。
 
-## 8. 还没测、需要单独确认的
+## 9. 还没测、需要单独确认的
 
 - preset 13 期间主 WebGL 通路并没有停下：`renderer.render(scene, camera)` 每帧照旧执行，
   `applyVisualTakeover` 只隐藏了 particles / float / backCover / stageLyrics 几组，`fx.bloom` 开着时
