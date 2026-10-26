@@ -801,50 +801,9 @@ function runPvPresetLiveProbe(modulePath) {
 
 // Preset 14 (HALO ring). The static half guards the source; there is no live half yet
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
-// Reads one function back out of a module so a guard can be written against the body
-// instead of against the whole file. Comments and strings are skipped, so a brace inside
-// them does not move the depth.
-function haloSliceFunction(text, name) {
-  const head = 'function ' + name + '(';
-  const start = text.indexOf(head);
-  if (start < 0) return null;
-  const open = text.indexOf('{', start + head.length);
-  if (open < 0) return null;
-  let i = open;
-  let depth = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '/' && text[i + 1] === '/') {
-      const nl = text.indexOf('\n', i);
-      i = nl < 0 ? text.length : nl + 1;
-      continue;
-    }
-    if (ch === '/' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2);
-      i = end < 0 ? text.length : end + 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      const quote = ch;
-      i += 1;
-      while (i < text.length) {
-        if (text[i] === '\\') { i += 2; continue; }
-        if (text[i] === quote) { i += 1; break; }
-        i += 1;
-      }
-      continue;
-    }
-    if (ch === '{') { depth += 1; i += 1; continue; }
-    if (ch === '}') {
-      depth -= 1;
-      i += 1;
-      if (depth === 0) return text.slice(start, i);
-      continue;
-    }
-    i += 1;
-  }
-  return null;
-}
+// The arms that read the module's body back live in scripts/halo-arms.js, so the mutation
+// driver can run the very same code on a mutated copy of the module.
+const { haloSliceFunction, checkHaloAudioArms } = require('./halo-arms');
 
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
@@ -993,7 +952,7 @@ function runHaloPresetCheck() {
   if (!/haloVisibleRadius/.test(haloText)) {
     fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
   }
-  // --- the two defects the user hit in the ring on 2026-10-26 ---------------------
+  // --- the three defects the user hit in the ring on 2026-10-26 ---------------------
   // (1) The ring turned too fast on every lyric change and ignored the 转环时长 knob.
   //     The tween used to be created only after the line it was aiming at had already
   //     started, so its duration was clamped by the time that was left (which was ~0)
@@ -1002,10 +961,17 @@ function runHaloPresetCheck() {
   //     build time against the line's own un-rotated angle: a later line points up-left,
   //     where there is almost no room, so it was scaled down once and stayed that way.
   //     The fit has to be taken when the line is drawn, on the angle it sits at then.
+  // (3) The decorations and the lyrics were culled against the wrong point. The screen
+  //     reaches a given direction out to the distance from the ring's centre to the
+  //     viewport edge, but the cull measured from the world origin (the transform's own
+  //     offset), which is a different place on the screen: the rays that were kept were
+  //     not the rays that were on screen, so dragging the ring made rows and beams
+  //     appear and vanish at angles that had nothing to do with the view.
   const buildLyricFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
   const lyricUpdateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
   const drawLyricFn = haloSliceFunction(haloText, 'haloDrawLyricText');
-  if (!buildLyricFn || !lyricUpdateFn || !drawLyricFn) {
+  const visibleRadiusFn = haloSliceFunction(haloText, 'haloVisibleRadius');
+  if (!buildLyricFn || !lyricUpdateFn || !drawLyricFn || !visibleRadiusFn) {
     fail('the halo lyric functions could not be read back; the guards below would be vacuous');
   }
   // A slice that stopped early would make the guards below vacuous, so each one has to
@@ -1014,9 +980,25 @@ function runHaloPresetCheck() {
     [buildLyricFn, 'haloLyric.items.push(item)', 'haloBuildLyricRing'],
     [lyricUpdateFn, 'haloLyric.tween = {', 'haloLyricUpdate'],
     [drawLyricFn, 'ctx.fillText(item.text, 0, 0)', 'haloDrawLyricText'],
+    [visibleRadiusFn, 'var t = Infinity;', 'haloVisibleRadius'],
   ]) {
     if (slice && !slice.includes(marker)) {
       fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
+    }
+  }
+  // The beat map is a fixed timeline, so the ring's motion has to be scaled by the sound.
+  checkHaloAudioArms(haloText, fail);
+  // The cull must start at the ring's centre, which is where the camera transform puts
+  // it: the framing knobs' position plus the user's own pan, plus the shake.
+  if (visibleRadiusFn) {
+    if (!/var ox = s\.w \/ 2 - haloCam\.zoom \* haloPanTotalX\(\) \+ s\.shakeX;/.test(visibleRadiusFn)) {
+      fail('the visible radius must be measured from the ring\'s centre on the screen, not from the world origin');
+    }
+    if (!/var oy = s\.h \/ 2 - haloCam\.zoom \* haloPanTotalY\(\) \+ s\.shakeY;/.test(visibleRadiusFn)) {
+      fail('the visible radius must be measured from the ring\'s centre on the screen, not from the world origin');
+    }
+    if (/-z \* s\.cx - haloCam\.zoom \* haloPanTotalX\(\)/.test(visibleRadiusFn)) {
+      fail('the visible radius must not be measured from the transform offset: that is the world origin, not the ring');
     }
   }
   if (lyricUpdateFn) {
@@ -1047,11 +1029,28 @@ function runHaloPresetCheck() {
     }
   }
   if (drawLyricFn) {
-    if (!/var allow = haloVisibleRadius\(center\) - textR;/.test(drawLyricFn)) {
+    if (!/var room = haloVisibleRadius\(center\) - textR;/.test(drawLyricFn)) {
       fail('the draw time fit must measure the room on the ray the line actually sits on');
     }
-    if (!/var sc = drawnW > 0 \? Math\.min\(1, Math\.max\(HALO_LYRIC_MIN_SCALE, allow \/ drawnW\)\) : 1;/.test(drawLyricFn)) {
-      fail('the lyric fit must be computed at draw time from the line\'s current screen angle');
+    if (!/if \(room <= 0\) continue;/.test(drawLyricFn)) {
+      fail('a line whose ray never reaches the rim is off screen and must not be drawn');
+    }
+    // Every row keeps the size the app's lyric knob asks for. A row that is scaled to
+    // fit its own ray is what made the lyrics look like they were breathing.
+    if (!/var size = fontPx;/.test(drawLyricFn)) {
+      fail('every lyric row must be drawn with the same size: the list must not have rows of different sizes');
+    }
+    if (/var size = current \?/.test(drawLyricFn)) {
+      fail('the lyric rows must not change size with the song position: that is what made the text look like it was breathing');
+    }
+    if (!/var sc = 1;/.test(drawLyricFn)) {
+      fail('the lyric rows must not be scaled to fit their ray');
+    }
+    if (!/if \(drawnW > room && current\) \{/.test(drawLyricFn)) {
+      fail('only the sung row may be squeezed to fit its ray, and never below the floor');
+    }
+    if (!/sc = Math\.max\(HALO_LYRIC_MIN_SCALE, room \/ drawnW\);/.test(drawLyricFn)) {
+      fail('the sung row must be squeezed to the floor, not scaled past it');
     }
   }
   if (!/HALO_LYRIC_MIN_SCALE = (0\.\d+);/.test(haloText)) {
@@ -1153,6 +1152,20 @@ function runHaloPresetCheck() {
     fail(`the ring turn and the lyric fit regression failed: ${rel(lyricTestFile)}`);
   }
   process.stdout.write(lyricTest.stdout || '');
+  // The beat's motion has to follow the sound. This test runs the shipped module in a
+  // sandbox with a controllable analyser and measures the shake: silence must be still,
+  // a loud passage must shake harder.
+  const beatTestFile = path.join(appRoot, 'tests', 'halo-beat-level-gate.test.js');
+  if (!fs.existsSync(beatTestFile)) {
+    fail('tests/halo-beat-level-gate.test.js is missing; the beat would only be checked by shape');
+  }
+  const beatTest = spawnSync(process.execPath, [beatTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (beatTest.status !== 0) {
+    process.stdout.write(beatTest.stdout || '');
+    process.stderr.write(beatTest.stderr || '');
+    fail(`the beat level gate regression failed: ${rel(beatTestFile)}`);
+  }
+  process.stdout.write(beatTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

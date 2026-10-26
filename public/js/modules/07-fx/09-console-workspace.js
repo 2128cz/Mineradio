@@ -158,6 +158,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-halospectrumGain', '频谱增益', '光环 频谱 增益 响应'),
         fxConsoleItem('fx-halopulseScale', '拍点缩放', '光环 拍点 鼓点 缩放 凸出'),
         fxConsoleItem('fx-haloshakePx', '拍点抖动', '光环 拍点 鼓点 抖动 震动'),
+        fxConsoleItem('fx-halolevelGain', '电平跟随', '光环 拍点 电平 音量 跟随 灵敏度'),
         fxConsoleItem('fx-haloreadAngle', '读词位置', '光环 歌词 读词 角度'),
         fxConsoleItem('fx-halotextGap', '歌词离环距离', '光环 歌词 距离 间隙'),
         fxConsoleItem('fx-halolineGap', '歌词行距', '光环 歌词 行距 间距'),

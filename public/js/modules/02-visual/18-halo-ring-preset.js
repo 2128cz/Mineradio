@@ -61,6 +61,7 @@ var HALO_TUNING_SCHEMA = {
   spectrumGain: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
   shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
+  levelGain: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
   readAngle: { def: 0, min: -180, max: 180, kind: 'deg', rebuild: 'lyric' },
   textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
   lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
@@ -111,6 +112,7 @@ var haloState = {
   idleSpin: 0,
   ringPulse: 0,      // the beat's envelope: 1 at the hit, decaying after it
   pulse: 1,          // the scale the whole ring is drawn at
+  levelGate: 0,      // how much of the beat the sound allows, 0 in silence
   shakeX: 0,
   shakeY: 0,
   basePanX: 0,       // the framing knobs' own pan, in world units
@@ -322,12 +324,15 @@ function haloReadAudioBands(t) {
     return;
   }
   a.kickOnset = 0;
-  var analyser = (typeof analyser !== 'undefined') ? analyser : null;
-  if (!analyser || typeof analyser.getByteFrequencyData !== 'function') return;
-  var bins = analyser.frequencyBinCount || 0;
+  // The analyser is a global of the app. It must not be named `analyser` here: a local
+  // `var analyser` shadows the global from the top of the function, so `typeof analyser`
+  // would always be 'undefined' and the fallback would never read anything.
+  var an = (typeof analyser !== 'undefined') ? analyser : null;
+  if (!an || typeof an.getByteFrequencyData !== 'function') return;
+  var bins = an.frequencyBinCount || 0;
   if (!bins) return;
   if (!a.buffer || a.buffer.length !== bins) a.buffer = new Uint8Array(bins);
-  try { analyser.getByteFrequencyData(a.buffer); } catch (err) { return; }
+  try { an.getByteFrequencyData(a.buffer); } catch (err) { return; }
   var nyquist = 22050;
   var sampleRate = (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate : 44100;
   nyquist = sampleRate / 2;
@@ -1245,18 +1250,25 @@ function haloBuildStrands() {
 
 // How far out the screen reaches along a given direction: the distance from the ring's
 // centre to the viewport edge, measured along that ray.
+//
+// The ray starts at the ring's centre, because that is the point the world is arranged
+// around: the camera transform puts the centre wherever the framing knobs and the user's
+// own pan put it, and everything on the ring is measured from there. Measuring from the
+// world origin instead (the transform's own offset) keeps the wrong rays and drops the
+// ones that are really on screen, which is what made the decorations and the lyrics
+// appear and vanish as the ring was dragged.
 function haloVisibleRadius(angle) {
   var s = haloState;
   var z = haloSceneZoom(1);
-  var sx0 = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
-  var sy0 = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
+  var ox = s.w / 2 - haloCam.zoom * haloPanTotalX() + s.shakeX;
+  var oy = s.h / 2 - haloCam.zoom * haloPanTotalY() + s.shakeY;
   var ca = Math.cos(angle);
   var sa = Math.sin(angle);
   var t = Infinity;
-  if (ca > 1e-6) t = Math.min(t, (s.w - sx0) / (z * ca));
-  else if (ca < -1e-6) t = Math.min(t, (0 - sx0) / (z * ca));
-  if (sa > 1e-6) t = Math.min(t, (s.h - sy0) / (z * sa));
-  else if (sa < -1e-6) t = Math.min(t, (0 - sy0) / (z * sa));
+  if (ca > 1e-6) t = Math.min(t, (s.w - ox) / (z * ca));
+  else if (ca < -1e-6) t = Math.min(t, (0 - ox) / (z * ca));
+  if (sa > 1e-6) t = Math.min(t, (s.h - oy) / (z * sa));
+  else if (sa < -1e-6) t = Math.min(t, (0 - oy) / (z * sa));
   if (!isFinite(t)) return 1e9;
   return t > 0 ? t : 0;
 }
@@ -1993,12 +2005,25 @@ function haloDrawLyricText(ctx) {
   for (var i = 0; i < items.length; i++) {
     var item = items[i];
     var center = item.angle + s.ringRot;
-    if (haloVisibleRadius(center) < s.RO) continue;
     var current = i === haloLyric.current;
+    // The room on this ray is what the screen really shows of it: the ray starts at the
+    // ring's centre, so the line is only on screen if the ray reaches past the rim and
+    // the gap the user asked for.
+    var room = haloVisibleRadius(center) - textR;
+    if (room <= 0) continue;
     var near = Math.abs(haloNormAngle(center - haloReadAngle()));
     var focus = current ? 1 : Math.max(0.12, 1 - near * 1.6);
     var alpha = current ? 1 : 0.16 + 0.5 * focus;
-    var size = current ? fontPx : fontPx * 0.92;
+    var size = fontPx;
+    // Every row is the same size. A list whose rows grow and shrink as the ring turns
+    // is what the user complained about, so a row is never scaled down to fit its ray:
+    // the sung row is squeezed to the floor so it stays whole, and the other rows run
+    // off the edge of the screen the way a list scrolls off its container.
+    var drawnW = item.textWidth * (size / fontPx);
+    var sc = 1;
+    if (drawnW > room && current) {
+      sc = Math.max(HALO_LYRIC_MIN_SCALE, room / drawnW);
+    }
     // The line runs away from the centre. On the left half of the ring that would put
     // the glyphs upside down, so there the line is turned around and anchored by its
     // far end instead; the reading direction stays left to right either way.
@@ -2006,13 +2031,6 @@ function haloDrawLyricText(ctx) {
     ctx.save();
     ctx.rotate(flip ? center + Math.PI : center);
     ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
-    // The ring turns, so the room on this ray changes from frame to frame: the fit is
-    // taken here, on the angle the line actually sits at, not on the angle it was
-    // built at. A line that used to be fitted against a ray pointing off screen would
-    // otherwise be drawn tiny for the rest of the song.
-    var drawnW = item.textWidth * (size / fontPx);
-    var allow = haloVisibleRadius(center) - textR;
-    var sc = drawnW > 0 ? Math.min(1, Math.max(HALO_LYRIC_MIN_SCALE, allow / drawnW)) : 1;
     var width = drawnW * sc;
     // Anchored at the rim, then scaled, so a long line still fits on its own ray.
     ctx.translate(flip ? -(textR + width) : textR, 0);
@@ -2254,16 +2272,35 @@ function haloRebuild() {
   return true;
 }
 
+// How much of the beat the sound allows. The beat map is a fixed timeline: it fires on
+// the grid whatever the music is doing, so a silent passage - or a track that is not
+// playing at all - used to shake the ring just like a chorus. The level is the honest
+// signal: no sound, no motion. The level of most music sits well below 1, so it is
+// scaled up before it is clamped. The knob at zero turns the gate off, which is the
+// old behaviour: the beat moves the ring whatever the music does.
+function haloLevelGate() {
+  var gain = haloParam('levelGain');
+  if (!(gain > 0)) return 1;
+  return haloClamp(haloAudio.level * gain, 0, 1);
+}
+
 function haloRenderFrame(canvas, now, dt) {
   var s = haloState;
   if (!s.ready) return false;
   var t = haloPlayheadSeconds();
   s.time = t;
+  // The audio has to be read before the ring moves: the level decides how much it moves.
+  haloReadAudioBands(t);
   // The beat's own job: the ring pops out and shakes where it stands. The camera is
   // the user's and nothing here moves it.
   s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt * HALO_PULSE_DECAY);
-  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse;
-  var shake = haloParam('shakePx') * s.ringPulse;
+  // The ring's motion follows the sound. The beat map is a fixed timeline, so it keeps
+  // firing over a silent passage and over a track that is not playing at all; the level
+  // is what says whether there is anything to react to.
+  var gate = haloLevelGate();
+  s.levelGate += (gate - (s.levelGate || 0)) * Math.min(1, dt * 10);
+  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * s.levelGate;
+  var shake = haloParam('shakePx') * s.ringPulse * s.levelGate;
   s.shakeX = Math.sin(s.time * 47.3) * shake;
   s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
@@ -2274,7 +2311,6 @@ function haloRenderFrame(canvas, now, dt) {
   }
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
-  haloReadAudioBands(t);
   haloScheduleBeats(t);
   haloRunBeatEvents(t);
   var env = haloAudio.level;
@@ -2355,6 +2391,7 @@ function haloReleaseHaloLayer() {
   haloState.ready = false;
   haloState.ringPulse = 0;
   haloState.pulse = 1;
+  haloState.levelGate = 0;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
   haloPointerState.down = false;
