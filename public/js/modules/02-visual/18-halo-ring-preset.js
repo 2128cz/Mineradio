@@ -33,6 +33,7 @@ var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four place
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_RENDER_SCALE = 1;         // internal resolution multiplier; devicePixelRatio is NOT used
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
+var HALO_LYRIC_MIN_SCALE = 0.5;     // a line never shrinks below this
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
 var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
@@ -142,6 +143,7 @@ var haloLyric = {
   rot: 0,
   tween: null,
   baseAngle: 0,
+  builtFontPx: 0,     // the font the measured widths belong to
   songKey: ''
 };
 
@@ -523,7 +525,6 @@ function haloBuildLyricRing() {
     measure.save();
     measure.font = '600 ' + fontPx + 'px ' + HALO_FONT;
   }
-  var textR = haloState.RO + haloParam('textGap');
   // One row per line: the step is a line height plus the gap the user asked for.
   var step = (fontPx * 1.45 + haloParam('lineGap')) / Math.max(1, haloState.RO);
   var acc = 0;
@@ -540,16 +541,14 @@ function haloBuildLyricRing() {
       widths.push(w);
       total += w;
     }
-    // The line may not run past the edge of the screen on its own ray.
-    var maxW = Math.max(60, haloVisibleRadius(acc + haloLyric.rot) - textR);
-    var scale = total > maxW ? maxW / total : 1;
+    // The room on a ray changes while the ring turns, so the fit is not decided here:
+    // the line keeps its measured width and is fitted when it is drawn.
     var item = {
       index: haloLyric.items.length,
       text: text,
       chars: chars,
       widths: widths,
-      scale: scale,
-      totalWidth: total * scale,
+      textWidth: total,
       angle: acc,
       startAt: Math.max(0, (Number(line.t) || 0) + offset),
       sub: ''
@@ -559,6 +558,7 @@ function haloBuildLyricRing() {
     acc += step;
   }
   if (measure) measure.restore();
+  haloLyric.builtFontPx = fontPx;
   haloLyric.songKey = haloLyricSignature();
   return haloLyric.items.length;
 }
@@ -566,56 +566,83 @@ function haloBuildLyricRing() {
 function haloLyricUpdate(t) {
   var items = haloLyric.items;
   if (!items.length) return;
-  // Find the line that should be on the read mark, and the one coming next.
-  var current = -1;
+  // The line being sung, and the one the ring is turning towards.
+  var sung = -1;
+  var upcoming = -1;
   for (var i = 0; i < items.length; i++) {
-    if (items[i].startAt <= t + 0.001) current = i;
-    else break;
+    if (items[i].startAt <= t + 0.001) sung = i;
+    else { upcoming = i; break; }
   }
-  if (current < 0) current = 0;
+  if (sung < 0) sung = 0;
+  if (upcoming < 0) upcoming = items.length - 1;
+
+  // The turn starts rotLead seconds before the line and lasts rotDur seconds: the
+  // knob is the speed of the turn, not a by-product of how much time was left.
+  var dur = Math.max(0.05, haloParam('rotDur'));
+  var turnStart = items[upcoming].startAt - Math.max(0, haloParam('rotLead'));
+
   if (haloLyric.tween) {
     var tw = haloLyric.tween;
-    var k = haloClamp((t - tw.startAt) / Math.max(0.05, tw.dur), 0, 1);
-    haloLyric.rot = tw.from + (tw.to - tw.from) * haloEaseIO(k);
-    if (k >= 1) {
+    if (sung > tw.item) {
+      // A seek jumped past the line this turn was heading for: drop the turn.
       haloLyric.tween = null;
-      haloLyric.current = tw.item;
-      // Rebase so the accumulated angles stay small: the screen angles do not change.
-      var rebase = items[tw.item].angle;
-      for (var j = 0; j < items.length; j++) items[j].angle -= rebase;
-      haloLyric.rot += rebase;
+    } else {
+      if (tw.item !== upcoming && t >= turnStart) {
+        // A newer line is due before this turn finished: aim at that one instead.
+        tw.item = upcoming;
+        tw.from = haloLyric.rot;
+        tw.to = haloReadAngle() - items[upcoming].angle;
+        tw.startAt = t;
+      }
+      var k = haloClamp((t - tw.startAt) / Math.max(0.05, tw.dur), 0, 1);
+      haloLyric.rot = tw.from + (tw.to - tw.from) * haloEaseIO(k);
+      if (k >= 1) {
+        haloLyric.tween = null;
+        haloLyric.current = tw.item;
+        // Rebase so the accumulated angles stay small: the screen angles do not change.
+        var rebase = items[tw.item].angle;
+        for (var j = 0; j < items.length; j++) items[j].angle -= rebase;
+        haloLyric.rot += rebase;
+      }
+      return;
     }
-    return;
   }
-  if (current === haloLyric.current) return;
-  var next = current;
+
   if (haloLyric.current < 0) {
     // First line: put it on the mark straight away.
-    haloLyric.current = next;
-    haloLyric.rot = haloReadAngle() - items[next].angle;
+    haloLyric.current = sung;
+    haloLyric.rot = haloReadAngle() - items[sung].angle;
     return;
   }
-  var lead = items[next].startAt - t;
-  if (lead > haloParam('rotLead')) {
-    // The turn starts before the line; until then the mark stays put.
-    return;
-  }
-  if (lead < -1.5) {
-    // A seek jumped the clock: snap instead of spinning.
-    haloLyric.current = next;
-    haloLyric.rot = haloReadAngle() - items[next].angle;
-    var rebase2 = items[next].angle;
+
+  // A seek left the mark behind the song: jump to the line being sung.
+  if (sung > haloLyric.current || sung < haloLyric.current - 1) {
+    haloLyric.current = sung;
+    haloLyric.rot = haloReadAngle() - items[sung].angle;
+    var rebase2 = items[sung].angle;
     for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
     haloLyric.rot += rebase2;
     return;
   }
-  haloLyric.pending = next;
+
+  if (upcoming === haloLyric.current) return;
+  if (t < turnStart) return;
+  if (t >= items[upcoming].startAt) {
+    // The window has passed (the render loop was parked): put the line on the mark.
+    haloLyric.current = upcoming;
+    haloLyric.rot = haloReadAngle() - items[upcoming].angle;
+    var rebase3 = items[upcoming].angle;
+    for (var n = 0; n < items.length; n++) items[n].angle -= rebase3;
+    haloLyric.rot += rebase3;
+    return;
+  }
+  haloLyric.pending = upcoming;
   haloLyric.tween = {
-    item: next,
+    item: upcoming,
     from: haloLyric.rot,
-    to: haloReadAngle() - items[next].angle,
+    to: haloReadAngle() - items[upcoming].angle,
     startAt: t,
-    dur: Math.max(0.08, Math.min(lead, haloParam('rotDur')))
+    dur: dur
   };
 }
 
@@ -1979,10 +2006,17 @@ function haloDrawLyricText(ctx) {
     ctx.save();
     ctx.rotate(flip ? center + Math.PI : center);
     ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
-    var width = ctx.measureText(item.text).width * item.scale;
+    // The ring turns, so the room on this ray changes from frame to frame: the fit is
+    // taken here, on the angle the line actually sits at, not on the angle it was
+    // built at. A line that used to be fitted against a ray pointing off screen would
+    // otherwise be drawn tiny for the rest of the song.
+    var drawnW = item.textWidth * (size / fontPx);
+    var allow = haloVisibleRadius(center) - textR;
+    var sc = drawnW > 0 ? Math.min(1, Math.max(HALO_LYRIC_MIN_SCALE, allow / drawnW)) : 1;
+    var width = drawnW * sc;
     // Anchored at the rim, then scaled, so a long line still fits on its own ray.
     ctx.translate(flip ? -(textR + width) : textR, 0);
-    ctx.scale(item.scale, item.scale);
+    ctx.scale(sc, sc);
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(238,241,248,' + alpha.toFixed(3) + ')';
     ctx.fillText(item.text, 0, 0);
@@ -2232,8 +2266,10 @@ function haloRenderFrame(canvas, now, dt) {
   var shake = haloParam('shakePx') * s.ringPulse;
   s.shakeX = Math.sin(s.time * 47.3) * shake;
   s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
-  // The lyrics may have changed (a new song, or the translation arrived).
-  if (haloLyricSignature() !== haloLyric.songKey) {
+  // The lyrics may have changed (a new song, or the translation arrived), or the app's
+  // lyric size knob may have moved: the measured widths belong to the font they were
+  // taken with.
+  if (haloLyricSignature() !== haloLyric.songKey || haloLyricFontPx() !== haloLyric.builtFontPx) {
     haloBuildLyricRing();
   }
   haloLyricUpdate(t);
