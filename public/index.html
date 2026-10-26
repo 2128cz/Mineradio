@@ -1020,9 +1020,9 @@
             <button data-performance-quality="high">高</button>
             <button data-performance-quality="ultra">超高</button>
           </div>
-          <div class="fx-section-label">PV 动画绘制档位</div>
-          <div class="fx-seg" id="pv-draw-quality-seg" role="group" aria-label="PV 动画绘制档位"
-            title="只在播放 PV 动画歌词（预设 13）时生效。自动：画面默认完整，连续两秒内有 14/24 帧超过一帧预算、并持续三个这样的窗口才降为性能档，切换只发生在镜头边界，下一首歌重新判断；效果：永不降档；性能：关闭字形发光滤镜与镜头转场合成，换取不卡顿">
+          <div class="fx-section-label">动画绘制档位</div>
+          <div class="fx-seg" id="pv-draw-quality-seg" role="group" aria-label="动画绘制档位"
+            title="对 PV 动画歌词（预设 13）和 HALO 圆环（预设 14）都生效。自动：画面默认完整，连续两秒内多数帧超过一帧预算、并持续三个这样的窗口才降为性能档，切换只发生在镜头边界（预设 13）或歌词行边界（预设 14），下一首歌重新判断；效果：永不降档；性能：预设 13 关闭字形发光滤镜与镜头转场合成，预设 14 保留整幅画面但以 75% 的分辨率绘制（像素更少，画面内容不变）">
             <button data-pv-draw-quality="auto">自动</button>
             <button data-pv-draw-quality="full">效果</button>
             <button data-pv-draw-quality="lean">性能</button>
