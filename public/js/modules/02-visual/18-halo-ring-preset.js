@@ -198,10 +198,10 @@ function haloPresetIsActive() {
 // one that cannot keep up, and then only on a line boundary.
 //
 // The cheaper picture here is the same picture at fewer pixels, and that is what the measurement
-// says (scripts/halo-draw-bench.js, 1920x1080): one frame of the ring costs about 3ms plus
-// 8.6ms per megapixel, and taking whole parts of the drawing away barely moves it - the parts
-// overlap, so their neighbours still shade the same pixels. What does move it is the pixel
-// count: at three quarters of the resolution the identical frame costs a third less.
+// says (scripts/halo-draw-bench.js): one frame of the ring costs about 3ms plus 7.3ms per
+// megapixel, and taking whole parts of the drawing away barely moves it - the parts overlap, so
+// their neighbours still shade the same pixels. What does move it is the pixel count: at three
+// quarters of the resolution the identical frame costs 43% less, at half of it 62% less.
 //
 // Nothing of the picture is removed and nothing of it moves. The text keeps the size it has on
 // screen and the ring keeps its place; only the resolution the ring is rasterised at changes,
