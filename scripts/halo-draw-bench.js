@@ -231,11 +231,18 @@ const PAGE_RUN = String.raw`async function (opts) {
 
   // The probe the app itself uses to decide. It measures the frame the app draws, on the
   // canvas that is on screen, so the bench asks for it and then draws the frames it needs.
+  // It is asked three times: the spread is the honest answer to "how much does one
+  // measurement say", and a probe that swings by a frame period cannot decide anything.
   let probe = -1;
+  const probeRuns = [];
   if (typeof window.haloAutoProbe === 'function') {
-    window.haloAutoProbe();
-    for (let i = 0; i < 4; i++) drawFrame();
-    probe = window.haloPresetState ? window.haloPresetState.probeCost : -1;
+    for (let i = 0; i < 3; i++) {
+      window.haloAutoProbe();
+      for (let j = 0; j < 4; j++) drawFrame();
+      probeRuns.push(window.haloPresetState ? window.haloPresetState.probeCost : -1);
+    }
+    const sorted = probeRuns.slice().sort(function (a, b) { return a - b; });
+    probe = sorted[1];
   }
 
   // What the probe is measuring: the same question asked of different canvases and different
@@ -309,6 +316,7 @@ const PAGE_RUN = String.raw`async function (opts) {
     js: jsAll.slice(-opts.samples),
     raf: raf,
     probe: probe,
+    probeRuns: probeRuns,
     probeVariants: probeVariants,
     tier: window.haloPresetState ? window.haloPresetState.tier : '',
     box: { cssW: opts.cssW, cssH: opts.cssH, canvasW: canvas.width, canvasH: canvas.height, layerW: layer.clientWidth, layerH: layer.clientHeight, ready: !!window.haloState.ready },
@@ -341,15 +349,15 @@ function toMarkdown(rows) {
     if (!row.ok) { lines.push(`\n${row.label}: ${row.error || 'failed'}`); continue; }
     lines.push(`\n### ${row.label} — ${row.box.cssW}x${row.box.cssH}`);
     lines.push('');
-    lines.push(`| 方案 | 实际档位 | 画布 | 中位 ms | 均值 ms | p95 | 最小 | >${FRAME_BUDGET_MS}ms | 相对 full(中位) | 模块自测 JS 中位 | JS p95 | 探针 ms |`);
-    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+    lines.push(`| 方案 | 实际档位 | 画布 | 中位 ms | 均值 ms | p95 | 最小 | >${Math.round(FRAME_BUDGET_MS * 10) / 10}ms | 相对 full(中位) | 模块自测 JS 中位 | JS p95 | 探针 ms | 探针三次 |`);
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
     const base = row.results.full && row.results.full.p50 ? row.results.full.p50 : null;
     for (const key of Object.keys(row.results)) {
       const s = row.results[key];
       if (!s || s.error) { lines.push(`| ${key} | ${(s && s.error) || '—'} | | | | | | | | | | |`); continue; }
       const saving = base ? `${Math.round((1 - s.p50 / base) * 100)}%` : '—';
       const px = s.canvasW ? `${s.canvasW}x${s.canvasH}` : '—';
-      lines.push(`| ${key} | ${s.tier || '—'} | ${px} | ${s.p50} | ${s.mean} | ${s.p95} | ${s.min} | ${s.over}/${s.n} | ${key === 'full' ? '—' : saving} | ${s.js ? s.js.p50 : '—'} | ${s.js ? s.js.p95 : '—'} | ${s.probe >= 0 ? s.probe : '—'} |`);
+      lines.push(`| ${key} | ${s.tier || '—'} | ${px} | ${s.p50} | ${s.mean} | ${s.p95} | ${s.min} | ${s.over}/${s.n} | ${key === 'full' ? '—' : saving} | ${s.js ? s.js.p50 : '—'} | ${s.js ? s.js.p95 : '—'} | ${s.probe >= 0 ? s.probe : '—'} | ${(s.probeRuns || []).join(' / ') || '—'} |`);
     }
     if (row.probeVariants) {
       const labels = Object.keys(row.probeVariants.full || {});
@@ -446,6 +454,7 @@ async function main() {
     const rafIdleCosts = {};
     const tiers = {};
     const probes = {};
+    const probeRuns = {};
     const probeVariants = {};
     const phaseBoxes = {};
     let box = null;
@@ -489,6 +498,7 @@ async function main() {
         // did not take effect, and its numbers must not be read as the lean path's cost.
         tiers[phase.name] = res.tier || '';
         probes[phase.name] = res.probe === undefined ? -1 : res.probe;
+        probeRuns[phase.name] = res.probeRuns || [];
         probeVariants[phase.name] = res.probeVariants || {};
         // The canvas the phase drew on: a phase at a smaller scale has a smaller canvas, and the
         // report has to say which one a row was measured on.
@@ -504,6 +514,7 @@ async function main() {
       s.js = stat(jsCosts[phase.name]);
       s.tier = tiers[phase.name] || '';
       s.probe = probes[phase.name] === undefined ? -1 : probes[phase.name];
+      s.probeRuns = probeRuns[phase.name] || [];
       s.raf = rafCosts[phase.name].length ? stat(rafCosts[phase.name]) : null;
       s.rafIdle = rafIdleCosts[phase.name].length ? stat(rafIdleCosts[phase.name]) : null;
       const pb = phaseBoxes[phase.name];
