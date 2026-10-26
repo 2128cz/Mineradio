@@ -18626,10 +18626,10 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
 }
 #pv-layer #pv-bleed.on { opacity: 0.82 }
 
-/* HALO ring (preset 14): the data ring with the lyrics on its inner rim. Same stacking as
-   #pv-layer and later in DOM order, so it covers the background stack. The canvas takes the
-   clicks: a click shoots a line out of the dial, so the layer is the pointer target while
-   the preset is active and inert otherwise. */
+/* HALO ring (preset 14): the data ring with the lyric list bent over its outer rim. Same
+   stacking as #pv-layer and later in DOM order, so it covers the background stack. The layer
+   is below the WebGL canvas, so it is inert for the pointer: the drag, the wheel and the
+   click are handled on the window instead. */
 #halo-layer {
   position: fixed;
   inset: 0;
@@ -18640,7 +18640,7 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
   transition: opacity 320ms ease;
   pointer-events: none
 }
-#halo-layer.active { opacity: 1; pointer-events: auto }
+#halo-layer.active { opacity: 1 }
 #halo-layer #halo-canvas {
   display: block;
   position: absolute;
@@ -18648,39 +18648,4 @@ body.desktop-shell.desktop-wallpaper-mode.diy-mode #bottom-bar.stage-mode {
   top: 0;
   width: 100%;
   height: 100%
-}
-/* The lyric callout: the formula box of the original, with the formula replaced by the line
-   that is being sung. It is a DOM element because the text has to be selectable and crisp;
-   its position comes from the ring's anchor point every frame. */
-#halo-callout {
-  position: absolute;
-  left: 0;
-  top: 0;
-  max-width: 46vw;
-  padding: 12px 18px 14px;
-  border: 1px solid rgba(228, 232, 242, 0.22);
-  border-left: 2px solid rgba(228, 232, 242, 0.7);
-  background: rgba(8, 9, 12, 0.62);
-  backdrop-filter: blur(6px);
-  color: #e8ecf6;
-  font-family: "JetBrains Mono", "Microsoft YaHei", Consolas, monospace;
-  opacity: 0;
-  transition: opacity 260ms ease;
-  pointer-events: none
-}
-#halo-callout .halo-callout-k {
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  opacity: 0.5;
-  margin-bottom: 6px
-}
-#halo-callout .halo-callout-v {
-  font-size: 19px;
-  line-height: 1.35;
-  font-weight: 600
-}
-#halo-callout .halo-callout-s {
-  margin-top: 6px;
-  font-size: 12px;
-  opacity: 0.55
 }
