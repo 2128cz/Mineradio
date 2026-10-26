@@ -80,6 +80,16 @@
       <canvas id="pv-bleed" aria-hidden="true"></canvas>
       <canvas id="pv-canvas" aria-hidden="true"></canvas>
     </div>
+    <!-- HALO ring (preset 14): the data ring with the lyrics on its inner rim. Sits above the
+         PV layer and below the WebGL canvas. Inert unless the preset is active. -->
+    <div id="halo-layer" aria-hidden="true">
+      <canvas id="halo-canvas" aria-hidden="true"></canvas>
+      <div id="halo-callout">
+        <div class="halo-callout-k">LYRIC</div>
+        <div class="halo-callout-v" id="halo-callout-text"></div>
+        <div class="halo-callout-s" id="halo-callout-sub"></div>
+      </div>
+    </div>
     <div id="canvas-container"></div>
     <canvas id="idle-guide-canvas" aria-hidden="true"></canvas>
 
@@ -1113,6 +1123,20 @@
 
       <div class="fx-actions">
         <button class="fx-mini-btn" onclick="resetFx()">恢复默认</button>
+      </div>
+      <!-- Live dials for the lyric PV (album-level cut counts and style are baked into the
+           archive, so they are not here). The console moves these into 动效 → 歌词 PV. -->
+      <div class="fx-pv-tuning">
+        <div class="fx-slider"><label>PV 运动量</label><input id="fx-pvmotion" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('motion', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 故障强度</label><input id="fx-pvglitch" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('glitch', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 色散</label><input id="fx-pvchroma" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('chroma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 颗粒与光</label><input id="fx-pvtexture" type="range" min="0" max="1" step="0.01" oninput="setPvTuning('texture', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 更新节拍</label><input id="fx-pvkoma" type="range" min="6" max="24" step="1" oninput="setPvTuning('koma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>PV 镜头密度</label><input id="fx-pvdensity" type="range" min="0.05" max="0.95" step="0.01" oninput="setPvTuning('density', this.value)"><output></output></div>
+        <div class="fx-toggle" id="t-pvunify" onclick="togglePvUnify()">
+          <span>PV 统一感</span><span class="dot"></span>
+        </div>
+        <div class="fx-actions"><button class="fx-mini-btn" id="fx-pvreplan" onclick="pvTuningReplanClick(this)">重新生成当前歌</button></div>
       </div>
     </div>
 

@@ -14,10 +14,10 @@ const grid = read('public/js/modules/07-fx/04-preset-grid-uniforms.js');
 const css = read('public/css/index.css');
 const mainLoop = read('public/js/modules/11-main-loop.js');
 
-assert.match(core, /MAX_VISUAL_PRESET_INDEX = 13/);
+assert.match(core, /MAX_VISUAL_PRESET_INDEX = 14/);
 assert.match(core, /SONIC_PRESET_INDEX = 7/);
 assert.match(core, /SONIC_WORKSHOP_PRESET_INDEX = 8/);
-assert.match(data, /presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 6, 7, 8, 5, 4, 2, 1, 3\]/);
+assert.match(data, /presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 6, 7, 8, 5, 4, 2, 1, 3\]/);
 for (const [id, cn, en] of [
   [9, '月蚀圣环', 'ECLIPSE HALO'],
   [10, '雨幕霓虹', 'NEON DRIZZLE'],

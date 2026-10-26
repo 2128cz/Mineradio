@@ -81,7 +81,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "XxHuberrr",
+        "owner": "2128cz",
         "repo": "Mineradio"
       }
     ]
@@ -89,7 +89,7 @@
   "mineradio": {
     "update": {
       "provider": "github",
-      "owner": "XxHuberrr",
+      "owner": "2128cz",
       "repo": "Mineradio",
       "preview": false,
       "preferMirrors": true,

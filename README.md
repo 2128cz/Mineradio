@@ -6,45 +6,32 @@ Mineradio 是一款 Windows 桌面沉浸式音乐播放器，把搜索播放、�
 
 ## 立即下载 Windows 安装包
 
-> 本次下载入口已更换，请使用下面的新网盘链接，并更新旧收藏。通过公告中的网盘入口下载，也是在支持 Mineradio 的持续更新。
+> 本仓库是 Mineradio 的**非官方 fork 构建**，与原作者的发布渠道无关。安装包发布在本仓库的 Releases；上游项目见 [XxHuberrr/Mineradio](https://github.com/XxHuberrr/Mineradio)。
 
-| 下载入口 | 推荐人群 | 链接 |
+| 下载入口 | 说明 | 链接 |
 | --- | --- | --- |
-| 夸克盘 | 夸克用户 | [下载 Mineradio 2.2.0](https://pan.quark.cn/s/4b124d3e81d3) |
-| 百度云 | 百度网盘用户（提取码 `SJHP`） | [下载 Mineradio 2.2.0](https://pan.baidu.com/s/17CwpHUza67w_Grgc3s5nOw?pwd=SJHP) |
-| GitHub Release | 版本说明与源码 | [查看 Mineradio 2.2.0](https://github.com/XxHuberrr/Mineradio/releases/tag/v2.2.0) |
+| GitHub Releases（本仓库） | 安装包、版本说明与随附源码 | [查看 Releases](https://github.com/2128cz/Mineradio/releases) |
+| 本仓库源码 | 与安装包同版本的完整源码（GPL-3.0 要求随二进制提供） | [2128cz/Mineradio](https://github.com/2128cz/Mineradio) |
 
-本页、发布公告和软件更新入口使用相同的两条新链接。旧分享地址不再作为本次版本的下载入口。
+安装时只需要下载并运行 `Mineradio-2.2.0-Setup.exe`。同一 Release 还应包含 `.blockmap`、`latest.yml` 与源码压缩包，这些是更新与合规所需的附带文件；不要把 `.blockmap`、`latest.yml` 或 `win-unpacked` 目录当成正式安装包。
 
-安装时只需要下载并运行 `Mineradio-2.2.0-Setup.exe`。不要把 `.blockmap`、`latest.yml` 或 `win-unpacked` 当成正式安装包。
-
-2.1.0 用户如果未看到更新提醒，请从托盘彻底退出后重新打开软件，切回普通窗口，等待约 30 秒后查看右上角更新箭头。旧版不会自动弹出公告；也可以直接使用上面的新网盘链接下载安装包。
+本 fork 在上游 2.2.0 的基础上加入：歌词 PV 模式（视觉预设 13，含 21:9 / 16:9 / 4:3 / 1:1 / 4:5 / 3:4 / 9:16 画幅跟随、超宽屏模糊铺边、分镜预热）、视觉控制台里的 PV 参数组（含“重新生成当前歌”）、以及一组窗口与后台行为修复。完整差异见提交历史。
 
 ## 下载或安装被拦截怎么办
 
-小众 Electron 桌面软件、未签名安装包有时会被浏览器、Windows Defender 或 SmartScreen 提示风险。请先确认安装包来自本次公告的下载入口，文件名是 `Mineradio-2.2.0-Setup.exe`。
+小众 Electron 桌面软件、未签名安装包有时会被浏览器、Windows Defender 或 SmartScreen 提示风险。请先确认安装包来自本仓库的 Releases 页面，文件名是 `Mineradio-2.2.0-Setup.exe`。
 
 1. 浏览器下载栏提示风险时，打开下载列表，点这条下载右侧的 `...` 三个点，选择 `保留` / `仍要保留` / `显示更多` 后继续保留。
 2. Windows SmartScreen 弹出蓝色拦截窗口时，点 `更多信息`，再点 `仍要运行`。
-3. 如果杀毒软件明确显示木马、高危或已经隔离，不要强行运行；删除该文件后重新从上面的网盘入口下载，仍然异常请带截图反馈给作者。
-
-## 作者支持
-
-如果 Mineradio 陪你多听了一首歌，也欢迎请作者一杯咖啡。
-
-[查看完整支持页](./docs/SUPPORT.md)
-
-![Mineradio 作者支持渠道](./docs/assets/support/mineradio-author-support-poster.png)
-
-Mineradio 2.2 修复音乐接口的登录与播放问题，改善歌单加载和网络异常恢复，并加入更多手势操作与粒子预设。
+3. 如果杀毒软件明确显示木马、高危或已经隔离，不要强行运行；删除该文件后重新从本仓库 Releases 下载，仍然异常请带截图提交到本仓库 Issues。
 
 ## 当前版本
 
-当前版本：`2.2.0`
+当前版本：`2.2.0`（本 fork 的构建标记：`v2.2.0-pv.2`）
 
-状态：Mineradio 2.2.0 正式版。
+状态：基于上游 2.2.0 的 fork 构建，含歌词 PV 模式与视觉控制台的 PV 参数组。
 
-> 安全提示：`v1.0.10` 及更早旧安装包不再建议继续安装或传播。请使用本次公告提供的 `Mineradio-2.2.0-Setup.exe`。
+> 安全提示：本仓库只对自己 Releases 里的安装包负责。上游 `v1.0.10` 及更早版本的旧安装包与本 fork 无关，也不建议继续安装或传播。请使用本仓库 Releases 提供的 `Mineradio-2.2.0-Setup.exe`。
 
 ## 核心特性
 
@@ -80,11 +67,11 @@ Mineradio 2.2 修复音乐接口的登录与播放问题，改善歌单加载和
 
 ## 使用说明
 
-Windows 用户可以从本次发布公告列出的新网盘入口下载安装包。
+Windows 用户从本仓库 Releases 下载安装包。
 
-正式分发以 `Mineradio-2.2.0-Setup.exe` 为准，不建议直接使用 `win-unpacked` 目录。安装包会创建桌面快捷方式。
+正式分发以 Release 里的 `Mineradio-2.2.0-Setup.exe` 为准，不建议直接使用 `win-unpacked` 目录。安装包会创建桌面快捷方式。
 
-已经安装过旧版本的用户可直接运行 `Mineradio-2.2.0-Setup.exe` 完成更新。软件内更新入口只会打开浏览器下载页，不会在客户端内下载或应用补丁。
+已经安装过旧版本的用户可直接运行新的安装包完成更新。软件内更新入口只会打开浏览器下载页，不会在客户端内下载或应用补丁。
 
 ## 开发运行
 
@@ -98,7 +85,7 @@ npm run build:win
 
 ## 更新机制
 
-Mineradio 会请求 GitHub Releases latest 检测新版本。远端版本高于本地版本时，应用内更新入口会展示 Release 内容，并通过系统浏览器打开可选网盘线路；即使 Release 附带完整安装包，`2.0.3+` 客户端也不会读取、下载、缓存或应用该附件与补丁。
+Mineradio 会请求 GitHub Releases latest 检测新版本，本 fork 指向本仓库（`2128cz/Mineradio`）的 Releases。远端版本高于本地版本时，应用内更新入口会展示 Release 内容，并通过系统浏览器打开下载页；即使 Release 附带完整安装包，`2.0.3+` 客户端也不会读取、下载、缓存或应用该附件与补丁。
 
 本地验证更新链路时，可以通过 `MINERADIO_UPDATE_MANIFEST` 指向一个本地 manifest JSON 或 HTTP 地址来模拟线上 Release。
 
@@ -114,16 +101,19 @@ Mineradio 不是网易云音乐、QQ 音乐或腾讯音乐娱乐集团的官方�
 
 更多说明见 [PRIVACY.md](./PRIVACY.md)。
 
-## 致谢
+## 致谢与来源
 
-Mineradio 由 XxHuberrr 主要设计与打造。emily 作为早期视觉底层想法与 `emily` 视觉预设改进方向的共创者和灵感来源之一，特此感谢。
+本仓库是 [XxHuberrr/Mineradio](https://github.com/XxHuberrr/Mineradio) 的**非官方 fork**。以下致谢属于上游项目，在此保留：
 
-同时感谢小天才e宝、应春日、锋将军、軌跡、林中、骊、风痕、花椰菜🥦在早期体验、测试反馈和发布准备中的帮助。
+- Mineradio 由 XxHuberrr 主要设计与打造。emily 作为早期视觉底层想法与 `emily` 视觉预设改进方向的共创者和灵感来源之一，特此感谢。
+- 同时感谢小天才e宝、应春日、锋将军、軌跡、林中、骊、风痕、花椰菜🥦在早期体验、测试反馈和发布准备中的帮助。
+- 歌词 PV 引擎来自 [JIZURA](https://github.com/852wa/JIZURA)（作者 hakoniwa，MIT），移植说明见 `NOTICE.md` 与 `docs/THIRD_PARTY_PORTS.md`。
 
 ## 版权与授权
 
-Copyright (C) 2026 XxHuberrr.
+上游 Mineradio：Copyright (C) 2026 XxHuberrr.
+本 fork 的修改同样以 **GPL-3.0** 发布，详见 [LICENSE](./LICENSE)。
 
-本项目采用 GPL-3.0 授权。详见 [LICENSE](./LICENSE)。
+因此，分发本仓库构建的安装包时，必须同时提供**与该二进制完全对应的源码**（发布同一 tag 的本仓库即可），允许任何人再分发与修改，不能附加“禁止商用”“禁止再分发”等额外限制，并保留上游版权声明与许可证文本。
 
-MR Logo、Mineradio 名称、界面视觉设计与原创视觉表达归作者所有；第三方依赖和第三方服务分别遵循其各自授权与服务条款。
+MR Logo、Mineradio 名称与上游原创视觉表达的版权归上游作者；GPL-3.0 不授予名称或商标的使用许可。本仓库是非官方 fork，不代表上游作者。

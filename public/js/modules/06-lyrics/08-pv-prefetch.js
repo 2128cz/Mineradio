@@ -140,6 +140,10 @@ function pvAspectForViewport(width, height) {
 }
 
 function pvRecipeForSong(song, lang) {
+  // Plan-level dials come from the console (07-fx/10-pv-tuning.js). density changes how many
+  // shots a line is broken into and unify whether repeated lines reuse a layout, so both are
+  // part of the archive identity; koma only changes the drawing clock.
+  var dials = typeof pvTuningPlanParams === 'function' ? pvTuningPlanParams() : null;
   return {
     lang: lang,
     style: 'noir',
@@ -147,7 +151,9 @@ function pvRecipeForSong(song, lang) {
     aspect: pvAspectForViewport(),
     res: 720,
     fps: 24,
-    koma: 12,
+    koma: dials && dials.koma > 0 ? dials.koma : 12,
+    density: dials ? dials.density : undefined,
+    unify: dials ? dials.unify : true,
     title: String((song && (song.name || song.title)) || ''),
     artist: String((song && (song.artist || song.artists || song.singer)) || ''),
   };
@@ -223,9 +229,12 @@ function pvPostPlan(request) {
 
 // The render layer's entry: same request, but no prefetch switch and no per-song dedupe - this
 // is the song being watched right now, so it needs the archive immediately.
-function pvEnsurePlanNow(song, lines, translationLines) {
+function pvEnsurePlanNow(song, lines, translationLines, opts) {
   var request = pvBuildPlanRequest(song, lines, translationLines, 'lrc-line');
   if (!request) return Promise.resolve({ ok: false, reason: 'no-plan-payload' });
+  // 重新生成: ask the route to drop the stored archive for this key before planning, so an
+  // unchanged request means "build it again" rather than "hand me the cache".
+  if (opts && opts.bust === true) request.body.payload.bust = true;
   return pvPostPlan(request);
 }
 

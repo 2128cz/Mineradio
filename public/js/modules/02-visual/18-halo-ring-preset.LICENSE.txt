@@ -1,0 +1,39 @@
+HALOFLUX data-ring visual preset (18-halo-ring-preset.js)
+
+Upstream: https://github.com/Ryder191/haloflux.git
+Reference revision: 225e2b2862b3d64ae9f6e0b012b27ccbe004e3d0 (2026-10-23)
+Source file read: lab.html (94,575 B, sha1 f5b3698e7fb6ba78836edc46a2e3a726b33970bc)
+Port date: 2026-10-25
+
+Mineradio's preset 14 (光环 / HALO RING) is an element port of the upstream
+HALOFLUX data-ring look: the rotating ring of micro data panels, the layered
+outer beams, the comets and the inner woven web were re-implemented against
+Mineradio's own audio analysis, beat map, lyric timeline and frame gates.
+No upstream file was vendored; the upstream licence below is reproduced
+verbatim as required by the MIT terms.
+
+See docs/THIRD_PARTY_PORTS.md for the exact scope and the divergences.
+
+----------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 RYDER CODE / Ms MAIKEBAIs CAT
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
