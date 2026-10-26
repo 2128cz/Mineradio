@@ -801,6 +801,51 @@ function runPvPresetLiveProbe(modulePath) {
 
 // Preset 14 (HALO ring). The static half guards the source; there is no live half yet
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
+// Reads one function back out of a module so a guard can be written against the body
+// instead of against the whole file. Comments and strings are skipped, so a brace inside
+// them does not move the depth.
+function haloSliceFunction(text, name) {
+  const head = 'function ' + name + '(';
+  const start = text.indexOf(head);
+  if (start < 0) return null;
+  const open = text.indexOf('{', start + head.length);
+  if (open < 0) return null;
+  let i = open;
+  let depth = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      i = nl < 0 ? text.length : nl + 1;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end < 0 ? text.length : end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < text.length) {
+        if (text[i] === '\\') { i += 2; continue; }
+        if (text[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '{') { depth += 1; i += 1; continue; }
+    if (ch === '}') {
+      depth -= 1;
+      i += 1;
+      if (depth === 0) return text.slice(start, i);
+      continue;
+    }
+    i += 1;
+  }
+  return null;
+}
+
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
@@ -937,7 +982,7 @@ function runHaloPresetCheck() {
   for (const [pattern, why] of [
     [/haloParam\('textGap'\)/, 'the distance between the rim and the lyrics must be a knob'],
     [/ctx\.translate\(flip \? -\(textR \+ width\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
-    [/ctx\.scale\(item\.scale, item\.scale\)/, 'a line that does not fit its own ray must be scaled down'],
+    [/ctx\.scale\(sc, sc\)/, 'a line that does not fit its own ray must be scaled down'],
     [/function haloLyricFontPx\(/, 'the lyric size must be resolved in one place'],
     [/fx\.lyricScale/, 'the lyric size must reuse the app\'s own fx.lyricScale'],
   ]) {
@@ -947,6 +992,75 @@ function runHaloPresetCheck() {
   // zoom has to be able to cull by the analytic visible radius instead.
   if (!/haloVisibleRadius/.test(haloText)) {
     fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
+  }
+  // --- the two defects the user hit in the ring on 2026-10-26 ---------------------
+  // (1) The ring turned too fast on every lyric change and ignored the 转环时长 knob.
+  //     The tween used to be created only after the line it was aiming at had already
+  //     started, so its duration was clamped by the time that was left (which was ~0)
+  //     and every turn snapped instead of travelling.
+  // (2) The lyrics shrank the longer the song played. The per-line fit was baked at
+  //     build time against the line's own un-rotated angle: a later line points up-left,
+  //     where there is almost no room, so it was scaled down once and stayed that way.
+  //     The fit has to be taken when the line is drawn, on the angle it sits at then.
+  const buildLyricFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
+  const lyricUpdateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
+  const drawLyricFn = haloSliceFunction(haloText, 'haloDrawLyricText');
+  if (!buildLyricFn || !lyricUpdateFn || !drawLyricFn) {
+    fail('the halo lyric functions could not be read back; the guards below would be vacuous');
+  }
+  // A slice that stopped early would make the guards below vacuous, so each one has to
+  // still carry the statement it is written about.
+  for (const [slice, marker, name] of [
+    [buildLyricFn, 'haloLyric.items.push(item)', 'haloBuildLyricRing'],
+    [lyricUpdateFn, 'haloLyric.tween = {', 'haloLyricUpdate'],
+    [drawLyricFn, 'ctx.fillText(item.text, 0, 0)', 'haloDrawLyricText'],
+  ]) {
+    if (slice && !slice.includes(marker)) {
+      fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
+    }
+  }
+  if (lyricUpdateFn) {
+    if (!/var dur = Math\.max\(0\.05, haloParam\('rotDur'\)\);/.test(lyricUpdateFn)) {
+      fail('the ring turn must last exactly the 转环时长 knob (rotDur)');
+    }
+    if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn)) {
+      fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
+    }
+    for (const clamp of [/\bdur\s*=\s*Math\.min/, /Math\.min\([^)]*\bdur\b[^)]*\)/]) {
+      if (clamp.test(lyricUpdateFn)) {
+        fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
+      }
+    }
+    if (!/var turnStart = items\[upcoming\]\.startAt - Math\.max\(0, haloParam\('rotLead'\)\);/.test(lyricUpdateFn)) {
+      fail('the turn must start rotLead seconds before the line it is turning to');
+    }
+    if (!/if \(t >= items\[upcoming\]\.startAt\) \{/.test(lyricUpdateFn)) {
+      fail('a line that is already due must be put on the mark at once');
+    }
+  }
+  if (buildLyricFn) {
+    if (!/textWidth: total,/.test(buildLyricFn)) {
+      fail('the lyric item must keep its measured width: the fit belongs to the draw');
+    }
+    if (/\bscale:/.test(buildLyricFn)) {
+      fail('the per-line scale must not be baked at build time: that is what made the lyrics shrink');
+    }
+  }
+  if (drawLyricFn) {
+    if (!/var allow = haloVisibleRadius\(center\) - textR;/.test(drawLyricFn)) {
+      fail('the draw time fit must measure the room on the ray the line actually sits on');
+    }
+    if (!/var sc = drawnW > 0 \? Math\.min\(1, Math\.max\(HALO_LYRIC_MIN_SCALE, allow \/ drawnW\)\) : 1;/.test(drawLyricFn)) {
+      fail('the lyric fit must be computed at draw time from the line\'s current screen angle');
+    }
+  }
+  if (!/HALO_LYRIC_MIN_SCALE = (0\.\d+);/.test(haloText)) {
+    fail('a lyric line must never shrink below the floor');
+  }
+  // The measured widths belong to the font they were taken with, so a font size change has
+  // to rebuild the ring.
+  if (!/haloLyricFontPx\(\) !== haloLyric\.builtFontPx/.test(haloText)) {
+    fail('the lyric ring must be rebuilt when the app\'s lyric size knob moves');
   }
   // The knobs: the store, the console group, and one slider per knob. A knob that is in
   // the schema but not on a slider is a knob the user cannot reach.
