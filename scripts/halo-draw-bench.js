@@ -202,16 +202,32 @@ const PAGE_RUN = String.raw`async function (opts) {
   // between the animation frames. If the ring is too heavy for the machine, the compositor
   // cannot keep up and the interval stretches; if the ring is cheap, the interval stays at
   // the display's. The same run without the drawing is the control.
+  //
+  // The wait is bounded twice over. A window bigger than the screen is treated as occluded,
+  // the compositor stops producing frames for it, and requestAnimationFrame then never fires -
+  // so a probe that has not seen its first frame after two seconds is not going to see one,
+  // and a probe that has all its frames is done. Without the bounds the bench would wait for
+  // a frame that is never coming, once per phase, for minutes.
   const rafProbe = function (draw) {
     return new Promise(function (resolve) {
       const ts = [];
       let n = 0;
+      let done = false;
+      const finish = function () {
+        if (done) return;
+        done = true;
+        clearTimeout(firstFrame);
+        clearTimeout(overall);
+        resolve(ts);
+      };
+      const firstFrame = setTimeout(finish, 2000);
+      const overall = setTimeout(finish, 15000);
       const step = function (t) {
         ts.push(t);
         if (draw) drawFrame();
         n += 1;
         if (n < opts.rafFrames) requestAnimationFrame(step);
-        else resolve(ts);
+        else finish();
       };
       requestAnimationFrame(step);
     });
@@ -231,18 +247,19 @@ const PAGE_RUN = String.raw`async function (opts) {
 
   // The probe the app itself uses to decide. It measures the frame the app draws, on the
   // canvas that is on screen, so the bench asks for it and then draws the frames it needs.
-  // It is asked three times: the spread is the honest answer to "how much does one
-  // measurement say", and a probe that swings by a frame period cannot decide anything.
+  //
+  // It is asked once: asking again right after makes the reading climb (the frames pile up
+  // behind the readbacks), and the first ask is the one the app would ever see - the app
+  // asks once, after three bad windows, with the frames 33ms apart. The raw samples are
+  // reported next to the median, because the spread is the honest answer to "how much does
+  // one measurement say".
   let probe = -1;
-  const probeRuns = [];
+  let probeSamples = [];
   if (typeof window.haloAutoProbe === 'function') {
-    for (let i = 0; i < 3; i++) {
-      window.haloAutoProbe();
-      for (let j = 0; j < 4; j++) drawFrame();
-      probeRuns.push(window.haloPresetState ? window.haloPresetState.probeCost : -1);
-    }
-    const sorted = probeRuns.slice().sort(function (a, b) { return a - b; });
-    probe = sorted[1];
+    window.haloAutoProbe();
+    for (let j = 0; j < 10; j++) drawFrame();
+    probe = window.haloPresetState ? window.haloPresetState.probeCost : -1;
+    probeSamples = (window.haloPresetState && window.haloPresetState.probeSamples) || [];
   }
 
   // What the probe is measuring: the same question asked of different canvases and different
@@ -262,6 +279,10 @@ const PAGE_RUN = String.raw`async function (opts) {
             return performance.now() - t0;
           };
           const costs = [];
+          // One warm-up round first: a canvas nobody has read back yet pays a one-time cost on
+          // its first readback, and that cost would land in the baseline and make the drawing
+          // look cheaper than it is.
+          draw(c); rb();
           for (let i = 0; i < 3; i++) {
             const base = rb();
             draw(c);
@@ -270,6 +291,9 @@ const PAGE_RUN = String.raw`async function (opts) {
           }
           costs.sort(function (a, b) { return a - b; });
           out[label] = Math.round(costs[1] * 100) / 100;
+          // The page's console is forwarded to the bench's output, so a variant that never
+          // finishes says which one it was.
+          console.log('[probeVariant] ' + label + ' ' + out[label]);
         } catch (err) {
           out[label] = -1;
         }
@@ -316,7 +340,7 @@ const PAGE_RUN = String.raw`async function (opts) {
     js: jsAll.slice(-opts.samples),
     raf: raf,
     probe: probe,
-    probeRuns: probeRuns,
+    probeSamples: probeSamples,
     probeVariants: probeVariants,
     tier: window.haloPresetState ? window.haloPresetState.tier : '',
     box: { cssW: opts.cssW, cssH: opts.cssH, canvasW: canvas.width, canvasH: canvas.height, layerW: layer.clientWidth, layerH: layer.clientHeight, ready: !!window.haloState.ready },
@@ -349,7 +373,7 @@ function toMarkdown(rows) {
     if (!row.ok) { lines.push(`\n${row.label}: ${row.error || 'failed'}`); continue; }
     lines.push(`\n### ${row.label} — ${row.box.cssW}x${row.box.cssH}`);
     lines.push('');
-    lines.push(`| 方案 | 实际档位 | 画布 | 中位 ms | 均值 ms | p95 | 最小 | >${Math.round(FRAME_BUDGET_MS * 10) / 10}ms | 相对 full(中位) | 模块自测 JS 中位 | JS p95 | 探针 ms | 探针三次 |`);
+    lines.push(`| 方案 | 实际档位 | 画布 | 中位 ms | 均值 ms | p95 | 最小 | >${Math.round(FRAME_BUDGET_MS * 10) / 10}ms | 相对 full(中位) | 模块自测 JS 中位 | JS p95 | 探针 ms | 探针样本 |`);
     lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
     const base = row.results.full && row.results.full.p50 ? row.results.full.p50 : null;
     for (const key of Object.keys(row.results)) {
@@ -357,7 +381,7 @@ function toMarkdown(rows) {
       if (!s || s.error) { lines.push(`| ${key} | ${(s && s.error) || '—'} | | | | | | | | | | |`); continue; }
       const saving = base ? `${Math.round((1 - s.p50 / base) * 100)}%` : '—';
       const px = s.canvasW ? `${s.canvasW}x${s.canvasH}` : '—';
-      lines.push(`| ${key} | ${s.tier || '—'} | ${px} | ${s.p50} | ${s.mean} | ${s.p95} | ${s.min} | ${s.over}/${s.n} | ${key === 'full' ? '—' : saving} | ${s.js ? s.js.p50 : '—'} | ${s.js ? s.js.p95 : '—'} | ${s.probe >= 0 ? s.probe : '—'} | ${(s.probeRuns || []).join(' / ') || '—'} |`);
+      lines.push(`| ${key} | ${s.tier || '—'} | ${px} | ${s.p50} | ${s.mean} | ${s.p95} | ${s.min} | ${s.over}/${s.n} | ${key === 'full' ? '—' : saving} | ${s.js ? s.js.p50 : '—'} | ${s.js ? s.js.p95 : '—'} | ${s.probe >= 0 ? s.probe : '—'} | ${(s.probeSamples || []).join(' / ') || '—'} |`);
     }
     if (row.probeVariants) {
       const labels = Object.keys(row.probeVariants.full || {});
@@ -439,6 +463,13 @@ async function main() {
     height: 1080,
     webPreferences: { backgroundThrottling: false, sandbox: false },
   });
+  // The page's console is the bench's only way to see where a long run is, so it is forwarded.
+  win.webContents.on('console-message', function (event, level, message) {
+    // Electron changed the signature: the message is the second argument on the old one and
+    // the third on the new one.
+    const text = (typeof message === 'string') ? message : (event && event.message) || '';
+    if (String(text).indexOf('[probeVariant]') === 0) console.log(String(text));
+  });
 
   const rows = [];
   for (const [cssW, cssH] of args.sizes) {
@@ -446,7 +477,13 @@ async function main() {
     let phases = phaseList();
     if (args.only) {
       phases = phases.filter((p) => args.only.indexOf(p.name) >= 0);
-      if (!phases.length) { rows.push({ label: 'halo', ok: false, error: 'no phase matched --phases' }); continue; }
+      if (!phases.length) {
+        const row = { label: 'halo', ok: false, error: 'no phase matched --phases' };
+        rows.push(row);
+        if (args.markdown) emit(outFile, toMarkdown([row]) + '\n');
+        else emit(outFile, JSON.stringify(row) + '\n');
+        continue;
+      }
     }
     const costs = {};
     const jsCosts = {};
@@ -454,7 +491,7 @@ async function main() {
     const rafIdleCosts = {};
     const tiers = {};
     const probes = {};
-    const probeRuns = {};
+    const probeSamples = {};
     const probeVariants = {};
     const phaseBoxes = {};
     let box = null;
@@ -498,14 +535,20 @@ async function main() {
         // did not take effect, and its numbers must not be read as the lean path's cost.
         tiers[phase.name] = res.tier || '';
         probes[phase.name] = res.probe === undefined ? -1 : res.probe;
-        probeRuns[phase.name] = res.probeRuns || [];
+        probeSamples[phase.name] = res.probeSamples || [];
         probeVariants[phase.name] = res.probeVariants || {};
         // The canvas the phase drew on: a phase at a smaller scale has a smaller canvas, and the
         // report has to say which one a row was measured on.
         phaseBoxes[phase.name] = res.box || null;
       }
     }
-    if (failure) { rows.push({ label: 'halo', ok: false, error: failure }); continue; }
+    if (failure) {
+      const row = { label: 'halo', ok: false, error: failure };
+      rows.push(row);
+      if (args.markdown) emit(outFile, toMarkdown([row]) + '\n');
+      else emit(outFile, JSON.stringify(row) + '\n');
+      continue;
+    }
     const results = {};
     for (const phase of phases) {
       const s = stat(costs[phase.name]);
@@ -514,7 +557,7 @@ async function main() {
       s.js = stat(jsCosts[phase.name]);
       s.tier = tiers[phase.name] || '';
       s.probe = probes[phase.name] === undefined ? -1 : probes[phase.name];
-      s.probeRuns = probeRuns[phase.name] || [];
+      s.probeSamples = probeSamples[phase.name] || [];
       s.raf = rafCosts[phase.name].length ? stat(rafCosts[phase.name]) : null;
       s.rafIdle = rafIdleCosts[phase.name].length ? stat(rafIdleCosts[phase.name]) : null;
       const pb = phaseBoxes[phase.name];
@@ -524,10 +567,11 @@ async function main() {
     }
     const row = { label: 'halo', ok: true, box, results, probeVariants };
     rows.push(row);
-    if (!args.markdown) emit(outFile, JSON.stringify(row) + '\n');
+    // Flush each completed size before starting the next one.
+    if (args.markdown) emit(outFile, toMarkdown([row]) + '\n');
+    else emit(outFile, JSON.stringify(row) + '\n');
   }
   win.destroy();
-  if (args.markdown) emit(outFile, toMarkdown(rows) + '\n');
   emit(outFile, `\nhalo-draw-bench: ${rows.length} sweeps, ${rows.filter((r) => !r.ok).length} failed -> ${outFile}\n`);
   app.exit(rows.some((r) => !r.ok) ? 1 : 0);
 }
