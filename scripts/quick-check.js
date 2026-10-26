@@ -1139,6 +1139,20 @@ function runHaloPresetCheck() {
   if (!/Ryder191\/haloflux/.test(noticeText) || !/Ryder191\/haloflux/.test(portsText)) {
     fail('the HALOFLUX upstream repository must be named in NOTICE.md and docs/THIRD_PARTY_PORTS.md');
   }
+  // The shape of the module is not the behaviour: this test runs the shipped file in a
+  // sandbox and measures the turn timing and the draw time fit on it. It goes red if the
+  // module goes back to clamping the turn or to baking the fit.
+  const lyricTestFile = path.join(appRoot, 'tests', 'halo-lyric-turn-and-fit.test.js');
+  if (!fs.existsSync(lyricTestFile)) {
+    fail('tests/halo-lyric-turn-and-fit.test.js is missing; the ring turn and the lyric fit would only be checked by shape');
+  }
+  const lyricTest = spawnSync(process.execPath, [lyricTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (lyricTest.status !== 0) {
+    process.stdout.write(lyricTest.stdout || '');
+    process.stderr.write(lyricTest.stderr || '');
+    fail(`the ring turn and the lyric fit regression failed: ${rel(lyricTestFile)}`);
+  }
+  process.stdout.write(lyricTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {
