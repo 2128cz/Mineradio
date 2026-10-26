@@ -97,8 +97,6 @@ function loadHalo({ pvDrawQuality = 'auto', readbackMs = 0 } = {}) {
     appendChild(child) { child.parentNode = this; },
     removeChild(child) { child.parentNode = null; },
   };
-  // The probe must not go looking for another canvas: a canvas that is not on screen is
-  // rasterised but never composited, and it reads a third of the real cost.
   let canvasesMade = 0;
   const sandbox = {
     console,
@@ -198,7 +196,7 @@ function feedWindows(s, windows, gapMs) {
 function runProbe(h, frames, from) {
   const s = h.sandbox;
   let t = from === undefined ? (s.haloPresetState.autoLastAt || 1000) : from;
-  for (let i = 0; i < (frames === undefined ? 3 : frames); i++) {
+  for (let i = 0; i < (frames === undefined ? 7 : frames); i++) {
     t += 33;
     drawFrame(h, t);
   }
@@ -312,8 +310,6 @@ test('the probe measures the cost the picture really costs', () => {
 });
 
 test('the probe measures the canvas that is on screen', () => {
-  // A canvas that is not in the page is rasterised but never composited, and it reads a third
-  // of the truth: the probe has to ask the live canvas.
   const h = loadHalo({ pvDrawQuality: 'auto' });
   const s = h.sandbox;
   s.haloAutoReset();

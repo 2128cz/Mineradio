@@ -217,7 +217,7 @@ var HALO_FRAME_BUDGET_MS = 1000 / 30;  // the ring draws at 30fps; this is one o
 var HALO_AUTO_ENTER_OVER = 35;        // 35 of 60 is the same share PV uses (14 of 24)
 var HALO_AUTO_ENTER_WINDOWS = 3;      // and it has to hold for three such windows
 var HALO_AUTO_SEEK_BACK_S = 2;        // a rewind this large is a fresh listening pass
-var HALO_PROBE_SAMPLES = 3;           // frames the capability probe measures
+var HALO_PROBE_SAMPLES = 7;           // frames the capability probe measures
 var HALO_PROBE_COOLDOWN_MS = 30000;   // how long a verdict of "this is not the ring" is believed
 
 function haloTierMode() {
@@ -315,10 +315,9 @@ function haloAutoBoundary(t, now) {
 // the ring keeps its picture - the doctrine's second boundary, no visible downgrade for a
 // reason that has nothing to do with this layer.
 //
-// The measurement is taken in the render loop, around the frame the app draws anyway. It has
-// to be the live canvas: a throwaway canvas is rasterised but never composited, and the
-// compositing is most of what the ring costs. Measured at 1920x1080 for the same frame: the
-// live canvas 16.2ms, a throwaway canvas 5.5ms - the throwaway reads a third of the truth.
+// The measurement is taken in the render loop, around the frame the app draws anyway, on the
+// canvas that is on screen: that is the surface the picture is really drawn on, so nothing has
+// to be assumed about how another one would behave.
 // Reading the live canvas back does not cost it its acceleration: fifty readbacks in a row
 // left it drawing at the same speed.
 function haloAutoProbe() {
