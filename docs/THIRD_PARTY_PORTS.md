@@ -127,7 +127,7 @@ whole engine that Mineradio loads at runtime — this is an *element* port: the
 upstream `lab.html` (94,575 B, sha1 `f5b3698e7fb6ba78836edc46a2e3a726b33970bc`)
 was read as a specification and re-implemented against Mineradio's own audio
 analysis, beat map, lyric timeline and frame gates. Mineradio's preset 14
-(光环 / HALO RING) draws into its own `#halo-layer` DOM canvas.
+(环形数据流 / RING DATA STREAM) draws into its own `#halo-layer` DOM canvas.
 
 Ported elements, with their upstream anchors in `lab.html`:
 

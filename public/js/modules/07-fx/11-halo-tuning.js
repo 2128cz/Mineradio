@@ -1,6 +1,6 @@
 'use strict';
 
-// Tuning for the HALO ring (preset 14), exposed as 动效 → 光环 in the visual console.
+// Tuning for the HALO ring (preset 14), exposed as 动效 → 环形数据流 in the visual console.
 //
 // The knobs themselves live in the preset module (02-visual/18-halo-ring-preset.js) as
 // HALO_TUNING_SCHEMA, so the defaults have exactly one home; this file is the store and
@@ -93,7 +93,7 @@ function resetHaloTuning() {
   haloTuningSave();
   haloTuningSyncInputs();
   haloTuningApply('stage');
-  if (typeof showToast === 'function') showToast('光环参数已恢复默认');
+  if (typeof showToast === 'function') showToast('环形数据流参数已恢复默认');
   return true;
 }
 

@@ -14,7 +14,7 @@ var presetMeta = [
   { name: '折光蝶群', nameHtml: '折光蝶群 <span class="pc-name-en">PRISM FLOCK</span>', desc: '折纸翼阵 · 光谱迁徙', premiumVisual: true, accent: '#f0d7ff', accent2: '#75e6d1' },
   { name: '深海绽放', nameHtml: '深海绽放 <span class="pc-name-en">ABYSSAL BLOOM</span>', desc: '生物荧光 · 潮汐花冠', premiumVisual: true, accent: '#75f0d0', accent2: '#8178ff' },
 { name: '歌词PV', nameHtml: '歌词PV <span class="pc-name-en">LYRIC PV</span>', desc: '文字分镜 · 接管背景' },
-{ name: '光环', nameHtml: '光环 <span class="pc-name-en">HALO RING</span>', desc: '数据圆环 · 歌词随鼓' },
+{ name: '环形数据流', nameHtml: '环形数据流 <span class="pc-name-en">RING DATA STREAM</span>', desc: '数据圆环 · 歌词随鼓' },
 ];
 var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 14c3-2 5-2 8 0s5 2 8 0M3 10c3-2 5-2 8 0s5 2 8 0M3 18c3-2 5-2 8 0s5 2 8 0"/></svg>',

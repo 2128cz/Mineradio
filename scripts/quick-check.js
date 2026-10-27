@@ -823,7 +823,7 @@ function runHaloPresetCheck() {
   if (!(haloIndex === ceiling)) {
     fail(`HALO_PRESET_INDEX=${haloIndex} must track MAX_VISUAL_PRESET_INDEX=${ceiling}`);
   }
-  if (!/光环/.test(archiveText) || !/HALO RING/.test(archiveText)) {
+  if (!/环形数据流/.test(archiveText) || !/RING DATA STREAM/.test(archiveText)) {
     fail('the HALO preset must be a labelled, selectable card');
   }
   if (!/id="halo-layer"/.test(htmlText) || !/id="halo-canvas"/.test(htmlText) || !/#halo-layer\s*\{/.test(cssText)) {
@@ -969,8 +969,8 @@ function runHaloPresetCheck() {
   ]) {
     if (!pattern.test(tuningText)) fail(why);
   }
-  if (!/key: 'halo'/.test(consoleText) || !/title: '光环'/.test(consoleText)) {
-    fail('the visual console needs a 光环 group in the 动效 tab');
+  if (!/key: 'halo'/.test(consoleText) || !/title: '环形数据流'/.test(consoleText)) {
+    fail('the visual console needs a 环形数据流 group in the 动效 tab');
   }
   const schema = new Map();
   const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
@@ -1001,7 +1001,7 @@ function runHaloPresetCheck() {
       fail(`the slider ${id} must call setHaloTuning('${key}')`);
     }
     if (!consoleText.includes(`fxConsoleItem('${id}'`)) {
-      fail(`the knob ${key} must be listed in the console's 光环 group`);
+      fail(`the knob ${key} must be listed in the console's 环形数据流 group`);
     }
   }
   const sliderCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length;

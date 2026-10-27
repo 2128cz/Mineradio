@@ -5,7 +5,7 @@ Reference revision: 225e2b2862b3d64ae9f6e0b012b27ccbe004e3d0 (2026-10-23)
 Source file read: lab.html (94,575 B, sha1 f5b3698e7fb6ba78836edc46a2e3a726b33970bc)
 Port date: 2026-10-25
 
-Mineradio's preset 14 (光环 / HALO RING) is an element port of the upstream
+Mineradio's preset 14 (环形数据流 / RING DATA STREAM) is an element port of the upstream
 HALOFLUX data-ring look: the rotating ring of micro data panels, the layered
 outer beams, the comets and the inner woven web were re-implemented against
 Mineradio's own audio analysis, beat map, lyric timeline and frame gates.
