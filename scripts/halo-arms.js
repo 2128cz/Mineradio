@@ -326,6 +326,31 @@ function checkHaloCullArms(haloText, fail) {
       fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
+  // The ring's pop is a drum hit, not the song's tempo: the map's detected hits come first,
+  // and each hit's own strength sets how hard the ring pops.
+  {
+    const eventsFn = haloSliceFunction(haloText, 'haloBeatMapEvents');
+    const listFn = haloSliceFunction(haloText, 'haloBeatList');
+    const hitFn = haloSliceFunction(haloText, 'haloBeatHit');
+    if (!eventsFn || !listFn || !hitFn) {
+      fail("the ring's beat events, their list and the hit handler could not be read back");
+    }
+    if (eventsFn && !/haloBeatList\(currentBeatMap\.hits, true\)/.test(eventsFn)) {
+      fail("the ring must pop on the map's detected drum hits, not on the tempo grid");
+    }
+    if (eventsFn && !/haloBeatList\(currentBeatMap\.cameraBeats/.test(eventsFn)) {
+      fail('a map without hits still needs a fallback');
+    }
+    if (listFn && !/e\.camera === false/.test(listFn)) {
+      fail('an entry the analysis did not judge drum-like is not a hit');
+    }
+    if (listFn && !/e\.grid === true/.test(listFn)) {
+      fail('a synthesised grid point is not a hit');
+    }
+    if (hitFn && !/0\.45 \+ 0\.55 \* haloClamp\(e\.weight/.test(hitFn)) {
+      fail("a hard hit must pop harder than a light one: the pulse comes from the hit's weight");
+    }
+  }
   // The outer beams: one spectrum bin per cluster (not one of eight bands), the level
   // multiplies the cluster's own length, and a beat lengthens every beam then falls back.
   {

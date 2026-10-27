@@ -883,7 +883,7 @@ function runHaloPresetCheck() {
   }
   // The beat's whole job now: the ring pops out and shakes where it stands.
   for (const [pattern, why] of [
-    [/haloState\.ringPulse = 1;/, 'the beat must set the ring\'s pulse envelope'],
+    [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.45 \+ 0\.55 \* haloClamp\(e\.weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
     [/haloParam\('pulseScale'\)/, 'the scale pop must be a knob'],
     [/haloParam\('shakePx'\)/, 'the shake must be a knob'],
     [/s\.shakeX =/, 'the shake must reach the transform'],
@@ -1155,6 +1155,18 @@ function runHaloPresetCheck() {
     fail(`the outer beam regression failed: ${rel(beamsTestFile)}`);
   }
   process.stdout.write(beamsTest.stdout || '');
+  // The ring's pop follows the map's detected drum hits, not the tempo grid.
+  const hitsTestFile = path.join(appRoot, 'tests', 'halo-beat-hits.test.js');
+  if (!fs.existsSync(hitsTestFile)) {
+    fail('tests/halo-beat-hits.test.js is missing; the ring would pop on the metronome again');
+  }
+  const hitsTest = spawnSync(process.execPath, [hitsTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (hitsTest.status !== 0) {
+    process.stdout.write(hitsTest.stdout || '');
+    process.stderr.write(hitsTest.stderr || '');
+    fail(`the drum hit regression failed: ${rel(hitsTestFile)}`);
+  }
+  process.stdout.write(hitsTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

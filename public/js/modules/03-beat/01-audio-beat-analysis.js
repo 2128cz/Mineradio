@@ -725,6 +725,10 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
       }
     }
 
+    // The drum hits the analysis actually heard, as opposed to the tempo grid it lays over
+    // the song later: each one keeps its own strength, and this is what the visuals that
+    // want a hit (the ring's pop) read instead of the metronome.
+    var hits = beats.filter(function (b) { return !!(b && b.camera); });
     var kicks = beats.map(function (b) { return b.time; });
     var visualBeatCount = 0;
     var pulseBeats = cameraBeats.filter(function (b) {
@@ -751,7 +755,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     if (token !== beatMapToken) { hideBeatChip(); return null; }
     if (options.prefetch) hideBeatChip();
     else showBeatChip('节奏缓冲中…');
-    return { kicks: kicks, beats: beats, pulseBeats: pulseBeats, cameraBeats: cameraBeats, gridStep: gridStep, tempoSource: musicTempoBeats.length >= 4 ? 'music-tempo' : 'local', analysisProfile: analysisProfile.id || 'default', duration: buffer.duration, visualBeatCount: visualBeatCount, analyzedAt: Date.now() };
+    return { kicks: kicks, beats: beats, hits: hits, pulseBeats: pulseBeats, cameraBeats: cameraBeats, gridStep: gridStep, tempoSource: musicTempoBeats.length >= 4 ? 'music-tempo' : 'local', analysisProfile: analysisProfile.id || 'default', duration: buffer.duration, visualBeatCount: visualBeatCount, analyzedAt: Date.now() };
   } catch (e) {
     console.warn('beat analysis failed:', e);
     hideBeatChip();

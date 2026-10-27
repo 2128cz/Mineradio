@@ -65,12 +65,14 @@ function unpackLocalBeatEvent(row) {
 }
 // Bumped when the analysis itself changes in a way that invalidates a stored map. Version 3
 // is the pipeline that no longer folds fast tempos to half speed: a v1/v2 map of a 150-180
-// BPM song is a half-tempo grid, so it has to be analysed again instead of reused.
-var LOCAL_BEAT_MAP_VERSION = 3;
+// BPM song is a half-tempo grid, so it has to be analysed again instead of reused. Version 4
+// keeps the detected drum hits, without which the ring can only pop on the tempo grid.
+var LOCAL_BEAT_MAP_VERSION = 4;
 function packLocalBeatMap(map) {
   if (!map) return null;
   var camera = (map.cameraBeats || map.beats || map.kicks || []).map(packLocalBeatEvent);
   var pulse = (map.pulseBeats || map.kicks || []).map(packLocalBeatEvent);
+  var hits = (map.hits || []).map(packLocalBeatEvent);
   return {
     v: LOCAL_BEAT_MAP_VERSION,
     duration: localBeatRound(map.duration || 0, 1000),
@@ -82,7 +84,8 @@ function packLocalBeatMap(map) {
     partial: !!map.partial,
     partialUntilSec: map.partialUntilSec || 0,
     cameraBeats: camera,
-    pulseBeats: pulse
+    pulseBeats: pulse,
+    hits: hits
   };
 }
 function unpackLocalBeatMap(stored) {
@@ -92,10 +95,12 @@ function unpackLocalBeatMap(stored) {
   if (stored.v !== LOCAL_BEAT_MAP_VERSION) return null;
   var camera = (stored.cameraBeats || []).map(unpackLocalBeatEvent);
   var pulse = (stored.pulseBeats || []).map(unpackLocalBeatEvent);
+  var hits = (stored.hits || []).map(unpackLocalBeatEvent);
   return {
     kicks: camera.map(function (b) { return typeof b === 'number' ? b : b.time; }),
     beats: camera,
     pulseBeats: pulse,
+    hits: hits,
     cameraBeats: camera,
     gridStep: stored.gridStep || 0,
     sectionSteps: stored.sectionSteps || [],

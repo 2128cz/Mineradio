@@ -130,8 +130,9 @@ function series(bpm, seconds, from) {
   assert(/Math\.min\(beatCam\.minInterval, Math\.max\(0\.22, step \* 0\.86\)\)/.test(runtimeText),
     'the camera\'s pace must follow the song\'s spacing instead of a fixed 0.5 s');
 
-  assert(/LOCAL_BEAT_MAP_VERSION = 3/.test(cacheText),
-    'cached maps analysed by the half-tempo pipeline must be invalidated');
+  const cacheVersion = Number((/LOCAL_BEAT_MAP_VERSION = (\d+)/.exec(cacheText) || [])[1]);
+  assert(cacheVersion >= 3,
+    `cached maps analysed by the half-tempo pipeline must be invalidated, the store is at v${cacheVersion}`);
   assert(/if \(stored\.v !== LOCAL_BEAT_MAP_VERSION\) return null;/.test(cacheText),
     'a stale map must be dropped so the song is analysed again');
   console.log(`  tracker options from the module: ${JSON.stringify(options)}`);

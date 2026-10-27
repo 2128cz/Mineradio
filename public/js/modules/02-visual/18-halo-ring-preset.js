@@ -394,19 +394,39 @@ function haloReadAudioBands(t) {
 // The beat map is the preferred source: it knows the future, so the visual can be started
 // early enough to land on the beat. The realtime kick detector is the fallback - it fires
 // after the onset, so nothing can be early there and the flight times are shortened.
-function haloBeatMapEvents() {
-  if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
-  var events = currentBeatMap.cameraBeats || currentBeatMap.beats || currentBeatMap.kicks || [];
+// One list of beat events out of whatever the map holds. With `requireCamera` the list is
+// the detected drum hits only: an entry the analysis did not judge drum-like is not a hit,
+// and a synthesised grid point is not one either.
+function haloBeatList(events, requireCamera) {
   if (!events || !events.length) return null;
   var out = [];
   for (var i = 0; i < events.length; i++) {
     var e = events[i];
     var time = typeof e === 'number' ? e : (e && typeof e.time === 'number' ? e.time : NaN);
     if (!isFinite(time)) continue;
-    var weight = typeof e === 'number' ? 0.5 : haloClamp((e.strength != null ? e.strength : 0.5) * 0.5 + (e.impact != null ? e.impact : 0.4) * 0.5, 0, 1);
-    out.push({ t: time, w: weight });
+    var isObject = !!e && typeof e === 'object';
+    if (requireCamera && isObject && e.camera === false) continue;
+    if (isObject && e.grid === true) continue;
+    var strength = isObject ? Number(e.strength) : 0.5;
+    if (!isFinite(strength)) strength = 0.5;
+    if (requireCamera && strength < 0.30) continue;
+    var impact = isObject ? Number(e.impact) : strength;
+    if (!isFinite(impact)) impact = strength;
+    out.push({ t: time, w: haloClamp(strength * 0.5 + impact * 0.5, 0, 1) });
   }
   return out.length ? out : null;
+}
+
+function haloBeatMapEvents() {
+  if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
+  // The ring's beat is a drum hit, not the song's tempo. On a music-tempo map `cameraBeats`
+  // is a grid at the detected BPM: it says where a beat would have been, and a ring that
+  // pops on it reads as a metronome. `hits` are the onsets the analysis actually heard,
+  // each with its own strength; the grid stays where it belongs - on the turn's timing.
+  return haloBeatList(currentBeatMap.hits, true) ||
+    haloBeatList(currentBeatMap.beats, true) ||
+    haloBeatList(currentBeatMap.pulseBeats, false) ||
+    haloBeatList(currentBeatMap.cameraBeats || currentBeatMap.kicks, false);
 }
 
 function haloRefreshBeatSource() {
@@ -510,8 +530,9 @@ function haloBeatHit(e) {
     slot.flash = 0.85;
   }
   // The beat's whole job now: the ring pops out and shakes where it stands. The camera
-  // stays where the user left it.
-  haloState.ringPulse = 1;
+  // stays where the user left it. A hard hit pops harder than a light one - the map's own
+  // strength, not a constant for every grid point.
+  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.45 + 0.55 * haloClamp(e.weight, 0, 1));
   haloStrandBeat(e.weight);
 }
 
