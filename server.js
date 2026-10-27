@@ -118,7 +118,8 @@ const {
 } = require('./cuefield/feedback-log');
 const { planCuefieldTransitionFromCache } = require('./cuefield/mineradio-bridge');
 const { createPvArchiveStore, canonicalArchiveKey, PV_SCHEMA: PV_ARCHIVE_SCHEMA } = require('./pv-archive');
-const { createPvPlanner, repairPlanTails } = require('./pv-planner');
+const { repairPlanTails } = require('./pv-planner');
+const { createPvPlannerPool } = require('./pv-planner-pool');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -864,10 +865,9 @@ const pvArchive = createPvArchiveStore({
 });
 
 // The planner owns a hidden window with the whole engine in it, so it is created on first use:
-// an app that never opens a PV must not pay for it. srcFingerprint is the engine hash itself, so
-// refreshing the engine invalidates every archive instead of silently drawing with a new one.
-let pvPlannerInstance = null;
-let pvPlannerFailure = null;
+// an app that never opens a PV must not pay for it, and a session that stopped planning gives it
+// back. srcFingerprint is the engine hash itself, so refreshing the engine invalidates every
+// archive instead of silently drawing with a new one.
 let pvSrcFingerprintCache = null;
 function pvSrcFingerprint() {
   if (!pvSrcFingerprintCache) {
@@ -875,33 +875,33 @@ function pvSrcFingerprint() {
   }
   return pvSrcFingerprintCache;
 }
-function getPvPlanner() {
-  if (pvPlannerInstance) return pvPlannerInstance;
-  if (pvPlannerFailure) throw pvPlannerFailure;
-  try {
-    pvPlannerInstance = createPvPlanner({ appRoot: __dirname });
-  } catch (err) {
-    // A pin mismatch must stay a named failure, not a re-read attempt on every request.
-    pvPlannerFailure = err;
-    throw err;
-  }
-  return pvPlannerInstance;
-}
-function releasePvPlanner() {
-  if (pvPlannerInstance) pvPlannerInstance.dispose();
-  pvPlannerInstance = null;
-  pvPlannerFailure = null;
-  return { ok: true };
-}
+// isBusy reads the request de-dup map below: two callers sharing one plan are still one plan, and
+// a plan in flight owns a window with a caller wedged on its executeJavaScript.
+const pvPlannerPool = createPvPlannerPool({
+  appRoot: __dirname,
+  isBusy: () => pvPlanInFlight.size,
+  log: (line) => console.log(line),
+});
 // pid + startedAt are part of the reading on purpose: a live probe judges a RUNNING process, so
 // without them a green e2e cannot be told apart from a green e2e against a build that predates
 // the source being tested (the app I am talking to may simply be older than this file).
 const PV_PROCESS_STARTED_AT = new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString();
 function pvPlannerStats() {
   const identity = { pid: process.pid, startedAt: PV_PROCESS_STARTED_AT, uptimeSec: Math.round(process.uptime()) };
-  return pvPlannerInstance
-    ? Object.assign({ open: pvPlannerInstance.isOpen(), fingerprint: pvSrcFingerprint() }, identity, pvPlannerInstance.stats())
-    : Object.assign({ open: false, fingerprint: pvSrcFingerprint(), windowsCreated: 0, plans: 0, failures: 0, timeouts: 0 }, identity);
+  return Object.assign({ fingerprint: pvSrcFingerprint() }, identity, pvPlannerPool.stats());
+}
+function releasePvPlanner() {
+  return pvPlannerPool.release('manual');
+}
+// Called from desktop/main.js on the path that is already reclaiming memory because the window is
+// minimized or hidden — the only places the doctrine allows, and never during foreground playback.
+function idleReleasePvPlanner(reason) {
+  return pvPlannerPool.idleRelease(reason || 'idle');
+}
+// The pool has no idea whether the app is in the way; only the main process can say so, and it says
+// so on every window-state change. That is what arms the one-shot quiet-period reclaim below.
+function setPvPlannerBackground(inBackground) {
+  return pvPlannerPool.setBackground(inBackground);
 }
 
 // One plan per key even when the renderer asks twice: the caller is a prefetch queue that can
@@ -980,7 +980,7 @@ async function handlePvPlan(body) {
     } catch (err) {
       return Object.assign(wrong(err.code || 'PV_CACHE_UNAVAILABLE'), { key, storeReason: err.code || '', planned: false });
     }
-    const out = await getPvPlanner().plan(payload);
+    const out = await pvPlannerPool.get().plan(payload);
     const plan = JSON.parse(out.json);
     // JIZURA caps a lyric line's on-screen time by character count, so a line whose real length
     // is longer shows nothing until the next line. payload.lineEnds carries the ends this app
@@ -7117,5 +7117,8 @@ server.listen(PORT, HOST, () => {
 });
 
 server.clearAllLoginCredentials = clearAllRuntimeLoginCredentials;
+server.idleReleasePvPlanner = idleReleasePvPlanner;
+server.setPvPlannerBackground = setPvPlannerBackground;
+server.pvPlannerStats = pvPlannerStats;
 
 module.exports = server;

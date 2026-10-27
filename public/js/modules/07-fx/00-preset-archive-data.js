@@ -278,7 +278,8 @@ var USER_FX_SHARE_KEYS = [
   'coverBackdropAdapt',
   'gesturePlayerActions',
   'gestureHandOverlay',
-  'gestureSensitivity'
+  'gestureSensitivity',
+  'pvDrawQuality'
 ];
 function defaultUserFxArchiveName(index) {
   return '存档 ' + (index + 1);
@@ -428,6 +429,7 @@ function normalizeFxArchiveSnapshot(raw) {
     desktopLyricsFps: normalizeDesktopLyricsFps(Object.prototype.hasOwnProperty.call(raw, 'desktopLyricsFps') ? raw.desktopLyricsFps : fxDefaults.desktopLyricsFps),
     performanceBackground: normalizePerformanceBackgroundMode(raw.performanceBackground, raw.liveBackgroundKeep === true),
     performanceQuality: normalizePerformanceQuality(raw.performanceQuality),
+    pvDrawQuality: normalizePvDrawQuality(raw.pvDrawQuality),
     foregroundFpsMode: normalizeForegroundFpsMode(raw.foregroundFpsMode === 'adaptive' ? 'vsync' : raw.foregroundFpsMode),
     memoryAutoTrimApp: raw.memoryAutoTrimApp !== false,
     memoryAutoTrimOnBackground: raw.memoryAutoTrimOnBackground !== false,

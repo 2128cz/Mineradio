@@ -131,6 +131,19 @@ function setLyricTextureClarity(value, silent) {
   saveLyricLayout({ user: true, reason: 'lyricTextureClarity' });
   if (!silent) showToast('歌词清晰度: ' + lyricTextureClarityLabel(next));
 }
+function pvDrawQualityLabel(value) {
+  var mode = normalizePvDrawQuality(value);
+  return mode === 'full' ? '效果' : (mode === 'lean' ? '性能' : '自动');
+}
+function setPvDrawQualityMode(mode, silent) {
+  var next = normalizePvDrawQuality(mode);
+  var changed = next !== normalizePvDrawQuality(fx.pvDrawQuality);
+  fx.pvDrawQuality = next;
+  updatePerformanceControls();
+  if (!changed) return;
+  saveLyricLayout({ user: true, reason: 'pvDrawQuality' });
+  if (!silent) showToast('PV 绘制档位: ' + pvDrawQualityLabel(next));
+}
 function updatePerformanceControls() {
   fx.performanceBackground = normalizePerformanceBackgroundMode(fx.performanceBackground, fx.liveBackgroundKeep === true);
   fx.liveBackgroundKeep = fx.performanceBackground === 'keep';
@@ -146,6 +159,12 @@ function updatePerformanceControls() {
   });
   document.querySelectorAll('#foreground-fps-seg [data-foreground-fps]').forEach(function (btn) {
     var active = normalizeForegroundFpsMode(btn.getAttribute('data-foreground-fps')) === fx.foregroundFpsMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  fx.pvDrawQuality = normalizePvDrawQuality(fx.pvDrawQuality);
+  document.querySelectorAll('#pv-draw-quality-seg [data-pv-draw-quality]').forEach(function (btn) {
+    var active = normalizePvDrawQuality(btn.getAttribute('data-pv-draw-quality')) === fx.pvDrawQuality;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   });

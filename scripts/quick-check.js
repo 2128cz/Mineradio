@@ -276,7 +276,7 @@ function runPvPlannerCheck() {
   // the renderer at /pv-engine.js (preset 13 loads it on demand instead of concatenating 2.1MB
   // into every page load). A third reader is how a stale copy reappears.
   const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'pv-planner.js'), path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
+  const readers = walk(path.join(appRoot, 'public', 'js')).concat([path.join(appRoot, 'pv-planner.js'), path.join(appRoot, 'pv-planner-pool.js'), path.join(appRoot, 'server.js'), path.join(appRoot, 'desktop', 'main.js')])
     .filter((file) => /\.js$/.test(file) && /jizura-engine\.js/.test(stripComments(fs.readFileSync(file, 'utf8'))))
     .map((file) => path.basename(file))
     .sort();
@@ -309,8 +309,10 @@ function runPvPlannerCheck() {
   const betaPkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'electron-builder.internal-beta.json'), 'utf8'));
   const releaseFiles = (releasePkg.build && releasePkg.build.files) || [];
   const betaFiles = betaPkg.files || [];
-  if (!releaseFiles.includes('pv-planner.js') || !betaFiles.includes('pv-planner.js')) {
-    fail(`pv-planner.js must be listed in both packaging file manifests; release=${releaseFiles.includes('pv-planner.js')} beta=${betaFiles.includes('pv-planner.js')}`);
+  for (const packaged of ['pv-planner.js', 'pv-planner-pool.js']) {
+    if (!releaseFiles.includes(packaged) || !betaFiles.includes(packaged)) {
+      fail(`${packaged} must be listed in both packaging file manifests; release=${releaseFiles.includes(packaged)} beta=${betaFiles.includes(packaged)}`);
+    }
   }
 
   // The lyric-tail repair: pv-planner.js owns it because the engine is hash-pinned and cannot be
@@ -365,10 +367,48 @@ function runPvPlannerProbe() {
   }
 }
 
+// Releasing the planner's hidden window is the one PV path that touches memory while the app is
+// not in the foreground, so it is pinned twice: the pool must refuse a busy window and keep saying
+// what it did, and the only caller must be the app's existing idle/background trim path.
+function runPvPlannerIdleReleaseCheck() {
+  logStep('PV planner idle release (hidden window given back on the idle path, never mid-plan)');
+  const testFile = path.join(appRoot, 'tests', 'pv-planner-idle-release.test.js');
+  const run = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (run.status !== 0) {
+    process.stdout.write(run.stdout || '');
+    process.stderr.write(run.stderr || '');
+    fail(`PV planner idle release regression failed: ${rel(testFile)}`);
+  }
+  const poolText = fs.readFileSync(path.join(appRoot, 'pv-planner-pool.js'), 'utf8');
+  const mainText = fs.readFileSync(path.join(appRoot, 'desktop', 'main.js'), 'utf8');
+  const trimBody = /async function trimAppMemoryNow\(reason\) \{[\s\S]*?\n\}/.exec(mainText);
+  if (!trimBody) fail('desktop/main.js no longer has a trimAppMemoryNow body to inspect');
+  for (const [text, pattern, why] of [
+    [poolText, /if \(busy > 0\) \{[\s\S]{0,520}return \{ ok: true, released: false, reason: 'plan-in-flight'/, 'idleRelease must refuse a window with a plan in flight; disposing it would reject that caller'],
+    [poolText, /if \(!instance\) return \{ ok: true, released: false, reason: 'not-open'/, 'an idle release with no window must be a no-op, not a counted release'],
+    [poolText, /\[PvPlanner\]/, 'every release has to say what it did in the log (doctrine: an aggressive path explains itself)'],
+    [poolText, /if \(!background \|\| !instance \|\| reclaimTimer\) return;[\s\S]{0,260}\.unref\(\)/, 'the quiet-period reclaim is a one-shot that never keeps the app alive, and only exists while main says the app is in the background'],
+    [poolText, /out\[field\] = totals\[field\] \+ \(Number\(current\[field\]\) \|\| 0\)/, 'counters must stay cumulative over a release, or reclaim blinds the pipeline reading'],
+    // The doctrine gate: reclaim is only allowed on the idle/background/minimized path. That gate
+    // lives in trimAppMemoryNow, so the call has to be inside it rather than beside it.
+    [trimBody[0], /localServer\.idleReleasePvPlanner\(/, 'the planner window must be released from the app memory trim path'],
+    [mainText, /idleReleasePvPlanner\(reason \+ ':memory-auto'\)/, 'the memory-auto tick must offer the planner window back too; the trim runs once per minimize and the background prefetch can rebuild it'],
+    // The pool has no eyes of its own: main.js, which owns the window, pushes visibility from the one
+    // function every state change passes through. Anything else is a flag that can drift.
+    [mainText, /localServer\.setPvPlannerBackground\(!isMainWindowForegroundVisible\(\)\)/, 'the planner pool must be told the real window posture, from sendWindowState'],
+    [trimBody[0], /isMainWindowForegroundVisible\(\) && trimReason !== 'manual-force'/, 'trimAppMemoryNow must still skip the foreground, or an idle release becomes a mid-playback teardown'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if (/setInterval\([\s\S]{0,120}idleReleasePvPlanner/.test(mainText) || /setTimeout\([\s\S]{0,120}idleReleasePvPlanner/.test(mainText)) {
+    fail('the planner release must ride the existing trim path, not a new timer of its own');
+  }
+  console.log('[OK] PV planner window is given back on the idle path, refuses mid-plan, and stays counted after release.');
+}
+
 // Route wiring for the planning pipeline, plus the live end-to-end when an app happens to be
 // running with a writable cache (script tmp/pv-pipeline-e2e.js).
-function runPvPipelineCheck() {
-  logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
+function runPvPipelineCheck() {  logStep('PV planning pipeline (route wiring, key derivation, live e2e)');
   const serverText = fs.readFileSync(path.join(appRoot, 'server.js'), 'utf8');
   for (const [pattern, why] of [
     [/pn === '\/api\/pv\/plan'/, 'server.js no longer exposes the planning route'],
@@ -379,10 +419,15 @@ function runPvPipelineCheck() {
     [/canonicalArchiveKey\(\{[\s\S]{0,240}lyricHash: lyricFingerprint/, 'the archive key must be keyed on the derived lyric fingerprint, not on a caller-supplied hash'],
     [/delete plan\.fontTable/, 'the archive must not keep the inline font table (validateArchive rejects it)'],
     [/pvPlanInFlight/, 'concurrent requests for one key must share a single plan'],
-    [/let pvPlannerInstance = null/, 'the planner window must be created lazily, not at boot'],
+    [/pvPlannerPool\.get\(\)\.plan\(/, 'planning must go through the pool, which spawns the hidden window on first use'],
+    // The pool refuses to release a window with a caller wedged on it; that judgement only exists
+    // if server.js actually hands it the in-flight count.
+    [/isBusy: \(\) => pvPlanInFlight\.size/, 'the planner pool must be told when a plan is in flight, or an idle trim would fail that caller'],
+    [/server\.idleReleasePvPlanner = idleReleasePvPlanner/, 'the main process must be able to release the planner window on its idle path'],
   ]) {
     if (!pattern.test(serverText)) fail(why);
   }
+  runPvPlannerIdleReleaseCheck();
 
   const e2e = path.join(appRoot, 'tmp', 'pv-pipeline-e2e.js');
   if (!fs.existsSync(e2e)) {
@@ -766,6 +811,136 @@ function runPvPresetCheck() {
   if (!/pvPresetState\.warmCanvas = null;/.test(pvText)) fail('releasing must drop the warm canvas');
   console.log(`[OK] PV preset wired: ${metaCount} presets, ceiling ${ceiling}, layer + takeover + release present.`);
   runPvPresetLiveProbe(modulePath);
+}
+
+function runPvDrawTierCheck() {
+  logStep('PV draw tier (自动 decides from measured cost only, 性能档 only sends measured knobs)');
+  const testFile = path.join(appRoot, 'tests', 'pv-draw-tier.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`PV draw tier regression failed: ${rel(testFile)}`);
+  }
+  const presetText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '17-pv-preset.js'), 'utf8');
+  // docs/LOW_SPEC_OPTIMIZATION_DOCTRINE.md allows a fallback only under sustained measured pressure,
+  // switched atomically at a boundary, explained in the log, and reversible by the user. Each of
+  // those is a call site, so each is pinned here; a future edit that drops one silently degrades
+  // the picture for a reason nobody measured.
+  const autoGuards = [
+    [/function pvAutoObserve\(cost\) \{[\s\S]{0,600}PV_AUTO_ENTER_WINDOWS/, '自动 must need several measured windows, not one bad frame'],
+    [/if \(boundary && s\.autoPending\)/, 'a decision must land on a cut boundary, never mid-cut'],
+    [/pvAutoBoundary\(t, started\);\n\s*var tier = pvDrawTier\(\);/, 'the decision must be made before the frame is drawn'],
+    [/pvAutoGiveUp\(/, 'a tier the engine cannot draw must fall back'],
+    [/pvAutoReset\('a manual tier was chosen'\)/, 'the user picking a tier by hand must overrule 自动'],
+    [/\[PvDrawTier\]/, 'every switch must say what it measured, in the log'],
+  ];
+  for (const [pattern, why] of autoGuards) {
+    if (!pattern.test(presetText)) fail(`PV 自动档 lost a doctrine guard: ${why}`);
+  }
+  const lean = /lean: function \(scale\) \{ return \{([^}]*)\}; \}/.exec(presetText);
+  if (!lean) fail('the 性能档 option object cannot be inspected');
+  const { PV_ENGINE_KNOBS } = require(path.join(appRoot, 'scripts', 'pv-draw-bench.js'));
+  const allowed = new Set(['scale'].concat(PV_ENGINE_KNOBS.map((knob) => knob.name)));
+  for (const part of lean[1].split(',')) {
+    const name = part.trim().split(':')[0].trim();
+    if (!name) continue;
+    if (!allowed.has(name)) fail(`性能档 sends ${name}, which the draw bench does not pin to the vendored engine`);
+  }
+  console.log(`[OK] PV draw tier wired; 性能档 sends ${lean[1].split(',').length} measured options, 自动 guarded by ${autoGuards.length} doctrine checks.`);
+}
+
+function runPvDrawBenchGuardCheck() {
+  logStep('PV draw bench (the downgrade knobs still exist, and the tool is still runnable)');
+  const benchPath = path.join(appRoot, 'scripts', 'pv-draw-bench.js');
+  const testPath = path.join(appRoot, 'tests', 'pv-draw-bench-guard.test.js');
+  const docPath = path.join(appRoot, 'docs', 'pv-perf-baseline.md');
+  if (!fs.existsSync(benchPath)) fail('scripts/pv-draw-bench.js is missing; PV tier decisions would have no numbers behind them');
+  if (!fs.existsSync(docPath)) fail('docs/pv-perf-baseline.md is missing; the measured baseline is the reference the tiers are set against');
+  const syntax = spawnSync(process.execPath, ['--check', benchPath], { cwd: appRoot, encoding: 'utf8' });
+  if (syntax.status !== 0) {
+    process.stdout.write(syntax.stdout || '');
+    process.stderr.write(syntax.stderr || '');
+    fail(`pv-draw-bench.js does not parse: ${rel(benchPath)}`);
+  }
+  const result = spawnSync(process.execPath, ['--test', testPath], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`PV draw bench guard failed: ${rel(testPath)}`);
+  }
+  // Requiring it under plain node is the point: the bench must stay loadable without electron.
+  const bench = require(benchPath);
+  const engineText = fs.readFileSync(path.join(appRoot, 'vendor', 'jizura', 'jizura-engine.js'), 'utf8');
+  for (const knob of bench.PV_ENGINE_KNOBS) {
+    if (!engineText.match(knob.pattern)) fail(`engine knob opt.${knob.name} disappeared - the PV tier that sets it is now a no-op`);
+  }
+  const docText = fs.readFileSync(docPath, 'utf8');
+  if (!docText.includes('node_modules/electron/dist/electron.exe scripts/pv-draw-bench.js')) {
+    fail('docs/pv-perf-baseline.md must carry the one command that reproduces the table');
+  }
+  for (const knob of ['fast', 'noGhost', 'noPost', 'noTrans']) {
+    if (!docText.includes(knob)) fail(`docs/pv-perf-baseline.md must report the measured cost of opt.${knob}`);
+  }
+  console.log(`[OK] PV draw bench pinned: ${bench.PV_ENGINE_KNOBS.length} knobs matched against the vendored engine.`);
+}
+
+function runHaloDrawTierCheck() {
+  logStep('HALO draw tier (自动 decides from the ring\'s measured cost, 性能档 keeps the picture)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
+  const testFile = path.join(appRoot, 'tests', 'halo-draw-tier.test.js');
+  const benchPath = path.join(appRoot, 'scripts', 'halo-draw-bench.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`HALO draw tier regression failed: ${rel(testFile)}`);
+  }
+  const haloText = fs.readFileSync(modulePath, 'utf8');
+  // The doctrine asks for a downgrade only under sustained measured pressure, switched
+  // atomically at a boundary, explained in the log, and reversible by the user. Each of those
+  // is a call site, so each is pinned here.
+  const autoGuards = [
+    [/var HALO_AUTO_ENTER_WINDOWS = (\d+);/, '自动 must need several measured windows, not one bad frame'],
+    [/if \(boundary && s\.autoPending\)/, 'a decision must land on a lyric line boundary, never mid-line'],
+    [/haloAutoBoundary\(t, started\);/, 'the decision must be made before the frame is drawn'],
+    [/if \(s\.probePending\) return;/, 'a probe that is still measuring must not be asked again'],
+    [/\[HaloDrawTier\]/, 'every switch must say what it measured, in the log'],
+    [/haloAutoReset\('a manual tier was chosen'\)/, 'the user picking a tier by hand must overrule 自动'],
+  ];
+  for (const [pattern, why] of autoGuards) {
+    if (!pattern.test(haloText)) fail(`HALO 自动档 lost a doctrine guard: ${why}`);
+  }
+  // 性能档 is the same picture at fewer pixels. If a part of the picture were quietly dropped
+  // instead, the ring would lose something the user can see - the second boundary.
+  if (!/var HALO_LEAN_SCALE = ([\d.]+);/.test(haloText)) fail('the 性能档 resolution cannot be inspected');
+  const leanScale = Number(/var HALO_LEAN_SCALE = ([\d.]+);/.exec(haloText)[1]);
+  if (!(leanScale > 0.5 && leanScale < 1)) {
+    fail(`the 性能档 resolution must be a real reduction (found ${leanScale})`);
+  }
+  // The probe measures the live canvas: a canvas that is not on screen is rasterised but never
+  // composited, and it reads a third of the truth. The probe's own functions must not build a
+  // canvas of their own - only the ring's baking may.
+  const probeText = haloText.slice(haloText.indexOf('function haloProbeBaseline'), haloText.indexOf('function haloAutoObserve'));
+  if (!probeText) fail('the probe functions are missing; the ring would never know what it costs');
+  if (/createElement/.test(probeText)) {
+    fail('the probe must measure the canvas that is on screen, not a throwaway one');
+  }
+  if (!/var probeBase = haloPresetState\.probePending \? haloProbeBaseline\(ctx\) : -1;/.test(haloText)) {
+    fail('the probe must take its baseline on the context the frame is drawn into');
+  }
+  if (!/ctx\.getImageData\(0, 0, 1, 1\)/.test(haloText)) {
+    fail('the probe must read the canvas back to see the rasterisation');
+  }
+  // The bench has to stay loadable and parse, or the numbers behind the tier are lost.
+  const syntax = spawnSync(process.execPath, ['--check', benchPath], { cwd: appRoot, encoding: 'utf8' });
+  if (syntax.status !== 0) {
+    process.stdout.write(syntax.stdout || '');
+    process.stderr.write(syntax.stderr || '');
+    fail(`halo-draw-bench.js does not parse: ${rel(benchPath)}`);
+  }
+  require(benchPath);
+  console.log(`[OK] HALO draw tier wired; 性能档 draws at ${leanScale}x, 自动 guarded by ${autoGuards.length} doctrine checks.`);
 }
 
 function runPvPresetLiveProbe(modulePath) {
@@ -6844,6 +7019,9 @@ async function main() {
   runPvPresetCheck();
   runBeatTempoCeilingCheck();
   runHaloPresetCheck();
+  runPvDrawTierCheck();
+  runPvDrawBenchGuardCheck();
+  runHaloDrawTierCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runFxConsoleRegistrationCheck();
   runWindowVisibilityTraceCheck();

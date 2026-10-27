@@ -51,6 +51,10 @@ function normalizePerformanceQuality(v) {
   var value = String(v || '');
   return /^(eco|balanced|high|ultra)$/.test(value) ? value : fxDefaults.performanceQuality;
 }
+function normalizePvDrawQuality(v) {
+  var value = String(v || '');
+  return /^(auto|full|lean)$/.test(value) ? value : fxDefaults.pvDrawQuality;
+}
 function normalizeLyricTextureClarity(v) {
   var value = Number(v);
   if (!isFinite(value)) value = Number(fxDefaults.lyricTextureClarity) || 1;
@@ -330,6 +334,7 @@ function readSavedLyricLayout() {
       desktopLyricsFps: desktopLyricsSchemaReady ? normalizeDesktopLyricsFps(raw.desktopLyricsFps) : fxDefaults.desktopLyricsFps,
       performanceBackground: normalizePerformanceBackgroundMode(raw.performanceBackground, raw.liveBackgroundKeep === true),
       performanceQuality: normalizePerformanceQuality(raw.performanceQuality),
+      pvDrawQuality: normalizePvDrawQuality(raw.pvDrawQuality),
       foregroundFpsMode: normalizeForegroundFpsMode(raw.foregroundFpsMode === 'adaptive' ? 'vsync' : raw.foregroundFpsMode),
       memoryAutoTrimApp: raw.memoryAutoTrimApp !== false,
       memoryAutoTrimOnBackground: raw.memoryAutoTrimOnBackground !== false,
@@ -560,6 +565,7 @@ function currentFxAutosaveTouchedKeys(reason, payload) {
     desktopLyricsFps: ['desktopLyricsFps'],
     performanceBackground: ['performanceBackground', 'liveBackgroundKeep'],
     performanceQuality: ['performanceQuality'],
+    pvDrawQuality: ['pvDrawQuality'],
     liveBackgroundKeep: ['performanceBackground', 'liveBackgroundKeep'],
     memorySystemMask: ['memorySystemMask'],
     memorySystemIntervalMin: ['memorySystemIntervalMin'],
@@ -819,6 +825,7 @@ function saveLyricLayout(opts) {
       desktopLyricsFps: normalizeDesktopLyricsFps(fx.desktopLyricsFps),
       performanceBackground: normalizePerformanceBackgroundMode(fx.performanceBackground, fx.liveBackgroundKeep === true),
       performanceQuality: normalizePerformanceQuality(fx.performanceQuality),
+      pvDrawQuality: normalizePvDrawQuality(fx.pvDrawQuality),
       foregroundFpsMode: normalizeForegroundFpsMode(fx.foregroundFpsMode),
       memoryAutoTrimApp: fx.memoryAutoTrimApp !== false,
       memoryAutoTrimOnBackground: fx.memoryAutoTrimOnBackground !== false,

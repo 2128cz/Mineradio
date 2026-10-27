@@ -185,6 +185,7 @@ var fxDefaults = {
   shelfCameraExitSpeed: 0.24,
   performanceBackground: 'release',
   performanceQuality: 'eco',
+  pvDrawQuality: 'auto',
   foregroundFpsMode: 'vsync',
   memoryAutoTrimApp: true,
   memoryAutoTrimOnBackground: true,
