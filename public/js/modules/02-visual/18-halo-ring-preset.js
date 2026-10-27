@@ -127,6 +127,7 @@ var haloState = {
   levelGate: 0,      // how much of the beat the sound allows, 0 in silence
   shakeX: 0,
   shakeY: 0,
+  beamKick: 0,       // the beat's envelope on the outer beams, 0..1.2, falling on its own
   basePanX: 0,       // the framing knobs' own pan, in world units
   basePanY: 0
 };
@@ -188,7 +189,11 @@ var haloAudio = {
   high: 0,
   kick: 0,
   buffer: null,
-  analyser: null
+  analyser: null,
+  // The per-bin spectrum the beams read: the sonic monitor's raw analyser data when it runs,
+  // the halo's own analyser buffer otherwise. Eight bands are too coarse to say where along
+  // the ring a level sits.
+  spectrum: null
 };
 
 function haloPresetIsActive() {
@@ -341,8 +346,10 @@ function haloReadAudioBands(t) {
   a.bands[4] = a.bands[5] = a.bands[6] = a.bands[7] = 0;
   a.level = 0;
   a.kick = 0;
+  a.spectrum = null;
   var frame = (typeof sonicAudioMonitorState !== 'undefined' && sonicAudioMonitorState) ? sonicAudioMonitorState.frame : null;
   if (frame) {
+    a.spectrum = sonicAudioMonitorState.raw || null;
     a.bands[0] = Number(frame.subBass) || 0;
     a.bands[1] = Number(frame.bass) || 0;
     a.bands[2] = Number(frame.lowMid) || 0;
@@ -366,6 +373,7 @@ function haloReadAudioBands(t) {
   if (!bins) return;
   if (!a.buffer || a.buffer.length !== bins) a.buffer = new Uint8Array(bins);
   try { an.getByteFrequencyData(a.buffer); } catch (err) { return; }
+  a.spectrum = a.buffer;
   var nyquist = 22050;
   var sampleRate = (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate : 44100;
   nyquist = sampleRate / 2;
@@ -986,13 +994,28 @@ function haloUpdateRunners(dt, surge) {
   }
 }
 
-// The spectrum drives the ring's outermost beams. The eight bands are mapped across the
-// visible arc, so the beams along the ring's edge read as a spectrum analyser; there is
-// no coloured wheel inside the dial any more.
-function haloSpectrumBand(angle) {
+// The spectrum drives the ring's outermost beams, one bin per cluster.
+//
+// The eight bands are too coarse to say where along the ring a level sits - a cluster reads
+// the average of a fifth of the spectrum - so the beams read the analyser's own bins: the
+// cluster's angle picks a point on a log sweep from 40 Hz to 12 kHz across the visible arc,
+// and that frequency picks one bin. Equal angle per octave, which is how a spectrum analyser
+// reads. The bin and its two neighbours are peaked, so one noisy bin does not leave a beam
+// empty, and the result is the level the beam's length is multiplied by.
+function haloBeamSpectrum(angle) {
+  var bins = haloAudio.spectrum;
+  if (!bins || !bins.length) return 0;
   var rel = haloNormAngle(angle - haloReadAngle());
   var t = haloClamp(rel / HALO_BAND_SPREAD + 0.5, 0, 0.9999);
-  return Math.min(haloAudio.bands.length - 1, Math.floor(t * haloAudio.bands.length));
+  // Both sources hand over bins that run 0..Nyquist, whatever their count, so the frequency
+  // the angle points at is one division away from its index.
+  var nyquist = (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate / 2 : 22050;
+  var bin = Math.round(40 * Math.pow(300, t) / Math.max(1, nyquist) * bins.length);
+  var lo = Math.max(0, bin - 1);
+  var hi = Math.min(bins.length - 1, bin + 1);
+  var peak = 0;
+  for (var i = lo; i <= hi; i++) peak = Math.max(peak, bins[i] || 0);
+  return haloClamp((peak / 255) * 1.4, 0, 1);
 }
 
 // ---------------------------------------------------------------- ring panels
@@ -1488,6 +1511,9 @@ function haloWedgeVisible(wedge, layer) {
 
 function haloUpdateStrands(dt, env) {
   var s = haloState;
+  // The beat's own envelope for the beams: every beat multiplies every beam's length, then
+  // it falls back over a second or so without anything else driving it.
+  s.beamKick = Math.max(0, (s.beamKick || 0) * Math.exp(-dt * 2.6));
   for (var p = haloPulseList.length - 1; p >= 0; p--) {
     var pulse = haloPulseList[p];
     pulse.c += pulse.v * dt;
@@ -1504,8 +1530,7 @@ function haloUpdateStrands(dt, env) {
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
       // The spectrum drives the outer beams: a wedge reads the band its own angle sits
       // on, and that band pushes the beam further out and brightens it.
-      var band = haloSpectrumBand(am);
-      var av = haloClamp((haloAudio.bands[band] || 0) * haloParam('spectrumGain'), 0, 1);
+      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain'), 0, 1);
       wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? 10 : 2.6) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
@@ -1517,16 +1542,20 @@ function haloUpdateStrands(dt, env) {
         var f = Math.min(1, pl.life / 0.5) * Math.min(1, (pl.L - pl.life) / 0.15 + 0.3);
         hit += pl.amp * f * Math.exp(-Math.pow((am - pl.c) / pl.w, 2));
       }
+      // The length is the level at this cluster's own bin times the cluster's own length, and
+      // the beat multiplies it: a beat grows every beam and the envelope falls back by itself.
+      var beat = 1 + 0.85 * (s.beamKick || 0) + 0.5 * wedge.kick;
+      // The ceiling rises with the beat too: a loud passage already pins most beams at their
+      // full length, and a beat that could only multiply a clamped value would be invisible.
+      var cap = (layer.dyn === 'bounce' ? 1 : 1.05) + 0.5 * (s.beamKick || 0) + 0.2 * wedge.kick;
       if (layer.dyn === 'bounce') {
-        var idle = wedge.base * (0.36 + 0.14 * Math.sin(s.time * 0.9 + wedge.ph));
-        var target = Math.min(1, idle + hit * 0.75 + wedge.kick * 0.6 + wedge.av * 0.75);
+        var target = Math.min(cap, wedge.base * (0.16 + 1.35 * wedge.av) * beat + hit * 0.75);
         wedge.kick *= Math.exp(-dt * 2.4);
         wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? 15 : 2.2) * dt);
       } else {
         var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
-        var n2 = 0.5 + 0.5 * Math.sin(s.time * wedge.f2 + wedge.ph2);
-        var idle2 = wedge.base * (0.4 + 0.34 * n1 + 0.14 * n2);
-        var target2 = Math.min(1.05, (idle2 + hit * 0.7 + wedge.kick * 0.55 + wedge.av * 0.8) * wedge.lenS);
+        var idle2 = 0.05 * (0.6 + 0.4 * n1);
+        var target2 = Math.min(cap, (idle2 + wedge.base * (0.16 + 1.30 * wedge.av) * beat * wedge.lenS) + hit * 0.7);
         wedge.kick *= Math.exp(-dt * 1.8);
         wedge.len += (target2 - wedge.len) * Math.min(1, (target2 > wedge.len ? 5 : 1.3) * dt);
       }
@@ -1536,6 +1565,8 @@ function haloUpdateStrands(dt, env) {
 
 // A beat sends a wave around the ring and kicks a few wedges.
 function haloStrandBeat(weight) {
+  var s = haloState;
+  s.beamKick = Math.min(1.2, Math.max(s.beamKick || 0, 0.35 + (Number(weight) || 0) * 0.75));
   var dir = Math.random() < 0.5 ? 1 : -1;
   var big = weight > 0.75;
   var pulse = {

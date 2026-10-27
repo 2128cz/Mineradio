@@ -948,7 +948,7 @@ function runHaloPresetCheck() {
   }
   // The spectrum drives the ring's outermost beams. The coloured spoke wheel that used to
   // sit inside the dial is gone, so it must not come back.
-  if (!/function haloSpectrumBand\(/.test(haloText)) {
+  if (!/function haloBeamSpectrum\(/.test(haloText)) {
     fail('the spectrum must be mapped onto the ring\'s own beams');
   }
   if (/HALO_SPOKE_COUNT|haloDrawSpectrumSpokes/.test(haloText)) {
@@ -1143,6 +1143,18 @@ function runHaloPresetCheck() {
     fail(`the radial lyric carrier regression failed: ${rel(radialTestFile)}`);
   }
   process.stdout.write(radialTest.stdout || '');
+  // The outer beams read one spectrum bin each, take their length from it and grow on the beat.
+  const beamsTestFile = path.join(appRoot, 'tests', 'halo-beams.test.js');
+  if (!fs.existsSync(beamsTestFile)) {
+    fail('tests/halo-beams.test.js is missing; the beams would only be checked by eye');
+  }
+  const beamsTest = spawnSync(process.execPath, [beamsTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (beamsTest.status !== 0) {
+    process.stdout.write(beamsTest.stdout || '');
+    process.stderr.write(beamsTest.stderr || '');
+    fail(`the outer beam regression failed: ${rel(beamsTestFile)}`);
+  }
+  process.stdout.write(beamsTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

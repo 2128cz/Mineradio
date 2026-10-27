@@ -326,6 +326,41 @@ function checkHaloCullArms(haloText, fail) {
       fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
+  // The outer beams: one spectrum bin per cluster (not one of eight bands), the level
+  // multiplies the cluster's own length, and a beat lengthens every beam then falls back.
+  {
+    const beamFn = haloSliceFunction(haloText, 'haloBeamSpectrum');
+    const updateFn = haloSliceFunction(haloText, 'haloUpdateStrands');
+    const beatFn = haloSliceFunction(haloText, 'haloStrandBeat');
+    const bandsFn = haloSliceFunction(haloText, 'haloReadAudioBands');
+    if (!beamFn || !updateFn || !beatFn || !bandsFn) {
+      fail('the beam spectrum, its update and the beat hook could not be read back');
+    }
+    if (beamFn && !/haloAudio\.spectrum/.test(beamFn)) {
+      fail('the beams must read the per-bin spectrum, not the eight bands');
+    }
+    if (beamFn && !/haloNormAngle\(angle - haloReadAngle\(\)\)/.test(beamFn)) {
+      fail('a cluster must read the bin its own angle points at');
+    }
+    if (updateFn && !/haloBeamSpectrum\(am\)/.test(updateFn)) {
+      fail('every beam must read the spectrum at its own angle');
+    }
+    if (updateFn && !/s\.beamKick = Math\.max\(0, \(s\.beamKick \|\| 0\) \* Math\.exp\(-dt \* 2\.6\)\)/.test(updateFn)) {
+      fail('the beat envelope on the beams must fall back by itself');
+    }
+    if (updateFn && !/wedge\.base \* \(0\.16 \+ 1\.3[05] \* wedge\.av\)/.test(updateFn)) {
+      fail("the level must multiply the cluster's own length, not be added to an idle length");
+    }
+    if (updateFn && !/var cap = \(layer\.dyn === 'bounce' \? 1 : 1\.05\) \+ 0\.5 \* \(s\.beamKick/.test(updateFn)) {
+      fail('the length ceiling must rise with the beat, or a loud passage cannot show one');
+    }
+    if (beatFn && !/s\.beamKick = Math\.min\(1\.2/.test(beatFn)) {
+      fail("a beat must raise the beams' own envelope");
+    }
+    if (!/a\.spectrum = a\.buffer;/.test(bandsFn) || !/a\.spectrum = sonicAudioMonitorState\.raw/.test(bandsFn)) {
+      fail("the per-bin spectrum must be filled from the monitor, with the halo's analyser as the fallback");
+    }
+  }
   // The sung row stands apart from the rest, and how a row arrives and leaves is the app's
   // lyric motion - the console's 歌词动画 profile - not a motion model of the ring's own.
   {
