@@ -478,9 +478,11 @@ for (const [text, scale] of rowsBefore) {
   sandbox.haloCam.panX = 0;
 }
 
-// A line longer than its ray cannot be shown whole. The sung line is squeezed to the
-// floor so it stays readable, the others keep their size and run off the screen edge
-// the way a list scrolls off its container.
+// A line longer than the screen is not shrunk. It keeps the app's lyric size and runs off
+// the edge the way a list scrolls off its container - and the size does not follow the
+// ring's own geometry either: the room left on a ray is measured through the camera, so
+// fitting text to it made the row shrink while the ring pulsed to the beat and while the
+// user zoomed. The font comes from the app's lyric size knob and from nothing else.
 {
   const longText = 'L'.repeat(300);
   sandbox.lyricsLines = [
@@ -488,26 +490,42 @@ for (const [text, scale] of rowsBefore) {
     { t: 4, text: longText }
   ];
   sandbox.haloBuildLyricRing();
-  sandbox.haloLyric.current = 1;
-  sandbox.haloState.ringRot = 0;
-  drawContext.calls.length = 0;
-  sandbox.haloDrawLyricText(drawContext);
-  const longRow = drawContext.calls.find((call) => call.op === 'fillText' && call.text === longText);
-  assert(longRow, 'the sung line must be drawn even when it does not fit its ray');
-  assert(
-    Math.abs(longRow.scale - 0.5) < 1e-9,
-    `the sung line must be squeezed to the 0.5 floor, not ${longRow.scale}`
-  );
+  const rowDrawn = (mutate, undo) => {
+    mutate();
+    sandbox.haloState.ringRot = 0;
+    drawContext.calls.length = 0;
+    sandbox.haloDrawLyricText(drawContext);
+    undo();
+    const row = drawContext.calls.find((call) => call.op === 'fillText' && call.text === longText);
+    assert(row, 'the long line must still be drawn, at its own size, however much of it fits');
+    return row;
+  };
+  const sung = rowDrawn(() => { sandbox.haloLyric.current = 1; }, () => {});
+  const cases = [
+    ['the ring pulsing to the beat', () => { sandbox.haloState.pulse = 1.09; }, () => { sandbox.haloState.pulse = 1; }],
+    ['the user zooming in', () => { sandbox.haloCam.zoom = 1.6; }, () => { sandbox.haloCam.zoom = 1; }],
+    ['the user panning', () => { sandbox.haloCam.panX = 240; }, () => { sandbox.haloCam.panX = 0; }],
+    ['the ring built at a different size', () => sandbox.haloLayoutStage(900, 1600), () => sandbox.haloLayoutStage(VIEW_W, VIEW_H)],
+    ['another line being the sung one', () => { sandbox.haloLyric.current = 0; }, () => { sandbox.haloLyric.current = 1; }]
+  ];
+  for (const [name, mutate, undo] of cases) {
+    const row = rowDrawn(mutate, undo);
+    assert.strictEqual(row.scale, sung.scale,
+      `the row must not be scaled when ${name}: ${row.scale} against ${sung.scale}`);
+    assert.strictEqual(row.font, sung.font,
+      `the row's font must not change when ${name}: "${row.font}" against "${sung.font}"`);
+  }
+  assert(Math.abs(sung.scale - 1) < 1e-9, `no lyric row may be scaled to fit anything, got ${sung.scale}`);
+  assert(/20\.0px/.test(sung.font),
+    `the row must be drawn at the app's lyric size (20px at fx.lyricScale 1), got "${sung.font}"`);
 
-  sandbox.haloLyric.current = 0;
-  drawContext.calls.length = 0;
-  sandbox.haloDrawLyricText(drawContext);
-  const longRowOff = drawContext.calls.find((call) => call.op === 'fillText' && call.text === longText);
-  assert(longRowOff, 'a row that does not fit its ray is still drawn');
-  assert(
-    Math.abs(longRowOff.scale - 1) < 1e-9,
-    `a row that does not fit its ray keeps its size, not ${longRowOff.scale}`
-  );
+  // The knob the user moves still moves the size - "fixed" is not the same as "frozen".
+  sandbox.fx.lyricScale = 1.5;
+  sandbox.haloBuildLyricRing();
+  const bigger = rowDrawn(() => {}, () => {});
+  assert(/30\.0px/.test(bigger.font), `the app's lyric size knob must still size the text, got "${bigger.font}"`);
+  sandbox.fx.lyricScale = 1;
+  sandbox.haloBuildLyricRing();
 }
 
 // ------------------------------------------------------ the decoration band

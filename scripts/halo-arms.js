@@ -281,8 +281,8 @@ function checkHaloCullArms(haloText, fail) {
     if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
       fail('a line must be drawn only when its own start is on screen: both ends of the run decide');
     }
-    if (!/var room = span\.exit - textR;/.test(drawLyricFn)) {
-      fail('the room a line gets is what the screen shows of its ray');
+    if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
+      fail('a line must be drawn only when its own start is on screen: both ends of the run decide');
     }
     // The dial is a window: the lines around the one being sung, not the whole song.
     if (!/var win = haloLyricWindow\(\);/.test(drawLyricFn)) {
@@ -304,26 +304,35 @@ function checkHaloCullArms(haloText, fail) {
     if (!/haloLyricArcHalf\(win\)/.test(drawLyricFn)) {
       fail('the mask must be the window\'s arc: the same count that decides the lines decides the clip');
     }
-    // Every row keeps the size the app's lyric knob asks for. A row that is scaled to
-    // fit its own ray is what made the lyrics look like they were breathing.
+    // One size for every row, always. The room a ray has is measured through the camera, so
+    // a row that is scaled to fit it shrinks as the ring pulses to the beat - which is what
+    // the user rejected: the font is set by the app's lyric size knob and nothing else.
     if (!/var size = fontPx;/.test(drawLyricFn)) {
       fail('every lyric row must be drawn with the same size: the list must not have rows of different sizes');
     }
     if (/var size = current \?/.test(drawLyricFn)) {
       fail('the lyric rows must not change size with the song position: that is what made the text look like it was breathing');
     }
-    if (!/var sc = 1;/.test(drawLyricFn)) {
-      fail('the lyric rows must not be scaled to fit their ray');
+    if (/\bsc\s*=|ctx\.scale\(/.test(drawLyricFn)) {
+      fail('no lyric row may be scaled to fit its ray - not the sung one, not any other');
     }
-    if (!/if \(drawnW > room && current\) \{/.test(drawLyricFn)) {
-      fail('only the sung row may be squeezed to fit its ray, and never below the floor');
-    }
-    if (!/sc = Math\.max\(HALO_LYRIC_MIN_SCALE, room \/ drawnW\);/.test(drawLyricFn)) {
-      fail('the sung row must be squeezed to the floor, not scaled past it');
+    if (/var room\s*=|room\s*\/\s*drawnW|>\s*room\b/.test(drawLyricFn)) {
+      fail('the lyric draw must not size text from the visible room: that number follows the ring\'s zoom and its beat pulse');
     }
   }
-  if (!/HALO_LYRIC_MIN_SCALE = (0\.\d+);/.test(haloText)) {
-    fail('a lyric line must never shrink below the floor');
+  // Nothing may take the lyric size from the ring's geometry. The knob the user moves is the
+  // app's own 歌词字号; the radius decides where a row starts, never how big its glyphs are.
+  {
+    const fontFn = haloSliceFunction(haloText, 'haloLyricFontPx');
+    if (!fontFn) {
+      fail('haloLyricFontPx could not be read back; the lyric size guard below would be vacuous');
+    }
+    if (fontFn && /haloState\.(R|RO|band|RMAX|w|h)\b|s\.(R|RO|band|RMAX)\b/.test(fontFn)) {
+      fail('the lyric font size must not come from the ring\'s size or the viewport: that is the adaptive text the user rejected');
+    }
+  }
+  if (/HALO_LYRIC_MIN_SCALE/.test(haloText)) {
+    fail('the lyric floor scale is gone: no row is squeezed to fit anything, so there is nothing to floor');
   }
   // The measured widths belong to the font they were taken with, so a font size change has
   // to rebuild the ring.

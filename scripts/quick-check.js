@@ -941,8 +941,7 @@ function runHaloPresetCheck() {
   // starts on its own radial line at the rim and runs outward from there.
   for (const [pattern, why] of [
     [/haloParam\('textGap'\)/, 'the distance between the rim and the lyrics must be a knob'],
-    [/ctx\.translate\(flip \? -\(textR \+ width\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
-    [/ctx\.scale\(sc, sc\)/, 'a line that does not fit its own ray must be scaled down'],
+    [/ctx\.translate\(flip \? -\(textR \+ drawnW\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
     [/function haloLyricFontPx\(/, 'the lyric size must be resolved in one place'],
     [/fx\.lyricScale/, 'the lyric size must reuse the app\'s own fx.lyricScale'],
   ]) {

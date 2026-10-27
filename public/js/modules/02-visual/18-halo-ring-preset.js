@@ -33,7 +33,6 @@ var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four place
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_RENDER_SCALE = 1;         // internal resolution multiplier; devicePixelRatio is NOT used
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
-var HALO_LYRIC_MIN_SCALE = 0.5;     // a line never shrinks below this
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
 var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
@@ -2158,32 +2157,24 @@ function haloDrawLyricText(ctx) {
     // first words already gone.
     var span = haloVisibleSpan(center);
     if (span.enter > textR || span.exit < textR) continue;
-    var room = span.exit - textR;
     var near = Math.abs(haloNormAngle(center - read));
     var focus = current ? 1 : Math.max(0.12, 1 - near * 1.6);
     var alpha = current ? 1 : 0.16 + 0.5 * focus;
     var size = fontPx;
-    // Every row is the same size. A list whose rows grow and shrink as the ring turns
-    // is what the user complained about, so a row is never scaled down to fit its ray:
-    // the sung row is squeezed to the floor so it stays whole, and the other rows run
-    // off the mask the way a list scrolls off its container.
+    // One size for every row, whatever the line says. A row used to be scaled down to fit
+    // the room its own ray had, and that room is measured through the camera - so the text
+    // shrank as the ring pulsed to the beat, and a long line was smaller than a short one.
+    // A line that does not fit runs off the edge of the screen the way a list scrolls off
+    // its container; nothing about the font depends on how much of the ray is left.
     ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
     var drawnW = haloLyricWidth(item, ctx, fontPx);
-    var sc = 1;
-    if (drawnW > room && current) {
-      sc = Math.max(HALO_LYRIC_MIN_SCALE, room / drawnW);
-    }
     // The line runs away from the centre. On the left half of the ring that would put
     // the glyphs upside down, so there the line is turned around and anchored by its
     // far end instead; the reading direction stays left to right either way.
     var flip = Math.cos(center) < 0;
     ctx.save();
     ctx.rotate(flip ? center + Math.PI : center);
-    ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
-    var width = drawnW * sc;
-    // Anchored at the rim, then scaled, so a long line still fits on its own ray.
-    ctx.translate(flip ? -(textR + width) : textR, 0);
-    ctx.scale(sc, sc);
+    ctx.translate(flip ? -(textR + drawnW) : textR, 0);
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(238,241,248,' + alpha.toFixed(3) + ')';
     ctx.fillText(item.text, 0, 0);
