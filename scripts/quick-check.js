@@ -803,7 +803,7 @@ function runPvPresetLiveProbe(modulePath) {
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
 // The arms that read the module's body back live in scripts/halo-arms.js, so the mutation
 // driver can run the very same code on a mutated copy of the module.
-const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms } = require('./halo-arms');
+const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms, checkHaloRadialArms } = require('./halo-arms');
 const { checkTakeoverLayerConsumers } = require('./takeover-arms');
 
 function runHaloPresetCheck() {
@@ -950,6 +950,7 @@ function runHaloPresetCheck() {
   // The ring's cull and lyric geometry, read back off the module. These arms live in
   // scripts/halo-arms.js so the mutation driver runs the same code the gate runs.
   checkHaloCullArms(haloText, fail);
+  checkHaloRadialArms(haloText, fail);
   // The effects on the ring follow the ring's rotation, not the lyric dial's re-anchors.
   checkHaloRotationArms(haloText, fail);
   // The beat map is a fixed timeline, so the ring's motion has to be scaled by the sound.
@@ -1109,6 +1110,19 @@ function runHaloPresetCheck() {
     fail(`the beat tempo turn regression failed: ${rel(tempoTestFile)}`);
   }
   process.stdout.write(tempoTest.stdout || '');
+  // Which carrier the camera asks for: the axial list on the side, one line on the ring's
+  // own circle from the middle, from the top or bottom, or outside the whole ring.
+  const radialTestFile = path.join(appRoot, 'tests', 'halo-radial-carrier.test.js');
+  if (!fs.existsSync(radialTestFile)) {
+    fail('tests/halo-radial-carrier.test.js is missing; the camera-driven carrier would only be checked by shape');
+  }
+  const radialTest = spawnSync(process.execPath, [radialTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (radialTest.status !== 0) {
+    process.stdout.write(radialTest.stdout || '');
+    process.stderr.write(radialTest.stderr || '');
+    fail(`the radial lyric carrier regression failed: ${rel(radialTestFile)}`);
+  }
+  process.stdout.write(radialTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

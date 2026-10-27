@@ -39,6 +39,8 @@ var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
 var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
 var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
 var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
+var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
+var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
 
 // The ring's knobs. The schema lives here so the defaults have exactly one home; the
 // store and the console bindings live in 07-fx/11-halo-tuning.js.
@@ -159,6 +161,10 @@ var haloLyric = {
   turnSource: '', // which producer decided the last turn's timing, printed by the status probe
   tween: null,
   baseAngle: 0,
+  // The radial carrier shows one line at a time: which line is on it, which one is still
+  // swinging out, and how far the swing has got (0..1). Kept here rather than in the draw
+  // so a seek or a rebuilt list is one place to reset it.
+  radial: { item: -1, prev: -1, phase: 1, startAt: 0, dur: 0.55 },
   builtFontPx: 0,     // the font the measured widths belong to
   songKey: ''
 };
@@ -548,6 +554,7 @@ function haloBuildLyricRing() {
   // A rebuilt dial has teleported: nothing is in motion any more.
   haloLyric.vel = 0;
   haloLyric.lastT = -1;
+  haloLyric.radial = { item: -1, prev: -1, phase: 1, startAt: 0, dur: 0.55 };
   haloLyric.baseAngle = 0;
   var fontPx = haloLyricFontPx();
   // One row per line: the step is a line height plus the gap the user asked for.
@@ -710,6 +717,22 @@ function haloLyricUpdate(t) {
   }
   if (sung < 0) sung = 0;
   if (upcoming < 0) upcoming = items.length - 1;
+
+  // The radial carrier shows one line at a time. A line change starts a swing: the line
+  // that was read leaves towards the generation point and the new one arrives on the same
+  // disc, so the two hand over at the seam instead of one replacing the other on a frame.
+  // The swing lasts as long as a turn, so the two carriers move on the same clock.
+  var radial = haloLyric.radial;
+  if (sung !== radial.item) {
+    radial.prev = radial.item;
+    radial.item = sung;
+    radial.phase = 0;
+    radial.startAt = t;
+    radial.dur = Math.max(0.12, haloTurnWindow(items[upcoming].startAt).dur || 0.55);
+  }
+  if (radial.phase < 1) {
+    radial.phase = haloClamp((t - radial.startAt) / Math.max(0.12, radial.dur), 0, 1);
+  }
 
   // The turn starts on the song's beat grid when the app knows it (the 按节拍转环 knob), and
   // on the console's own lead otherwise: the knob is the speed of the turn, not a by-product
@@ -2169,6 +2192,266 @@ function haloDrawRim(ctx) {
   ctx.stroke();
 }
 
+// ---------------------------------------------------------- lyric colour and carrier
+
+// The colours are the app's own lyric colours: a custom colour from the visual settings
+// wins, otherwise the palette taken from the cover - the same two the stage lyrics paint
+// with. The ring decides no colour of its own, so a theme change reaches it the way it
+// reaches everything else. With the modules that own those settings absent (the test
+// harness runs this file alone) the same defaults are used.
+function haloLyricPalette() {
+  var own = (typeof fx !== 'undefined' && fx) ? fx : null;
+  var source = null;
+  if (own && own.lyricColorMode === 'custom' && typeof lyricPaletteFromHex === 'function') {
+    source = lyricPaletteFromHex(own.lyricColor);
+  } else if (typeof stageLyrics !== 'undefined' && stageLyrics) {
+    source = stageLyrics.coverPalette || stageLyrics.palette || null;
+  }
+  if (typeof effectiveLyricPalette === 'function') return effectiveLyricPalette(source);
+  var base = (own && own.lyricColor) || '#a9b8c8';
+  var hi = (own && own.lyricHighlightColor) || '#fff0b8';
+  return { primary: base, secondary: '#9cffdf', highlight: hi, glow: 'rgba(143,233,255,0.34)', glowColor: '#9cffdf' };
+}
+
+// A palette entry with an alpha on it. The entries are hex colours; anything else (an
+// rgba() the palette already carries) is passed through untouched.
+function haloRgba(color, alpha) {
+  var text = String(color || '').trim();
+  var m = /^#([0-9a-f]{6})$/i.exec(text);
+  var hex = m ? m[1] : '';
+  if (!hex) {
+    var three = /^#([0-9a-f]{3})$/i.exec(text);
+    if (three) hex = three[1][0] + three[1][0] + three[1][1] + three[1][1] + three[1][2] + three[1][2];
+  }
+  if (!hex) return text;
+  var n = parseInt(hex, 16);
+  var a = haloClamp(Number(alpha) || 0, 0, 1);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a.toFixed(3) + ')';
+}
+
+// What the screen shows of the ring: how much of it, where the visible stretch is
+// centred, and where the ring's own centre landed. The lyric carrier follows this.
+function haloViewArc() {
+  var s = haloState;
+  var z = haloCam.zoom;
+  var cx = s.w / 2 - z * haloPanTotalX();
+  var cy = s.h / 2 - z * haloPanTotalY();
+  var n = 72;
+  var seen = 0;
+  var sx = 0;
+  var sy = 0;
+  for (var i = 0; i < n; i++) {
+    var a = i / n * HALO_TAU;
+    var x = cx + z * s.R * Math.cos(a);
+    var y = cy + z * s.R * Math.sin(a);
+    if (x < 0 || x > s.w || y < 0 || y > s.h) continue;
+    seen += 1;
+    sx += Math.cos(a);
+    sy += Math.sin(a);
+  }
+  return { frac: seen / n, mid: seen ? Math.atan2(sy, sx) : 0, cx: cx, cy: cy };
+}
+
+// Which carrier the camera is asking for.
+//
+// side   - the rim runs off the screen left and right: the list bends along the rim, one
+//          row per line, which is what the preset ships with.
+// inside - only the middle of the ring is on screen: one line at a time, both texts on
+//          inner arcs.
+// top    - the ring's top is what the camera shows: the original on the outer arc, the
+//          translation inside it, both above.
+// bottom - its bottom: the original on the inner arc and the translation on the outer one.
+//          At the bottom of a circle the inner arc is the upper one on screen, so this
+//          keeps the original above its translation.
+// whole  - the whole ring fits: both texts on the outer arc, the original across the top
+//          and the translation along the bottom, at a size that reads from further away.
+function haloViewRegion() {
+  var s = haloState;
+  var arc = haloViewArc();
+  var centred = arc.cx >= s.w * 0.08 && arc.cx <= s.w * 0.92 && arc.cy >= s.h * 0.08 && arc.cy <= s.h * 0.92;
+  // The whole-ring carrier puts the text *outside* the rim, so "the whole ring is visible"
+  // has to include the ring the text rides on and the line's own height - otherwise the
+  // line is painted into the screen's edge on the way in.
+  var z = haloCam.zoom;
+  var need = (s.RO + haloParam('textGap') + haloLyricFontPx() * 1.9) * z;
+  var fits = arc.cx - need >= 0 && arc.cx + need <= s.w && arc.cy - need >= 0 && arc.cy + need <= s.h;
+  if (centred && fits) return 'whole';
+  if (arc.frac < 0.05) return centred ? 'inside' : 'side';
+  var sideways = Math.abs(Math.cos(arc.mid)) > 0.6;
+  if (!centred) return sideways ? 'side' : (Math.sin(arc.mid) < 0 ? 'top' : 'bottom');
+  // The ring is on screen but too big to show the whole: the text goes inside it.
+  return 'inside';
+}
+
+// Where that line lives: the two radii that carry the original and the translation, and
+// the angle each one sits at. `seam` is the point opposite the read mark - the same point
+// the dial's rows are born and cut at, so the read angle knob moves both carriers alike.
+function haloRadialPlan(region) {
+  var s = haloState;
+  var arc = haloViewArc();
+  var fontPx = haloLyricFontPx();
+  var gap = fontPx * 1.35 + haloParam('lineGap') * 0.5;
+  var outer = s.RO + haloParam('textGap');
+  var plan = {
+    region: region,
+    seam: haloNormAngle(haloReadAngle() + Math.PI),
+    font: fontPx,
+    r0: outer,
+    r1: outer,
+    a0: -Math.PI / 2,
+    a1: -Math.PI / 2
+  };
+  if (region === 'whole') {
+    plan.font = fontPx * HALO_RADIAL_FAR_SCALE;
+    plan.r0 = outer + plan.font * 0.55;
+    plan.r1 = plan.r0;
+    plan.a0 = -Math.PI / 2;
+    plan.a1 = Math.PI / 2;
+    return plan;
+  }
+  if (region === 'inside') {
+    // Only the middle is on screen, so the carrier is as far out as the screen allows and
+    // no further than the ring: the two texts stay inside it either way.
+    var z = Math.max(0.2, haloCam.zoom);
+    var room = Math.min(arc.cx, s.w - arc.cx, arc.cy, s.h - arc.cy) / z;
+    var inside = Math.max(plan.font * 2.4, Math.min(s.R * 0.86, room * 0.86));
+    plan.r0 = inside;
+    plan.r1 = Math.max(plan.font * 1.6, inside - gap * 0.8);
+    plan.a0 = -Math.PI / 2;
+    plan.a1 = plan.a0;
+    return plan;
+  }
+  plan.a0 = plan.a1 = region === 'top' ? -Math.PI / 2 : Math.PI / 2;
+  // Both arcs sit outside the rim, one line-height apart: the one further out is the upper
+  // one on screen at the top of the circle and the lower one at the bottom, which is what
+  // keeps the original above its translation either way.
+  if (region === 'top') {
+    plan.r0 = outer + gap;
+    plan.r1 = outer;
+  } else {
+    plan.r0 = outer;
+    plan.r1 = outer + gap;
+  }
+  return plan;
+}
+
+// The per-glyph widths of a line laid on the circle, measured once with the font of the
+// run that shows it. One line at a time, so this is at most two measurements per line.
+function haloArcMetrics(ctx, item, key, text, fontPx, weight) {
+  var cache = item[key];
+  if (cache && cache.fontPx === fontPx && cache.text === text) return cache;
+  var chars = text.split('');
+  var widths = [];
+  var total = 0;
+  ctx.font = weight + ' ' + fontPx.toFixed(1) + 'px ' + HALO_FONT;
+  for (var i = 0; i < chars.length; i++) {
+    var w = ctx.measureText(chars[i]).width;
+    if (!(w > 0)) w = fontPx * 0.6;
+    widths.push(w);
+    total += w;
+  }
+  cache = { fontPx: fontPx, text: text, chars: chars, widths: widths, total: total };
+  item[key] = cache;
+  return cache;
+}
+
+// One line painted along the ring's own circle: each glyph sits on the arc with its feet
+// towards the centre and stays upright on screen, so the ring bends the line instead of
+// turning the letters. Below the middle of the circle the glyphs face inwards, which is
+// what keeps the bottom half readable.
+function haloDrawArcLine(ctx, item, key, text, fontPx, weight, radius, center, faceOut, alpha, color, winCenter, winHalf) {
+  var metrics = haloArcMetrics(ctx, item, key, text, fontPx, weight);
+  var face = faceOut ? 1 : -1;
+  var span = metrics.total / Math.max(1, radius);
+  // A line that fits is centred on the read spot; one that does not starts at the window's
+  // entry edge, so what is cut is the end of the line and not the middle of it.
+  var a = center - face * Math.min(span / 2, winHalf - 0.02);
+  ctx.font = weight + ' ' + fontPx.toFixed(1) + 'px ' + HALO_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (var i = 0; i < metrics.chars.length; i++) {
+    var half = metrics.widths[i] / 2 / Math.max(1, radius);
+    a += face * half;
+    var off = Math.abs(haloNormAngle(a - winCenter));
+    // A line longer than its window is cut there, the way a list scrolls off its edge -
+    // it is not allowed to keep going and wrap around the rest of the circle.
+    if (off > winHalf) break;
+    // Fade towards the window's ends, so a line leaving through the generation point
+    // dissolves instead of being sliced by a hard edge.
+    var edge = haloClamp((winHalf - off) / 0.18, 0, 1);
+    ctx.save();
+    ctx.rotate(a + (faceOut ? Math.PI / 2 : -Math.PI / 2));
+    ctx.translate(0, faceOut ? -radius : radius);
+    ctx.fillStyle = haloRgba(color, alpha * edge);
+    ctx.fillText(metrics.chars[i], 0, 0);
+    ctx.restore();
+    a += face * half;
+  }
+}
+
+// The angular window the radial line is cut at: a sector of the ring, the same shape the
+// dial's mask has, so a line leaving the window is cut there and nowhere else.
+function haloSectorClip(ctx, rIn, rOut, center, half) {
+  ctx.beginPath();
+  ctx.arc(0, 0, Math.max(1, rIn), center - half, center + half);
+  ctx.arc(0, 0, Math.max(2, rOut), center + half, center - half, true);
+  ctx.closePath();
+  ctx.clip();
+}
+
+// One disc: the original on one arc, its translation on the other. `offset` is how far
+// round the disc has turned from where the line is read, which is what swings a line in
+// and out through the generation point.
+function haloDrawRadialDisc(ctx, item, plan, offset, alpha, pal) {
+  var a0 = plan.a0 + offset;
+  var faceOut0 = Math.sin(plan.a0) < 0;
+  var m = haloArcMetrics(ctx, item, 'arcMain', item.text, plan.font, '600');
+  var half0 = Math.min(HALO_RADIAL_MAX_HALF, m.total / Math.max(1, plan.r0) / 2 + 0.22);
+  ctx.save();
+  haloSectorClip(ctx, plan.r0 - plan.font * 1.3, plan.r0 + plan.font * 1.3, a0, half0);
+  haloDrawArcLine(ctx, item, 'arcMain', item.text, plan.font, '600', plan.r0, a0, faceOut0,
+    alpha, pal.highlight, a0, half0);
+  ctx.restore();
+  if (!item.sub) return;
+  var a1 = plan.a1 + offset;
+  var faceOut1 = Math.sin(plan.a1) < 0;
+  var subFont = plan.font * 0.66;
+  var ms = haloArcMetrics(ctx, item, 'arcSub', item.sub, subFont, '400');
+  var half1 = Math.min(HALO_RADIAL_MAX_HALF, ms.total / Math.max(1, plan.r1) / 2 + 0.2);
+  ctx.save();
+  haloSectorClip(ctx, plan.r1 - subFont * 1.3, plan.r1 + subFont * 1.3, a1, half1);
+  haloDrawArcLine(ctx, item, 'arcSub', item.sub, subFont, '400', plan.r1, a1, faceOut1,
+    alpha * 0.8, pal.primary, a1, half1);
+  ctx.restore();
+}
+
+// The radial carrier itself. One line is read; while the disc turns, the line that was
+// read swings towards the generation point and the new one arrives from the other side of
+// the wheel, both cut by their own window, so the two are aligned on the same disc and the
+// outgoing text meets the incoming one at the seam.
+function haloDrawRadialLyric(ctx, region) {
+  var s = haloState;
+  var items = haloLyric.items;
+  var plan = haloRadialPlan(region);
+  var pal = haloLyricPalette();
+  var rl = haloLyric.radial || { item: -1, prev: -1, phase: 1 };
+  var cur = rl.item >= 0 ? rl.item : Math.max(0, haloLyric.current);
+  var phase = haloClamp(rl.phase, 0, 1);
+  var spin = haloNormAngle(plan.seam - plan.a0);
+  var ease = haloEaseIO(phase);
+  ctx.save();
+  ctx.translate(s.cx, s.cy);
+  if (rl.prev >= 0 && rl.prev !== cur && phase < 1 && items[rl.prev]) {
+    // The disc turns: the line being left behind has gone `ease` of the way to the seam,
+    // the new one is still `1 - ease` of the way behind it.
+    haloDrawRadialDisc(ctx, items[rl.prev], plan, spin * ease, 1 - phase * 0.45, pal);
+  }
+  if (items[cur]) {
+    haloDrawRadialDisc(ctx, items[cur], plan, spin * (ease - 1), Math.min(1, 0.25 + phase * 0.75), pal);
+  }
+  ctx.restore();
+}
+
 // The lyric list is an ordinary left-aligned list that has been bent over the ring's
 // edge: every line starts on its own radial line at the rim and runs outward from
 // there, so the block still reads top to bottom, one row per line. The line being sung
@@ -2184,6 +2467,16 @@ function haloDrawLyricText(ctx) {
   var s = haloState;
   var items = haloLyric.items;
   if (!items.length) return;
+  // Which carrier the camera is asking for: the list bent along the rim, or one line on
+  // the ring's own circle. The region is kept on the state so the status probe and the
+  // tests can say which one drew the frame.
+  var region = haloViewRegion();
+  s.lyricRegion = region;
+  if (region !== 'side') {
+    haloDrawRadialLyric(ctx, region);
+    return;
+  }
+  var pal = haloLyricPalette();
   var fontPx = haloLyricFontPx();
   var textR = s.RO + haloParam('textGap');
   var read = haloReadAngle();
@@ -2226,11 +2519,11 @@ function haloDrawLyricText(ctx) {
     ctx.rotate(flip ? center + Math.PI : center);
     ctx.translate(flip ? -(textR + drawnW) : textR, 0);
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(238,241,248,' + alpha.toFixed(3) + ')';
+    ctx.fillStyle = haloRgba(current ? pal.highlight : pal.primary, alpha);
     ctx.fillText(item.text, 0, 0);
     if (item.sub && (current || near < 0.9)) {
       ctx.font = '400 ' + (size * 0.62).toFixed(1) + 'px ' + HALO_FONT;
-      ctx.fillStyle = 'rgba(226,230,240,' + (alpha * 0.55).toFixed(3) + ')';
+      ctx.fillStyle = haloRgba(pal.highlight, alpha * 0.5);
       ctx.fillText(item.sub, 0, size * 0.95);
     }
     ctx.restore();
@@ -2628,7 +2921,19 @@ function haloPresetStatus() {
       slots: haloSlotList.length,
       strands: haloStrandLayers.length
     },
-    lyric: { lines: haloLyric.items.length, current: haloLyric.current, key: haloLyric.songKey },
+    lyric: {
+      lines: haloLyric.items.length,
+      current: haloLyric.current,
+      key: haloLyric.songKey,
+      // Which carrier drew the last frame, and how far the radial disc has swung: a bare
+      // "no radial" has to be able to tell "the camera said side" from "the code never ran".
+      region: haloState.lyricRegion || 'unpainted',
+      radial: {
+        item: haloLyric.radial.item,
+        prev: haloLyric.radial.prev,
+        phase: Math.round(haloLyric.radial.phase * 1000) / 1000
+      }
+    },
     // Which producer set the last turn's length, and what it thought the beat spacing was.
     // A zero here has to say whether the knob is off or nothing knows the tempo.
     turn: {

@@ -444,4 +444,70 @@ function checkHaloRotationArms(haloText, fail) {
   }
 }
 
-module.exports = { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms };
+// The lyric carrier. Which one the camera asks for, where the radial line lives, how a
+// line change turns the disc, and where the colours come from. Shape guards; the behaviour
+// lives in tests/halo-radial-carrier.test.js.
+function checkHaloRadialArms(haloText, fail) {
+  const drawFn = haloSliceFunction(haloText, 'haloDrawLyricText');
+  const regionFn = haloSliceFunction(haloText, 'haloViewRegion');
+  const planFn = haloSliceFunction(haloText, 'haloRadialPlan');
+  const arcFn = haloSliceFunction(haloText, 'haloDrawArcLine');
+  const discFn = haloSliceFunction(haloText, 'haloDrawRadialDisc');
+  const paletteFn = haloSliceFunction(haloText, 'haloLyricPalette');
+  const updateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
+  if (!drawFn || !regionFn || !planFn || !arcFn || !discFn || !paletteFn || !updateFn) {
+    fail('the lyric carrier functions could not be read back; the guards below would be vacuous');
+    return;
+  }
+  // The colours are the app's own lyric colours, never a literal of the ring's own.
+  if (!/lyricColorMode === 'custom'/.test(paletteFn)) {
+    fail("the lyric colour must follow the app's custom/auto choice");
+  }
+  if (!/effectiveLyricPalette\(/.test(paletteFn)) {
+    fail("the ring must paint with the app's lyric palette, not one of its own");
+  }
+  if (/rgba\(238,241,248|rgba\(226,230,240/.test(haloText)) {
+    fail('the lyric rows must not go back to the hard-coded colour');
+  }
+  if (!/var region = haloViewRegion\(\);/.test(drawFn) || !/haloDrawRadialLyric\(ctx, region\)/.test(drawFn)) {
+    fail('the draw must pick its carrier from what the camera shows');
+  }
+  if (!/if \(region !== 'side'\) \{/.test(drawFn)) {
+    fail('only the side view may keep the axial list; every other region is the radial carrier');
+  }
+  // The whole-ring carrier puts the text outside the rim, so the fit test has to include
+  // the ring the text rides on and the line's own height - not just the rim.
+  if (!/haloParam\('textGap'\)/.test(regionFn) || !/haloLyricFontPx\(\)/.test(regionFn)) {
+    fail('the whole-ring carrier must require the lyric ring and a line height to fit, or its text is painted into the screen edge');
+  }
+  if (!/if \(centred && fits\) return 'whole';/.test(regionFn)) {
+    fail('the whole-ring carrier must be chosen only when the ring its text rides on fits too');
+  }
+  if (!/return 'inside'/.test(regionFn)) {
+    fail('a ring that is on screen but too big to fit its outside text must carry the text inside it');
+  }
+  if (!/haloNormAngle\(haloReadAngle\(\) \+ Math\.PI\)/.test(planFn)) {
+    fail('the radial seam must be the point opposite the read mark, the same point the dial is born and cut at');
+  }
+  if (!/HALO_RADIAL_FAR_SCALE/.test(planFn)) {
+    fail('the whole-ring carrier must read from further away: its size has to come from the far scale');
+  }
+  if (!/plan\.r0 = outer \+ gap;/.test(planFn) || !/plan\.r1 = outer \+ gap;/.test(planFn)) {
+    fail('the two radial arcs must sit outside the rim, one line-height apart');
+  }
+  if (!/if \(off > winHalf\) break;/.test(arcFn)) {
+    fail('a radial line longer than its window must be cut there, not allowed to wrap round the circle');
+  }
+  var clamps = (discFn.match(/Math\.min\(HALO_RADIAL_MAX_HALF/g) || []).length;
+  if (clamps < 2) {
+    fail(`both radial windows must be capped, or a long line wraps half the circle instead of being cut (found ${clamps} of 2)`);
+  }
+  if (!/if \(sung !== radial\.item\)/.test(updateFn)) {
+    fail("a line change must start the disc's swing");
+  }
+  if (!/radial\.dur = Math\.max\(0\.12, haloTurnWindow/.test(updateFn)) {
+    fail("the swing must last as long as the ring's turn, so both carriers move on one clock");
+  }
+}
+
+module.exports = { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms, checkHaloRadialArms };
