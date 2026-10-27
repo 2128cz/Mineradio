@@ -20,11 +20,13 @@ function makeRecordingContext() {
   const calls = [];
   const stack = [];
   let state = { scaleX: 1, scaleY: 1, font: '', lastRotate: 0 };
+  // The last translate's y: the row's float offset lands there, and the test reads it back.
+  let lastTy = 0;
   const ctx = {
     calls,
     save() { stack.push(Object.assign({}, state)); },
     restore() { state = stack.pop() || state; },
-    translate(x, y) { calls.push({ op: 'translate', x, y }); },
+    translate(x, y) { lastTy = y; calls.push({ op: 'translate', x, y }); },
     rotate(a) { state.lastRotate = a; calls.push({ op: 'rotate', a }); },
     scale(x, y) { state.scaleX *= x; state.scaleY *= y; calls.push({ op: 'scale', x, y }); },
     textAlign: '',
@@ -33,7 +35,9 @@ function makeRecordingContext() {
     strokeStyle: '',
     lineWidth: 1,
     globalAlpha: 1,
-    fillText(text, x, y) { calls.push({ op: 'fillText', text, x, y, scale: state.scaleX, font: state.font, rotate: state.lastRotate }); },
+    fillText(text, x, y) {
+      calls.push({ op: 'fillText', text, x, y, ty: lastTy, fill: this.fillStyle, scale: state.scaleX, font: state.font, rotate: state.lastRotate });
+    },
     measureText(text) { return { width: text.length * 12 }; },
     clearRect() {}, fillRect() {}, strokeRect() {}, beginPath() {}, closePath() {},
     fill() {}, stroke() {}, moveTo() {}, lineTo() {}, rect() {},
@@ -302,23 +306,136 @@ const rowsBefore = drawAndReadRows(0);
 const drawnTexts = Array.from(rowsBefore.keys());
 assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn, not just one');
 
-// Every row is drawn with the same font size: the list must not have rows of different
-// sizes depending on where they sit in the fan.
+// The row on the read spot is the one being sung and carries the app's lyric size; the rows
+// around it step down to the context size, so the line being sung reads clearly above the
+// rest. The step is continuous, so a row grows into the read spot while the ring turns.
 {
   const rowTexts = new Set(items.map((item) => item.text));
-  const sizes = drawContext.calls
+  const rows = drawContext.calls
     .filter((call) => call.op === 'fillText' && rowTexts.has(call.text))
-    .map(fontPxOf);
-  assert(sizes.length > 0, 'some rows must be drawn');
+    .map((call) => ({ text: call.text, px: fontPxOf(call) }));
+  assert(rows.length > 0, 'some rows must be drawn');
+  const basePx = sandbox.haloLyricFontPx();
+  const contextPx = basePx * sandbox.HALO_LYRIC_CONTEXT_SCALE;
+  const sizes = rows.map((row) => row.px);
   const smallest = Math.min.apply(null, sizes);
   const largest = Math.max.apply(null, sizes);
-  assert(
-    Math.abs(largest - smallest) < 1e-9,
-    `every drawn row must use the same font size (smallest ${smallest}, largest ${largest})`
-  );
+  assert(Math.abs(largest - basePx) < 1e-9,
+    `the sung row must be the app's lyric size (${basePx}px), got ${largest}`);
+  const focused = rows.filter((row) => Math.abs(row.px - basePx) < 1e-6);
+  assert.strictEqual(focused.length, 1,
+    `exactly the row on the read spot is at the full size, got ${focused.length}`);
+  assert.strictEqual(focused[0].text, items[sandbox.haloLyric.current].text,
+    'and it is the line being sung');
+  assert(Math.abs(smallest - contextPx) < 1e-6,
+    `the rows away from the read spot must sit at the context size (${contextPx.toFixed(1)}px), got ${smallest}`);
+  assert(smallest < basePx * 0.8,
+    `the difference between the sung row and the others must be visible: ${smallest} against ${basePx}`);
 }
 
-// What is drawn and what the screen shows must be the same set: a line inside the window
+// A row's entrance and exit are the app's lyric motion, not the ring's own: the console's
+// 歌词动画 profile says how soft the fade is, how far a row slides in, whether the rows drift
+// and, for the glitch style, how the text breaks up. The test hands the ring a profile and
+// checks it obeys it - the halo must not grow a motion model of its own.
+{
+  const sungText = items[sandbox.haloLyric.current].text;
+  const rowCalls = () => drawContext.calls.filter(
+    (c) => c.op === 'fillText' && items.some((it) => it.text === c.text));
+  const alphaOf = (fill) => {
+    const m = /,([\d.]+)\)$/.exec(fill || '');
+    return m ? Number(m[1]) : 1;
+  };
+  const baseMotion = {
+    style: 'float', enter: 0.54, exit: 0.46, slide: 0.34, contextDrift: 0.066, edgeBoost: 1,
+    sweep: 0.62, shimmer: 0.24, glitch: 0, glitchSlice: 0, glitchChroma: 0, glitchRate: 1,
+    glitchJitter: 0, glitchCameraBind: false, floatAmp: 1
+  };
+  let profile = Object.assign({}, baseMotion);
+  sandbox.lyricMotionProfile = () => Object.assign({}, profile);
+  sandbox.haloState.time = 2.5;
+
+  function firstAlphaByText() {
+    drawAndReadRows(0);
+    const out = new Map();
+    for (const c of rowCalls()) if (!out.has(c.text)) out.set(c.text, alphaOf(c.fill));
+    return out;
+  }
+
+  // 上下句清晰: the rows around the sung one get clearer or dimmer; the sung row does not.
+  sandbox.fx.lyricContextOpacity = 0.25;
+  const dim = firstAlphaByText();
+  sandbox.fx.lyricContextOpacity = 0.9;
+  const clear = firstAlphaByText();
+  const contextTexts = Array.from(dim.keys()).filter((t) => t !== sungText);
+  assert(contextTexts.length > 1, 'the fixture must draw rows around the sung one');
+  for (const t of contextTexts) {
+    assert(clear.get(t) > dim.get(t),
+      `上下句清晰 must move the context rows ("${t}": ${dim.get(t)} -> ${clear.get(t)})`);
+  }
+  assert(Math.abs((clear.get(sungText) || 0) - (dim.get(sungText) || 0)) < 1e-9,
+    'the sung row must not be dimmed by 上下句清晰, only the rows around it');
+  sandbox.fx.lyricContextOpacity = 0.54;
+  console.log(`  context rows: alpha ${Math.min.apply(null, Array.from(dim.values())).toFixed(2)}..` +
+    `${Math.max.apply(null, Array.from(dim.values())).toFixed(2)} at 0.25, ` +
+    `${Math.min.apply(null, Array.from(clear.values())).toFixed(2)}..${Math.max.apply(null, Array.from(clear.values())).toFixed(2)} at 0.9`);
+
+  // The size step is continuous: half a row's turn shows a row between the two sizes, so a
+  // line grows into the read spot instead of jumping size when the turn ends.
+  profile = Object.assign({}, baseMotion);
+  sandbox.fx.lyricContextOpacity = 0.54;
+  drawAndReadRows(sandbox.haloLyricStep() * 0.5);
+  const midSizes = rowCalls().map(fontPxOf);
+  const between = midSizes.filter((px) => px > 20 * sandbox.HALO_LYRIC_CONTEXT_SCALE + 0.05 && px < 19.95);
+  assert(between.length > 0,
+    `half a turn must leave a row between the context and the full size, got ${midSizes.map((v) => v.toFixed(1)).join(", ")}`);
+
+  // 边缘渐隐: the row nearest the screen's edge loses more of its alpha the wider that band is.
+  sandbox.fx.lyricEdgeFade = 0;
+  const tight = firstAlphaByText();
+  sandbox.fx.lyricEdgeFade = 1;
+  const wide = firstAlphaByText();
+  sandbox.fx.lyricEdgeFade = 0.32;
+  const sum = (map, skip) => Array.from(map.entries()).reduce((acc, [t, a]) => (t === skip ? acc : acc + a), 0);
+  assert(sum(wide, sungText) < sum(tight, sungText) - 1e-6,
+    `边缘渐隐 must take alpha off the marginal rows (${sum(tight, sungText).toFixed(2)} -> ${sum(wide, sungText).toFixed(2)})`);
+  assert(Math.abs((wide.get(sungText) || 0) - (tight.get(sungText) || 0)) < 1e-9,
+    'the sung row must not be touched by 边缘渐隐');
+
+  // The motion style's own numbers: float drifts the rows, smooth barely moves them.
+  const maxAbs = (values) => values.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+  profile = Object.assign({}, baseMotion, { style: 'float', contextDrift: 0.066, floatAmp: 1.45 });
+  drawAndReadRows(0);
+  const floatDrift = maxAbs(rowCalls().map((c) => c.ty));
+  profile = Object.assign({}, baseMotion, { style: 'smooth', contextDrift: 0.030, floatAmp: 0.55 });
+  drawAndReadRows(0);
+  const smoothDrift = maxAbs(rowCalls().map((c) => c.ty));
+  assert(floatDrift > 0.2, `the float style must drift the rows, got ${floatDrift.toFixed(2)}px`);
+  assert(floatDrift > smoothDrift * 1.5,
+    `the float style must drift further than smooth (${floatDrift.toFixed(2)} against ${smoothDrift.toFixed(2)})`);
+
+  // The glitch style breaks the sung row up; every other style leaves it alone.
+  profile = Object.assign({}, baseMotion, {
+    style: 'glitch', glitch: 1, glitchSlice: 1, glitchChroma: 0.8, glitchJitter: 1.4, glitchCameraBind: false
+  });
+  drawAndReadRows(0);
+  const glitched = rowCalls().filter((c) => c.text === sungText);
+  assert(glitched.length >= 2,
+    `the glitch style must draw the colour fringes around the sung row, got ${glitched.length} pass(es)`);
+  assert(glitched.some((c) => Math.abs(c.x) > 0.1 || Math.abs(c.y) > 0.1),
+    'the glitch style must jitter the sung row');
+  profile = Object.assign({}, baseMotion, { style: 'smooth' });
+  drawAndReadRows(0);
+  const clean = rowCalls().filter((c) => c.text === sungText);
+  assert.strictEqual(clean.length, 1, `the smooth style must not add fringes, got ${clean.length} pass(es)`);
+  assert.strictEqual(clean[0].x, 0, 'and must not jitter the sung row');
+  console.log(`  motion: float drift ${floatDrift.toFixed(2)}px, smooth ${smoothDrift.toFixed(2)}px, ` +
+    `glitch passes ${glitched.length}`);
+
+  delete sandbox.lyricMotionProfile;
+  sandbox.haloState.time = 0;
+}
+
+// What is drawn and what the screen shows must be the same set: a line inside the window// What is drawn and what the screen shows must be the same set: a line inside the window
 // whose first glyph is on screen belongs on the ring, and a line whose glyphs are off
 // screen does not. The old cull measured from the world origin, so it drew the rows that
 // had rotated off the bottom and dropped the rows that were on screen.
@@ -538,9 +655,12 @@ for (const [text, scale] of rowsBefore) {
     { t: 4, text: longText }
   ];
   sandbox.haloBuildLyricRing();
-  const rowDrawn = (mutate, undo) => {
+  // `focusIdx` is the row parked on the read spot; the long line is row 1.
+  const rowDrawn = (focusIdx, mutate, undo) => {
     mutate();
-    sandbox.haloState.ringRot = 0;
+    const list = sandbox.haloLyric.items;
+    sandbox.haloLyric.current = focusIdx;
+    sandbox.haloState.ringRot = sandbox.haloReadAngle() - list[focusIdx].angle;
     drawContext.calls.length = 0;
     sandbox.haloDrawLyricText(drawContext);
     undo();
@@ -548,16 +668,19 @@ for (const [text, scale] of rowsBefore) {
     assert(row, 'the long line must still be drawn, at its own size, however much of it fits');
     return row;
   };
-  const sung = rowDrawn(() => { sandbox.haloLyric.current = 1; }, () => {});
+  const sung = rowDrawn(1, () => {}, () => {});
   const cases = [
     ['the ring pulsing to the beat', () => { sandbox.haloState.pulse = 1.09; }, () => { sandbox.haloState.pulse = 1; }],
     ['the user zooming in', () => { sandbox.haloCam.zoom = 1.6; }, () => { sandbox.haloCam.zoom = 1; }],
     ['the user panning', () => { sandbox.haloCam.panX = 240; }, () => { sandbox.haloCam.panX = 0; }],
-    ['the ring built at a different size', () => sandbox.haloLayoutStage(900, 1600), () => sandbox.haloLayoutStage(VIEW_W, VIEW_H)],
-    ['another line being the sung one', () => { sandbox.haloLyric.current = 0; }, () => { sandbox.haloLyric.current = 1; }]
+    // A resized ring lays its rows out again, the way the frame check does: the pitch is a
+    // pixel row height over the radius.
+    ['the ring rebuilt at a different size',
+      () => { sandbox.haloLayoutStage(900, 1600); sandbox.haloBuildLyricRing(); },
+      () => { sandbox.haloLayoutStage(VIEW_W, VIEW_H); sandbox.haloBuildLyricRing(); }]
   ];
   for (const [name, mutate, undo] of cases) {
-    const row = rowDrawn(mutate, undo);
+    const row = rowDrawn(1, mutate, undo);
     assert.strictEqual(row.scale, sung.scale,
       `the row must not be scaled when ${name}: ${row.scale} against ${sung.scale}`);
     assert.strictEqual(row.font, sung.font,
@@ -566,11 +689,23 @@ for (const [text, scale] of rowsBefore) {
   assert(Math.abs(sung.scale - 1) < 1e-9, `no lyric row may be scaled to fit anything, got ${sung.scale}`);
   assert(/20\.0px/.test(sung.font),
     `the row must be drawn at the app's lyric size (20px at fx.lyricScale 1), got "${sung.font}"`);
+  // The same row, one line off the read spot, is the context size - and that is still the
+  // app's size with the context ratio on it, not something the camera or the ring decides.
+  const contextRow = rowDrawn(0, () => {}, () => {});
+  assert(fontPxOf(contextRow) < fontPxOf(sung),
+    `a row off the read spot must be smaller than the sung one (${fontPxOf(contextRow)} against ${fontPxOf(sung)})`);
+  assert(fontPxOf(contextRow) >= 20 * sandbox.HALO_LYRIC_CONTEXT_SCALE - 1e-6,
+    `and no smaller than the context size (${fontPxOf(contextRow)}px against ${20 * sandbox.HALO_LYRIC_CONTEXT_SCALE}px)`);
+  for (const [name, mutate, undo] of cases) {
+    const row = rowDrawn(0, mutate, undo);
+    assert.strictEqual(row.font, contextRow.font,
+      `the context row's font must not change when ${name}: "${row.font}" against "${contextRow.font}"`);
+  }
 
   // The knob the user moves still moves the size - "fixed" is not the same as "frozen".
   sandbox.fx.lyricScale = 1.5;
   sandbox.haloBuildLyricRing();
-  const bigger = rowDrawn(() => {}, () => {});
+  const bigger = rowDrawn(1, () => {}, () => {});
   assert(/30\.0px/.test(bigger.font), `the app's lyric size knob must still size the text, got "${bigger.font}"`);
   sandbox.fx.lyricScale = 1;
   sandbox.haloBuildLyricRing();

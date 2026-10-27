@@ -152,7 +152,7 @@ function checkHaloCullArms(haloText, fail) {
   for (const [slice, marker, name] of [
     [buildLyricFn, 'haloLyric.items.push(item)', 'haloBuildLyricRing'],
     [lyricUpdateFn, 'haloLyric.tween = {', 'haloLyricUpdate'],
-    [drawLyricFn, 'ctx.fillText(item.text, 0, 0)', 'haloDrawLyricText'],
+    [drawLyricFn, 'ctx.fillText(item.text, jitterX, jitterY)', 'haloDrawLyricText'],
     [spanFn, 'return { enter: enter, exit: exit };', 'haloVisibleSpan'],
     [rayVisibleFn, 'span.enter <= r1', 'haloRayVisible'],
     [wedgeVisibleFn, 'haloRayVisible(a1', 'haloWedgeVisible'],
@@ -326,6 +326,28 @@ function checkHaloCullArms(haloText, fail) {
       fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
+  // The sung row stands apart from the rest, and how a row arrives and leaves is the app's
+  // lyric motion - the console's 歌词动画 profile - not a motion model of the ring's own.
+  {
+    const motionFn = haloSliceFunction(haloText, 'haloLyricMotion');
+    const contextFn = haloSliceFunction(haloText, 'haloLyricContextSettings');
+    const frameFn = haloSliceFunction(haloText, 'haloRenderFrame');
+    if (!motionFn || !contextFn || !frameFn) {
+      fail('the lyric motion, its context settings and the frame check could not be read back');
+    }
+    if (motionFn && !/lyricMotionProfile\(\)/.test(motionFn)) {
+      fail("the rows must enter and leave with the app's own lyric motion profile");
+    }
+    if (contextFn && !/lyricContextOpacity/.test(contextFn)) {
+      fail("how clear the neighbouring rows are must be the console's 上下句清晰 setting");
+    }
+    if (contextFn && !/lyricEdgeFade/.test(contextFn)) {
+      fail("where the screen's edge takes a row away must be the console's 边缘渐隐 setting");
+    }
+    if (frameFn && !/haloLyricStep\(\) !== haloLyric\.builtStep/.test(frameFn)) {
+      fail('a resized ring must lay its rows out again: the pitch is a pixel height over the radius');
+    }
+  }
   if (drawLyricFn) {
     if (!/var span = haloVisibleSpan\(center\);/.test(drawLyricFn)) {
       fail('the draw time fit must measure the screen\'s run on the ray the line actually sits on');
@@ -343,8 +365,8 @@ function checkHaloCullArms(haloText, fail) {
     if (/for \(var i = 0; i < items\.length; i\+\+\)/.test(drawLyricFn)) {
       fail('the lyric loop must not walk every line of the song again');
     }
-    if (!/haloLyricWidth\(item, ctx, fontPx\)/.test(drawLyricFn)) {
-      fail('a line width must be measured only for the lines that are drawn');
+    if (!/haloLyricWidth\(item, ctx, size\)/.test(drawLyricFn)) {
+      fail('a line width must be measured only for the lines that are drawn, with the size they are drawn at');
     }
     // The mask: a line that leaves the window has to be cut there, not reappear elsewhere.
     if (!/ctx\.clip\(\);/.test(drawLyricFn)) {
@@ -356,8 +378,23 @@ function checkHaloCullArms(haloText, fail) {
     // One size for every row, always. The room a ray has is measured through the camera, so
     // a row that is scaled to fit it shrinks as the ring pulses to the beat - which is what
     // the user rejected: the font is set by the app's lyric size knob and nothing else.
-    if (!/var size = fontPx;/.test(drawLyricFn)) {
-      fail('every lyric row must be drawn with the same size: the list must not have rows of different sizes');
+    if (!/HALO_LYRIC_CONTEXT_SCALE/.test(drawLyricFn)) {
+      fail('the rows around the sung one must sit at the context size, so the sung row reads above them');
+    }
+    if (!/var focusNear = haloClamp\(1 - near \//.test(drawLyricFn)) {
+      fail('the size and the highlight must follow how close a row is to the read spot, continuously');
+    }
+    if (/0\.16 \+ 0\.5 \* focus/.test(drawLyricFn)) {
+      fail("the context opacity must come from 上下句清晰, not from a constant of the ring's");
+    }
+    if (!/1 - leaving \* motion\.exit/.test(drawLyricFn)) {
+      fail("the exit fade must use the app's lyric motion profile");
+    }
+    if (!/motion\.slide/.test(drawLyricFn)) {
+      fail("a row arriving at the screen's edge must slide in by the profile's amount");
+    }
+    if (!/motion\.style === 'glitch'/.test(drawLyricFn)) {
+      fail('the glitch effect must only run for the glitch style');
     }
     if (/var size = current \?/.test(drawLyricFn)) {
       fail('the lyric rows must not change size with the song position: that is what made the text look like it was breathing');

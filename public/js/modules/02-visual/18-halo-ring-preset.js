@@ -41,6 +41,7 @@ var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
 var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
 var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
+var HALO_LYRIC_CONTEXT_SCALE = 0.72; // the rows around the sung one, relative to its size
 
 // The ring's knobs. The schema lives here so the defaults have exactly one home; the
 // store and the console bindings live in 07-fx/11-halo-tuning.js.
@@ -166,6 +167,7 @@ var haloLyric = {
   // so a seek or a rebuilt list is one place to reset it.
   radial: { item: -1, prev: -1, phase: 1, startAt: 0, dur: 0.55 },
   builtFontPx: 0,     // the font the measured widths belong to
+  builtStep: 0,       // the row pitch the angles were laid out with; it follows the ring's size
   songKey: ''
 };
 
@@ -580,6 +582,10 @@ function haloBuildLyricRing() {
     acc += step;
   }
   haloLyric.builtFontPx = fontPx;
+  // The pitch is a pixel row height over the ring's radius, so a resized ring needs its rows
+  // laid out again - otherwise the rows keep the old pitch and the sung row stops standing
+  // out by the same amount.
+  haloLyric.builtStep = haloLyricStep();
   haloLyric.songKey = haloLyricSignature();
   return haloLyric.items.length;
 }
@@ -2192,6 +2198,54 @@ function haloDrawRim(ctx) {
   ctx.stroke();
 }
 
+// -------------------------------------------------------------- lyric motion
+
+// The lyric rows enter and leave with the app's own lyric motion, not with one of the
+// ring's: the console's 歌词动画 section decides how a line arrives and goes (漂浮/柔滑/玻璃/
+// 线光/故障), how soft the movement is, how clear the neighbouring lines are, where the edge
+// fades and, for the glitch style, how the text breaks up. The ring reuses that profile on
+// its own layout, so the two never disagree about what a line's entrance looks like.
+function haloLyricMotion() {
+  if (typeof lyricMotionProfile === 'function') {
+    var profile = lyricMotionProfile();
+    if (profile && profile.style) return profile;
+  }
+  // The same defaults the profile carries, for a harness that runs this file alone.
+  var own = (typeof fx !== 'undefined' && fx) ? fx : null;
+  var soft = own && isFinite(Number(own.lyricMotionSoftness)) ? haloClamp(Number(own.lyricMotionSoftness), 0, 1.3) : 0.72;
+  return {
+    style: (own && own.lyricMotionStyle) || 'float',
+    enter: 0.62 * soft,
+    exit: 0.52 * soft,
+    slide: 0.38 * soft,
+    contextDrift: 0.066,
+    edgeBoost: 1,
+    sweep: 0.72,
+    shimmer: 0.22,
+    glitch: 0,
+    glitchSlice: 0,
+    glitchChroma: 0,
+    glitchRate: 1,
+    glitchJitter: 0,
+    glitchCameraBind: false,
+    floatAmp: 1
+  };
+}
+
+// The knobs beside the motion: how clear the neighbouring rows are, how far their clarity
+// falls off, and where the screen's edge starts taking a row away.
+function haloLyricContextSettings() {
+  var own = (typeof fx !== 'undefined' && fx) ? fx : null;
+  var opacity = own && isFinite(Number(own.lyricContextOpacity)) ? Number(own.lyricContextOpacity) : 0.54;
+  var spread = own && isFinite(Number(own.lyricContextSpread)) ? Number(own.lyricContextSpread) : 1.96;
+  var edge = own && isFinite(Number(own.lyricEdgeFade)) ? Number(own.lyricEdgeFade) : 0.32;
+  return {
+    opacity: haloClamp(opacity, 0.12, 1),
+    spread: haloClamp(spread, 0.6, 2.4),
+    edgeFade: haloClamp(edge, 0, 1)
+  };
+}
+
 // ---------------------------------------------------------- lyric colour and carrier
 
 // The colours are the app's own lyric colours: a custom colour from the visual settings
@@ -2477,11 +2531,20 @@ function haloDrawLyricText(ctx) {
     return;
   }
   var pal = haloLyricPalette();
+  var motion = haloLyricMotion();
+  var context = haloLyricContextSettings();
   var fontPx = haloLyricFontPx();
+  var contextPx = Math.max(9, fontPx * HALO_LYRIC_CONTEXT_SCALE);
   var textR = s.RO + haloParam('textGap');
   var read = haloReadAngle();
   var win = haloLyricWindow();
   var arcHalf = haloLyricArcHalf(win);
+  var step = haloLyricStep();
+  // How wide a band at the screen's edge takes a row away: the console's 边缘渐隐 and the
+  // motion style's own edge boost.
+  var edgePx = Math.max(8, (18 + 140 * context.edgeFade) * (motion.edgeBoost || 1));
+  var glitchOn = motion.style === 'glitch' && motion.glitch > 0;
+  var contextAlpha = 0.08 + 0.62 * context.opacity;
   ctx.save();
   ctx.translate(s.cx, s.cy);
   ctx.textBaseline = 'middle';
@@ -2501,30 +2564,70 @@ function haloDrawLyricText(ctx) {
     var span = haloVisibleSpan(center);
     if (span.enter > textR || span.exit < textR) continue;
     var near = Math.abs(haloNormAngle(center - read));
-    var focus = current ? 1 : Math.max(0.12, 1 - near * 1.6);
-    var alpha = current ? 1 : 0.16 + 0.5 * focus;
-    var size = fontPx;
-    // One size for every row, whatever the line says. A row used to be scaled down to fit
-    // the room its own ray had, and that room is measured through the camera - so the text
-    // shrank as the ring pulsed to the beat, and a long line was smaller than a short one.
-    // A line that does not fit runs off the edge of the screen the way a list scrolls off
+    // How close this row is to being the one being sung, 0..1. It is continuous, so a row
+    // grows into the read spot and shrinks out of it while the ring turns instead of
+    // jumping size at the moment the turn ends.
+    var focusNear = haloClamp(1 - near / Math.max(1e-6, step * 1.6), 0, 1);
+    var size = contextPx + (fontPx - contextPx) * focusNear;
+    // How far inside the screen the row's first glyph sits: 0 well inside, 1 at the edge.
+    // The app's motion profile says what happens over that last band - a slide, a fade, or
+    // nothing at all for the smoothest style.
+    var anchor = haloToScreen(s.cx + Math.cos(center) * textR, s.cy + Math.sin(center) * textR);
+    var margin = Math.min(anchor.x, s.w - anchor.x, anchor.y, s.h - anchor.y);
+    var leaving = haloClamp(1 - margin / edgePx, 0, 1);
+    var alpha = contextAlpha * (0.35 + 0.65 * focusNear) + (1 - contextAlpha) * focusNear * focusNear;
+    alpha *= 1 - leaving * motion.exit;
+    // 漂浮: the rows around the read spot drift up and down a little; the sung row breathes.
+    var floatPx = 0;
+    if (motion.floatAmp > 0) {
+      floatPx = Math.sin(s.time * 1.10 + i * 0.73) * motion.contextDrift * 26 * motion.floatAmp * (1 - 0.55 * focusNear);
+    }
+    var slidePx = leaving * motion.slide * contextPx * 2.4;
+    // A row that does not fit runs off the edge of the screen the way a list scrolls off
     // its container; nothing about the font depends on how much of the ray is left.
     ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
-    var drawnW = haloLyricWidth(item, ctx, fontPx);
+    var drawnW = haloLyricWidth(item, ctx, size);
     // The line runs away from the centre. On the left half of the ring that would put
-    // the glyphs upside down, so there the line is turned around and anchored by its
+    // the glyphs upside down, so there the the line is turned around and anchored by its
     // far end instead; the reading direction stays left to right either way.
     var flip = Math.cos(center) < 0;
+    var lit = focusNear > 0.5;
     ctx.save();
     ctx.rotate(flip ? center + Math.PI : center);
-    ctx.translate(flip ? -(textR + drawnW) : textR, 0);
+    ctx.translate(flip ? -(textR + drawnW + slidePx) : textR + slidePx, floatPx);
     ctx.textAlign = 'left';
-    ctx.fillStyle = haloRgba(current ? pal.highlight : pal.primary, alpha);
-    ctx.fillText(item.text, 0, 0);
-    if (item.sub && (current || near < 0.9)) {
+    // 线光: the sung row carries a soft glow; 玻璃: a thin frosted edge under it.
+    if (lit && motion.style === 'shine') {
+      ctx.shadowColor = haloRgba(pal.glowColor || pal.secondary, 0.55);
+      ctx.shadowBlur = 6 + motion.sweep * 9;
+    }
+    if (lit && motion.style === 'glass') {
+      ctx.fillStyle = haloRgba(pal.primary, alpha * 0.30);
+      ctx.fillText(item.text, 1.6, 1.2);
+    }
+    // 故障: the sung row jitters and splits into colour fringes; with 跟随鼓点故障 the burst
+    // rides the ring's own beat instead of running free.
+    var jitterX = 0;
+    var jitterY = 0;
+    if (glitchOn && focusNear > 0.35) {
+      var burst = motion.glitchCameraBind ? haloClamp(s.ringPulse || 0, 0, 1) : 1;
+      var phase = s.time * (61.0 + motion.glitchRate * 26.0) + i * 2.399963;
+      jitterX = Math.sin(phase) * (0.4 + motion.glitchSlice * 2.4) * motion.glitchJitter * burst;
+      jitterY = Math.cos(phase * 0.61) * (0.2 + motion.glitchSlice * 1.2) * motion.glitchJitter * burst;
+      if (motion.glitchChroma > 0 && burst > 0.05) {
+        var chroma = (0.6 + motion.glitchChroma * 2.6) * focusNear;
+        ctx.fillStyle = 'rgba(255,86,86,' + (alpha * 0.30).toFixed(3) + ')';
+        ctx.fillText(item.text, jitterX - chroma, jitterY);
+        ctx.fillStyle = 'rgba(96,224,255,' + (alpha * 0.30).toFixed(3) + ')';
+        ctx.fillText(item.text, jitterX + chroma, jitterY);
+      }
+    }
+    ctx.fillStyle = haloRgba(lit ? pal.highlight : pal.primary, alpha);
+    ctx.fillText(item.text, jitterX, jitterY);
+    if (item.sub && (lit || focusNear > 0.25)) {
       ctx.font = '400 ' + (size * 0.62).toFixed(1) + 'px ' + HALO_FONT;
       ctx.fillStyle = haloRgba(pal.highlight, alpha * 0.5);
-      ctx.fillText(item.sub, 0, size * 0.95);
+      ctx.fillText(item.sub, jitterX, size * 0.95 + jitterY);
     }
     ctx.restore();
   }
@@ -2789,7 +2892,8 @@ function haloRenderFrame(canvas, now, dt) {
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
   // lyric size knob may have moved: the measured widths belong to the font they were
   // taken with.
-  if (haloLyricSignature() !== haloLyric.songKey || haloLyricFontPx() !== haloLyric.builtFontPx) {
+  if (haloLyricSignature() !== haloLyric.songKey || haloLyricFontPx() !== haloLyric.builtFontPx ||
+      haloLyricStep() !== haloLyric.builtStep) {
     haloBuildLyricRing();
   }
   haloLyricUpdate(t);
