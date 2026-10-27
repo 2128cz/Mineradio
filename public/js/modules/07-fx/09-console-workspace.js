@@ -162,6 +162,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-haloreadAngle', '读词位置', '光环 歌词 读词 角度'),
         fxConsoleItem('fx-halotextGap', '歌词离环距离', '光环 歌词 距离 间隙'),
         fxConsoleItem('fx-halolineGap', '歌词行距', '光环 歌词 行距 间距'),
+        fxConsoleItem('fx-halolyricRows', '同屏歌词行数', '光环 歌词 行数 同屏 虚拟 窗口'),
         fxConsoleItem('fx-halorotLead', '转环提前量', '光环 转环 提前 跟唱'),
         fxConsoleItem('fx-halorotDur', '转环时长', '光环 转环 时长 速度'),
         fxConsoleItem('fx-halopanelRefresh', '拍点刷新块数', '光环 拍点 刷新 数据块'),

@@ -803,7 +803,8 @@ function runPvPresetLiveProbe(modulePath) {
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
 // The arms that read the module's body back live in scripts/halo-arms.js, so the mutation
 // driver can run the very same code on a mutated copy of the module.
-const { haloSliceFunction, checkHaloAudioArms } = require('./halo-arms');
+const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms } = require('./halo-arms');
+const { checkTakeoverLayerConsumers } = require('./takeover-arms');
 
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
@@ -947,120 +948,11 @@ function runHaloPresetCheck() {
   ]) {
     if (!pattern.test(haloText)) fail(why);
   }
-  // The offline half-plane culling of the original does not hold for a centred ring: a camera
-  // zoom has to be able to cull by the analytic visible radius instead.
-  if (!/haloVisibleRadius/.test(haloText)) {
-    fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
-  }
-  // --- the three defects the user hit in the ring on 2026-10-26 ---------------------
-  // (1) The ring turned too fast on every lyric change and ignored the 转环时长 knob.
-  //     The tween used to be created only after the line it was aiming at had already
-  //     started, so its duration was clamped by the time that was left (which was ~0)
-  //     and every turn snapped instead of travelling.
-  // (2) The lyrics shrank the longer the song played. The per-line fit was baked at
-  //     build time against the line's own un-rotated angle: a later line points up-left,
-  //     where there is almost no room, so it was scaled down once and stayed that way.
-  //     The fit has to be taken when the line is drawn, on the angle it sits at then.
-  // (3) The decorations and the lyrics were culled against the wrong point. The screen
-  //     reaches a given direction out to the distance from the ring's centre to the
-  //     viewport edge, but the cull measured from the world origin (the transform's own
-  //     offset), which is a different place on the screen: the rays that were kept were
-  //     not the rays that were on screen, so dragging the ring made rows and beams
-  //     appear and vanish at angles that had nothing to do with the view.
-  const buildLyricFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
-  const lyricUpdateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
-  const drawLyricFn = haloSliceFunction(haloText, 'haloDrawLyricText');
-  const visibleRadiusFn = haloSliceFunction(haloText, 'haloVisibleRadius');
-  if (!buildLyricFn || !lyricUpdateFn || !drawLyricFn || !visibleRadiusFn) {
-    fail('the halo lyric functions could not be read back; the guards below would be vacuous');
-  }
-  // A slice that stopped early would make the guards below vacuous, so each one has to
-  // still carry the statement it is written about.
-  for (const [slice, marker, name] of [
-    [buildLyricFn, 'haloLyric.items.push(item)', 'haloBuildLyricRing'],
-    [lyricUpdateFn, 'haloLyric.tween = {', 'haloLyricUpdate'],
-    [drawLyricFn, 'ctx.fillText(item.text, 0, 0)', 'haloDrawLyricText'],
-    [visibleRadiusFn, 'var t = Infinity;', 'haloVisibleRadius'],
-  ]) {
-    if (slice && !slice.includes(marker)) {
-      fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
-    }
-  }
+  // The ring's cull and lyric geometry, read back off the module. These arms live in
+  // scripts/halo-arms.js so the mutation driver runs the same code the gate runs.
+  checkHaloCullArms(haloText, fail);
   // The beat map is a fixed timeline, so the ring's motion has to be scaled by the sound.
   checkHaloAudioArms(haloText, fail);
-  // The cull must start at the ring's centre, which is where the camera transform puts
-  // it: the framing knobs' position plus the user's own pan, plus the shake.
-  if (visibleRadiusFn) {
-    if (!/var ox = s\.w \/ 2 - haloCam\.zoom \* haloPanTotalX\(\) \+ s\.shakeX;/.test(visibleRadiusFn)) {
-      fail('the visible radius must be measured from the ring\'s centre on the screen, not from the world origin');
-    }
-    if (!/var oy = s\.h \/ 2 - haloCam\.zoom \* haloPanTotalY\(\) \+ s\.shakeY;/.test(visibleRadiusFn)) {
-      fail('the visible radius must be measured from the ring\'s centre on the screen, not from the world origin');
-    }
-    if (/-z \* s\.cx - haloCam\.zoom \* haloPanTotalX\(\)/.test(visibleRadiusFn)) {
-      fail('the visible radius must not be measured from the transform offset: that is the world origin, not the ring');
-    }
-  }
-  if (lyricUpdateFn) {
-    if (!/var dur = Math\.max\(0\.05, haloParam\('rotDur'\)\);/.test(lyricUpdateFn)) {
-      fail('the ring turn must last exactly the 转环时长 knob (rotDur)');
-    }
-    if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn)) {
-      fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-    }
-    for (const clamp of [/\bdur\s*=\s*Math\.min/, /Math\.min\([^)]*\bdur\b[^)]*\)/]) {
-      if (clamp.test(lyricUpdateFn)) {
-        fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-      }
-    }
-    if (!/var turnStart = items\[upcoming\]\.startAt - Math\.max\(0, haloParam\('rotLead'\)\);/.test(lyricUpdateFn)) {
-      fail('the turn must start rotLead seconds before the line it is turning to');
-    }
-    if (!/if \(t >= items\[upcoming\]\.startAt\) \{/.test(lyricUpdateFn)) {
-      fail('a line that is already due must be put on the mark at once');
-    }
-  }
-  if (buildLyricFn) {
-    if (!/textWidth: total,/.test(buildLyricFn)) {
-      fail('the lyric item must keep its measured width: the fit belongs to the draw');
-    }
-    if (/\bscale:/.test(buildLyricFn)) {
-      fail('the per-line scale must not be baked at build time: that is what made the lyrics shrink');
-    }
-  }
-  if (drawLyricFn) {
-    if (!/var room = haloVisibleRadius\(center\) - textR;/.test(drawLyricFn)) {
-      fail('the draw time fit must measure the room on the ray the line actually sits on');
-    }
-    if (!/if \(room <= 0\) continue;/.test(drawLyricFn)) {
-      fail('a line whose ray never reaches the rim is off screen and must not be drawn');
-    }
-    // Every row keeps the size the app's lyric knob asks for. A row that is scaled to
-    // fit its own ray is what made the lyrics look like they were breathing.
-    if (!/var size = fontPx;/.test(drawLyricFn)) {
-      fail('every lyric row must be drawn with the same size: the list must not have rows of different sizes');
-    }
-    if (/var size = current \?/.test(drawLyricFn)) {
-      fail('the lyric rows must not change size with the song position: that is what made the text look like it was breathing');
-    }
-    if (!/var sc = 1;/.test(drawLyricFn)) {
-      fail('the lyric rows must not be scaled to fit their ray');
-    }
-    if (!/if \(drawnW > room && current\) \{/.test(drawLyricFn)) {
-      fail('only the sung row may be squeezed to fit its ray, and never below the floor');
-    }
-    if (!/sc = Math\.max\(HALO_LYRIC_MIN_SCALE, room \/ drawnW\);/.test(drawLyricFn)) {
-      fail('the sung row must be squeezed to the floor, not scaled past it');
-    }
-  }
-  if (!/HALO_LYRIC_MIN_SCALE = (0\.\d+);/.test(haloText)) {
-    fail('a lyric line must never shrink below the floor');
-  }
-  // The measured widths belong to the font they were taken with, so a font size change has
-  // to rebuild the ring.
-  if (!/haloLyricFontPx\(\) !== haloLyric\.builtFontPx/.test(haloText)) {
-    fail('the lyric ring must be rebuilt when the app\'s lyric size knob moves');
-  }
   // The knobs: the store, the console group, and one slider per knob. A knob that is in
   // the schema but not on a slider is a knob the user cannot reach.
   const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js');
@@ -1191,6 +1083,17 @@ function runVisualTakeoverMaskCheck() {
     process.stderr.write(result.stderr || '');
     fail(`visual takeover mask regression failed: ${rel(testFile)}`);
   }
+  // A layer the mask names but nothing reads is a promise the scene never keeps: the ring
+  // and the PV preset both declared they own the star river, and because no consumer
+  // existed the river kept painting full screen over their canvas while every static check
+  // stayed green. So every name in the layer list has to be read outside the module that
+  // builds the mask.
+  const takeoverFile = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '16-visual-takeover.js');
+  const takeoverText = fs.readFileSync(takeoverFile, 'utf8');
+  const consumerTexts = walk(path.join(appRoot, 'public', 'js'))
+    .filter((file) => file.endsWith('.js') && path.resolve(file) !== path.resolve(takeoverFile))
+    .map((file) => fs.readFileSync(file, 'utf8'));
+  checkTakeoverLayerConsumers(takeoverText, consumerTexts, fail);
   // A module file that is never listed in index-loader.js is dead code that still
   // passes every other syntax check, so the directory and the list must agree.
   const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
