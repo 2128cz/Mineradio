@@ -10,14 +10,23 @@ function medianGap(times, minGap, maxGap) {
   return gaps.length ? gaps[Math.floor(gaps.length * 0.5)] : 0;
 }
 
-function normalizeMusicTempoBeats(times, duration) {
+// The tracker's beats, with only genuine double detections removed.
+//
+// The old rule halved any beat list whose median gap was under 0.42 s, which is every song
+// above 143 BPM: a 150 or 160 BPM track was analysed at the right tempo and then thinned to
+// every second beat, and above ~167 BPM the tracker itself was not allowed the true
+// interval. The spacing to keep is the one the tracker locked onto - `tempo` is its own
+// answer - and a detection is a duplicate only when it lands clearly inside that spacing.
+function normalizeMusicTempoBeats(times, duration, tempo) {
   if (!times || !times.length) return [];
   var sorted = times
     .filter(function (t) { return isFinite(t) && t >= 0.05 && (!duration || t < duration - 0.05); })
     .sort(function (a, b) { return a - b; });
   if (sorted.length < 4) return sorted;
-  var gap = medianGap(sorted, 0.20, 1.20);
-  var minMainGap = gap && gap < 0.42 ? Math.min(0.44, gap * 1.65) : 0.36;
+  var gap = medianGap(sorted, 0.12, 1.40);
+  var beat = (tempo > 0 && isFinite(tempo)) ? 60 / tempo : 0;
+  var spacing = beat > 0 ? Math.min(gap || beat, beat) : gap;
+  var minMainGap = Math.max(0.12, spacing * 0.78);
   var out = [];
   var last = -10;
   for (var i = 0; i < sorted.length; i++) {
@@ -116,7 +125,9 @@ function getMusicTempoWorkerUrl() {
     'var C=self.MusicTempo||(typeof MusicTempo!=="undefined"?MusicTempo:null);',
     'if(!C)throw new Error("MusicTempo unavailable");',
     'var mono=new Float32Array(d.mono);',
-    'var mt=new C(mono,{bufferSize:2048,hopSize:Math.max(128,Math.round(d.sampleRate*0.010)),timeStep:0.010,minBeatInterval:0.36,maxBeatInterval:0.95,expiryTime:8});',
+    // 0.22..1.2 s is 273..50 BPM. The old 0.36 floor (166.7 BPM) is why anything faster was
+    // reported at half speed, with a period that then drifted off the real beats.
+    'var mt=new C(mono,{bufferSize:2048,hopSize:Math.max(128,Math.round(d.sampleRate*0.010)),timeStep:0.010,minBeatInterval:0.22,maxBeatInterval:1.2,expiryTime:8});',
     'self.postMessage({ok:true,tempo:mt.tempo||0,beats:mt.beats||[]});',
     '}catch(err){self.postMessage({ok:false,error:(err&&err.message)||String(err)});}',
     '};'

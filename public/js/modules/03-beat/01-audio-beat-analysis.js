@@ -494,7 +494,7 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     var gaps = [];
     for (var gi = 1; gi < strongTimes.length; gi++) {
       var gap = strongTimes[gi] - strongTimes[gi - 1];
-      if (gap >= 0.26 && gap <= 0.86) gaps.push(gap);
+      if (gap >= 0.20 && gap <= 1.20) gaps.push(gap);
     }
     gaps.sort(function (a, b) { return a - b; });
     var gridStep = gaps.length ? gaps[Math.floor(gaps.length * 0.5)] : 0;
@@ -506,7 +506,9 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
         var gridLike = Math.abs(prevGap - gridStep) < gridStep * 0.32 || Math.abs(nextGap - gridStep) < gridStep * 0.32;
         beats[bi].primary = beats[bi].camera && beats[bi].strength >= (gridLike ? 0.42 : 0.58);
       }
-      if (gridStep >= 0.38 && gridStep <= 0.88 && strongTimes.length >= 4) {
+      // A grid is worth synthesising whenever the song has a usable beat spacing: the old
+      // 0.38..0.88 window (65..158 BPM) left fast songs to the raw detections.
+      if (gridStep >= 0.22 && gridStep <= 1.20 && strongTimes.length >= 4) {
         var anchor = strongTimes[0];
         while (anchor - gridStep > 0.20) anchor -= gridStep;
         var gridBeats = [];
@@ -561,8 +563,8 @@ async function analyzeAudioBeats(audioUrl, durationSec, token, options) {
     var musicTempoResult = await musicTempoTask;
     if (token !== beatMapToken) { hideBeatChip(); return null; }
     if (musicTempoResult && musicTempoResult.beats && musicTempoResult.beats.length) {
-      musicTempoBeats = normalizeMusicTempoBeats(musicTempoResult.beats || [], buffer.duration);
-      musicTempoGridStep = medianGap(musicTempoBeats, 0.36, 1.00);
+      musicTempoBeats = normalizeMusicTempoBeats(musicTempoResult.beats || [], buffer.duration, Number(musicTempoResult.tempo) || 0);
+      musicTempoGridStep = medianGap(musicTempoBeats, 0.22, 1.20);
       console.log('music-tempo worker:', musicTempoResult.tempo, 'bpm, beats:', musicTempoBeats.length, 'step:', musicTempoGridStep);
     }
 

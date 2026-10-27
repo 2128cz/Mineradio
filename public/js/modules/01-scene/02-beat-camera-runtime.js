@@ -496,7 +496,9 @@ function processRealtimeBeatEngine(dt) {
   var tempoAssist = tempoDue && rtBeat.tempoConfidence > (dj ? 0.34 : 0.34) && drumGate && lowPresence > (dj ? 0.42 : 0.36) && score > (dj ? 0.24 : 0.18) && lowAttack > Math.max(0.012, rtBeat.onsetAvg * (dj ? 0.34 : 0.26));
   var candidateHit = strongTransient || kickTransient || fastTransient || tempoAssist;
   if (warmingUp && !sonicKickAssist) candidateHit = false;
-  var hasTempoLock = expectedGap >= (dj ? 0.32 : 0.42) && expectedGap <= (dj ? 0.92 : 0.88) && rtBeat.tempoConfidence > (dj ? 0.36 : 0.38);
+  // 0.24 s is 250 BPM. The old 0.42 floor (143 BPM) refused the lock on fast songs, which
+  // is the tempo range where a live detector is most useful; the upper end is unchanged.
+  var hasTempoLock = expectedGap >= (dj ? 0.32 : 0.24) && expectedGap <= (dj ? 0.92 : 0.88) && rtBeat.tempoConfidence > (dj ? 0.36 : 0.38);
   var lockedWindow = hasTempoLock ? Math.max(dj ? 0.062 : 0.070, Math.min(dj ? 0.118 : 0.110, expectedGap * (dj ? 0.17 : 0.16))) : 0;
   var gapRaw = nowT - rtBeat.lastHitAt;
   var rhythmAccept = false;
@@ -520,8 +522,8 @@ function processRealtimeBeatEngine(dt) {
   var hit = candidateHit && rhythmAccept;
   if (!hit && (candidateHit || score > 0.42 || vocalNorm > 0.62 || bodyNorm > 0.54)) rtBeat.stats.rejected++;
   var minGap = hasTempoLock
-    ? Math.max(dj ? 0.255 : 0.255, Math.min(dj ? 0.430 : 0.460, expectedGap * (dj ? 0.54 : 0.56)))
-    : (dj ? 0.285 : Math.max(0.255, beatCam.realtimeMinInterval * 0.72));
+    ? Math.max(dj ? 0.255 : 0.220, Math.min(dj ? 0.430 : 0.460, expectedGap * (dj ? 0.54 : 0.56)))
+    : (dj ? 0.285 : Math.max(0.220, beatCam.realtimeMinInterval * 0.72));
   if (hit && gapRaw < minGap) {
     if ((fastTransient || sonicKickAssist) && gapRaw > minGap * 0.78 && score > (dj ? 0.42 : 0.40) && lowPresence > (dj ? 0.44 : 0.38)) {
       hit = true;
@@ -553,8 +555,8 @@ function processRealtimeBeatEngine(dt) {
   if (rtBeat.lastHitAt > 0) {
     var gap = nowT - rtBeat.lastHitAt;
     while (gap > (dj ? 0.96 : 0.88)) gap *= 0.5;
-    while (gap < (dj ? 0.32 : 0.42)) gap *= 2.0;
-    if (gap >= (dj ? 0.32 : 0.42) && gap <= (dj ? 0.96 : 0.88)) {
+    while (gap < (dj ? 0.32 : 0.24)) gap *= 2.0;
+    if (gap >= (dj ? 0.32 : 0.24) && gap <= (dj ? 0.96 : 0.88)) {
       gapShift = rtBeat.tempoGap ? Math.abs(gap - rtBeat.tempoGap) / Math.max(0.001, rtBeat.tempoGap) : 0;
       var tempoEase = hasTempoLock ? (dj ? 0.12 : 0.10) : (dj ? 0.24 : 0.22);
       if (dj && gapShift > 0.16 && strongTransient && lowDominance > 0.95) tempoEase = Math.min(0.36, tempoEase + gapShift * 0.45);
@@ -883,7 +885,13 @@ function scheduleBeatCamera(beat, source) {
     beatCam.stats.map++;
   } else if (!isLiveSource) {
     var gap = time - beatCam.lastTriggerAt;
-    var minGap = beatCam.minInterval;
+    // The floor is a pace for the eye, not a claim about the song: 0.5 s (120 BPM) swallowed
+    // every second beat of a fast track. It follows the song's own spacing when that is
+    // known, and keeps the old 0.5 s when it is not.
+    var step = 0;
+    if (typeof currentBeatMap !== 'undefined' && currentBeatMap && currentBeatMap.gridStep > 0) step = currentBeatMap.gridStep;
+    else if (rtBeat.tempoGap > 0) step = rtBeat.tempoGap;
+    var minGap = step > 0 ? Math.min(beatCam.minInterval, Math.max(0.22, step * 0.86)) : beatCam.minInterval;
     if (isMapSource && isPrimary) minGap *= 0.82;
     if (gap < minGap && strength < 0.88) return;
     beatCam.lastTriggerAt = time;

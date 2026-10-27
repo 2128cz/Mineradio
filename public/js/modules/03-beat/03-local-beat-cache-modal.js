@@ -63,12 +63,16 @@ function unpackLocalBeatEvent(row) {
     step: row[11] || 0
   };
 }
+// Bumped when the analysis itself changes in a way that invalidates a stored map. Version 3
+// is the pipeline that no longer folds fast tempos to half speed: a v1/v2 map of a 150-180
+// BPM song is a half-tempo grid, so it has to be analysed again instead of reused.
+var LOCAL_BEAT_MAP_VERSION = 3;
 function packLocalBeatMap(map) {
   if (!map) return null;
   var camera = (map.cameraBeats || map.beats || map.kicks || []).map(packLocalBeatEvent);
   var pulse = (map.pulseBeats || map.kicks || []).map(packLocalBeatEvent);
   return {
-    v: 1,
+    v: LOCAL_BEAT_MAP_VERSION,
     duration: localBeatRound(map.duration || 0, 1000),
     gridStep: localBeatRound(map.gridStep || 0, 1000),
     sectionSteps: (map.sectionSteps || []).map(function (v) { return localBeatRound(v, 1000); }),
@@ -83,7 +87,9 @@ function packLocalBeatMap(map) {
 }
 function unpackLocalBeatMap(stored) {
   if (!stored) return null;
-  if (stored.v && stored.v !== 1 && stored.v !== 2) return stored;
+  // Anything packed by another version of the analysis is stale and is dropped, which sends
+  // the song back through analyseAudioBeats instead of playing an old half-tempo grid.
+  if (stored.v !== LOCAL_BEAT_MAP_VERSION) return null;
   var camera = (stored.cameraBeats || []).map(unpackLocalBeatEvent);
   var pulse = (stored.pulseBeats || []).map(unpackLocalBeatEvent);
   return {

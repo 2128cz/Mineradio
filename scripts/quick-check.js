@@ -806,6 +806,26 @@ function runPvPresetLiveProbe(modulePath) {
 const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms, checkHaloRadialArms } = require('./halo-arms');
 const { checkTakeoverLayerConsumers } = require('./takeover-arms');
 
+// The beat pipeline's tempo range, from the tracker's options through the map's spacing to
+// the consumers that pace themselves off the beat. Fast songs used to be analysed at half
+// speed, which is what a 180 BPM song felt like: on the grid, but drifting off it.
+function runBeatTempoCeilingCheck() {
+  logStep('Beat tempo range (tracker interval, map spacing, consumer pacing)');
+  const testFile = path.join(appRoot, 'tests', 'beat-tempo-ceiling.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/beat-tempo-ceiling.test.js is missing; the tempo range would only be checked by ear');
+    return;
+  }
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`the beat tempo ceiling regression failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(result.stdout || '');
+  console.log('[OK] Beat tempos reach the map: 150 and 180 BPM keep their own beat spacing.');
+}
+
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
@@ -6789,6 +6809,7 @@ async function main() {
   runPvPrefetchCheck();
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
+  runBeatTempoCeilingCheck();
   runHaloPresetCheck();
   runMainWindowRuntimeRecoveryRegressionCheck();
   runFxConsoleRegistrationCheck();
