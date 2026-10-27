@@ -102,6 +102,16 @@ function toggleHaloTuning(key) {
   return setHaloTuning(key, haloTuning[key] > 0 ? 0 : 1);
 }
 
+// The camera belongs to the user, so it has its own way back: dragging and zooming the ring
+// is not a knob, and "reset the knobs" must not move the view out from under them.
+function resetHaloCamera() {
+  haloCam.panX = 0;
+  haloCam.panY = 0;
+  haloCam.zoom = 1;
+  if (typeof showToast === 'function') showToast('环形数据流视角已复位');
+  return true;
+}
+
 function resetHaloTuning() {
   Object.keys(HALO_TUNING_SCHEMA).forEach(function (key) {
     haloTuning[key] = HALO_TUNING_SCHEMA[key].def;

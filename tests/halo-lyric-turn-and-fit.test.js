@@ -930,4 +930,48 @@ for (const [text, scale] of rowsBefore) {
   console.log(`  beams: ${checked} blocks plainly on screen (all kept), ${setAside} set aside at the edge`);
 }
 
+// ------------------------------------------------ the dial counts from zero past a turn
+// A turn that is re-aimed before it finishes never reaches its end-of-turn re-base, so
+// without a zero-crossing rule the dial's own angle walks away a step per line; when
+// something finally re-bases it, the numbers are a full turn away and the next turn travels
+// all of it - the ring turns the wrong way, a whole revolution, and starts again. Anchoring
+// the list on the new target every time is the zero-crossing test: past a whole turn the
+// dial counts from zero again.
+{
+  sandbox.lyricsLines = [];
+  for (let i = 0; i < 200; i++) sandbox.lyricsLines.push({ t: 2 + i * 0.2, text: `dense line ${i}` });
+  sandbox.haloBuildLyricRing();
+  const dial = sandbox.haloLyric;
+  const step = sandbox.haloLyricStep();
+  const read = sandbox.haloReadAngle();
+  let worstJump = 0;
+  let worstRot = 0;
+  let landed = 0;
+  let offMark = 0;
+  let prev = dial.rot;
+  let prevCurrent = dial.current;
+  for (let t = 0; t <= 40; t += 1 / 60) {
+    sandbox.haloLyricUpdate(t);
+    worstJump = Math.max(worstJump, Math.abs(dial.rot - prev));
+    worstRot = Math.max(worstRot, Math.abs(dial.rot));
+    prev = dial.rot;
+    if (dial.current !== prevCurrent) {
+      landed += 1;
+      const sung = dial.items[dial.current];
+      if (Math.abs(sandbox.haloNormAngle(sung.angle + dial.rot - read)) > 1e-3) offMark += 1;
+      prevCurrent = dial.current;
+    }
+  }
+  // The fixture has to have passed a whole turn for the claim below to mean anything.
+  assert(dial.rebase > Math.PI * 2,
+    `the fixture must drive the dial past a full turn, re-anchor total ${dial.rebase.toFixed(2)} rad`);
+  assert.strictEqual(offMark, 0, `every landed line must sit on the read mark, ${offMark} of ${landed} did not`);
+  assert(worstJump <= step * 1.6,
+    `the dial must never jump more than a row between frames (worst ${worstJump.toFixed(3)} rad, a row is ${step.toFixed(3)})`);
+  assert(worstRot <= Math.PI + step,
+    `the dial must count from zero instead of walking away (worst |rot| ${worstRot.toFixed(2)} rad)`);
+  console.log(`  zero crossing: re-anchored ${dial.rebase.toFixed(1)} rad, ${landed} lines landed, ` +
+    `worst jump ${worstJump.toFixed(3)} rad (a row is ${step.toFixed(3)}), worst |rot| ${worstRot.toFixed(2)} rad`);
+}
+
 console.log('[OK] The ring turn lasts the 转环时长 knob, the cull follows the screen and the lyric rows keep one size.');

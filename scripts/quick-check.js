@@ -988,8 +988,17 @@ function runHaloPresetCheck() {
     [/function setHaloTuning\(/, 'the console needs one setter for the knobs'],
     [/function haloTuningSyncInputs\(/, 'the console must be able to write the knob values back into the sliders'],
     [/function haloTuningApply\(/, 'a knob change must reach the layer'],
+    // The camera is the user's, so dragging and zooming need their own way back.
+    [/function resetHaloCamera\(/, 'the ring camera needs a reset of its own, separate from the knobs'],
+    [/haloCam\.panX = 0;[\s\S]{0,80}haloCam\.panY = 0;[\s\S]{0,80}haloCam\.zoom = 1;/, 'the camera reset must put the pan and zoom back'],
   ]) {
     if (!pattern.test(tuningText)) fail(why);
+  }
+  if (!/id="halo-camera-reset"/.test(htmlText)) {
+    fail("the camera reset needs a button in the ring panel");
+  }
+  if (!/id="t-haloaxialLyric"/.test(htmlText)) {
+    fail("the axial/radial lyric switch needs a toggle in the ring panel");
   }
   if (!/key: 'halo'/.test(consoleText) || !/title: '环形数据流'/.test(consoleText)) {
     fail('the visual console needs a 环形数据流 group in the 动效 tab');

@@ -166,8 +166,10 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-halorotLead', '转环提前量', '环形数据流 转环 提前 跟唱'),
         fxConsoleItem('fx-halorotDur', '转环时长', '环形数据流 转环 时长 速度'),
         fxConsoleItem('t-halobeatTurn', '按节拍转环', '环形数据流 转环 节拍 bpm 速度 快歌 慢歌'),
+        fxConsoleItem('t-haloaxialLyric', '侧边轴向歌词', '环形数据流 歌词 轴向 径向 布局 切换'),
         fxConsoleItem('fx-halopanelRefresh', '拍点刷新块数', '环形数据流 拍点 刷新 数据块'),
-        fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认')
+        fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认'),
+        fxConsoleItem('halo-camera-reset', '重置视角', '环形数据流 视角 复位 拖拽 缩放 平移')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
         fxConsoleItem('t-float', '浮空粒子层', '漂浮粒子'),

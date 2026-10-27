@@ -68,6 +68,7 @@ var HALO_TUNING_SCHEMA = {
   textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
   lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
   lyricRows: { def: 0, min: 0, max: 240, kind: 'count', rebuild: 'live' },
+  axialLyric: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
   rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
   beatTurn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
@@ -734,6 +735,25 @@ function haloTurnWindow(startAt) {
   };
 }
 
+// Re-anchor the lyric list on one row: that row's angle becomes 0 and the dial takes the
+// same shift, so nothing moves on screen but the numbers start again from zero.
+//
+// A turn that is re-aimed before it finishes never reaches the end-of-turn re-base, so a
+// dense song walks the dial's own angle away by a step per line - and when something finally
+// re-bases it, the value is a full turn or more away from zero and the next turn has to
+// travel all of it. Anchoring on every new target is the zero-crossing test: past a whole
+// turn the dial starts counting from zero again instead of from 2*PI.
+function haloAnchorLyric(index) {
+  var items = haloLyric.items;
+  var item = items[index];
+  if (!item) return;
+  var shift = item.angle;
+  if (!shift) return;
+  for (var i = 0; i < items.length; i++) items[i].angle -= shift;
+  haloLyric.rot += shift;
+  haloLyric.rebase += shift;
+}
+
 function haloLyricUpdate(t) {
   var items = haloLyric.items;
   if (!items.length) return;
@@ -789,6 +809,7 @@ function haloLyricUpdate(t) {
         // the speed the dial already had. Restarting the curve from rest is what made the
         // ring stop dead for a frame and ease back up, which reads as a new animation
         // cutting the old one off.
+        haloAnchorLyric(upcoming);
         tw.item = upcoming;
         tw.from = haloLyric.rot;
         tw.to = haloReadAngle() - items[upcoming].angle;
@@ -811,9 +832,11 @@ function haloLyricUpdate(t) {
   }
 
   if (haloLyric.current < 0) {
-    // First line: put it on the mark straight away.
+    // First line: put it on the mark straight away, and start the list's angles from zero
+    // even when the song was seeked into - otherwise every later turn carries the offset.
     haloLyric.current = sung;
     haloLyric.rot = haloReadAngle() - items[sung].angle;
+    haloAnchorLyric(sung);
     haloLyric.vel = 0;
     return;
   }
@@ -822,10 +845,7 @@ function haloLyricUpdate(t) {
   if (sung > haloLyric.current || sung < haloLyric.current - 1) {
     haloLyric.current = sung;
     haloLyric.rot = haloReadAngle() - items[sung].angle;
-    var rebase2 = items[sung].angle;
-    for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
-    haloLyric.rot += rebase2;
-    haloLyric.rebase += rebase2;
+    haloAnchorLyric(sung);
     // The line arrived by jump, not by glide: there is no motion left to hand over.
     haloLyric.vel = 0;
     return;
@@ -837,14 +857,12 @@ function haloLyricUpdate(t) {
     // The window has passed (the render loop was parked): put the line on the mark.
     haloLyric.current = upcoming;
     haloLyric.rot = haloReadAngle() - items[upcoming].angle;
-    var rebase3 = items[upcoming].angle;
-    for (var n = 0; n < items.length; n++) items[n].angle -= rebase3;
-    haloLyric.rot += rebase3;
-    haloLyric.rebase += rebase3;
+    haloAnchorLyric(upcoming);
     haloLyric.vel = 0;
     return;
   }
   haloLyric.pending = upcoming;
+  haloAnchorLyric(upcoming);
   haloLyric.tween = {
     item: upcoming,
     from: haloLyric.rot,
@@ -2373,6 +2391,10 @@ function haloViewArc() {
 //          and the translation along the bottom, at a size that reads from further away.
 function haloViewRegion() {
   var s = haloState;
+  // The console says which carrier to use. The camera only picks where on the ring the
+  // radial line sits - it must never switch back to the list, because that switch is what
+  // made the lyrics jump between two layouts while the camera moved.
+  if (haloParam('axialLyric') > 0) return 'side';
   var arc = haloViewArc();
   var centred = arc.cx >= s.w * 0.08 && arc.cx <= s.w * 0.92 && arc.cy >= s.h * 0.08 && arc.cy <= s.h * 0.92;
   // The whole-ring carrier puts the text *outside* the rim, so "the whole ring is visible"
@@ -2382,9 +2404,13 @@ function haloViewRegion() {
   var need = (s.RO + haloParam('textGap') + haloLyricFontPx() * 1.9) * z;
   var fits = arc.cx - need >= 0 && arc.cx + need <= s.w && arc.cy - need >= 0 && arc.cy + need <= s.h;
   if (centred && fits) return 'whole';
-  if (arc.frac < 0.05) return centred ? 'inside' : 'side';
+  if (arc.frac < 0.05) return 'inside';
   var sideways = Math.abs(Math.cos(arc.mid)) > 0.6;
-  if (!centred) return sideways ? 'side' : (Math.sin(arc.mid) < 0 ? 'top' : 'bottom');
+  if (!centred) {
+    // A side view keeps the text straight along the read ray: a bent line at the side of the
+    // ring stands on end. Top and bottom views can use the arcs, where they read.
+    return sideways ? 'inline' : (Math.sin(arc.mid) < 0 ? 'top' : 'bottom');
+  }
   // The ring is on screen but too big to show the whole: the text goes inside it.
   return 'inside';
 }
@@ -2415,14 +2441,33 @@ function haloRadialPlan(region) {
     plan.a1 = Math.PI / 2;
     return plan;
   }
+  if (region === 'inline') {
+    // Straight along the read ray, ending at the ring's inner edge. The radius belongs to the
+    // ring, so moving the camera carries the line the way it carries everything else; the
+    // screen only caps it, and never below a few line heights.
+    var read = haloReadAngle();
+    var run = haloVisibleSpan(read);
+    var rim = Math.max(plan.font * 3, s.R - s.band * 1.1);
+    var reach = isFinite(run.exit) ? Math.max(plan.font * 3, run.exit - plan.font * 2) : rim;
+    plan.mode = 'radial';
+    plan.a0 = plan.a1 = read;
+    plan.r0 = Math.min(rim, reach);
+    plan.r1 = plan.r0;
+    return plan;
+  }
   if (region === 'inside') {
-    // Only the middle is on screen, so the carrier is as far out as the screen allows and
-    // no further than the ring: the two texts stay inside it either way.
+    // The carrier belongs to the ring: it rides at a fixed fraction of the ring's radius, so
+    // moving the camera carries it the way it carries everything else on the ring instead of
+    // sliding the other way. The screen only caps it when the ring is bigger than the view,
+    // and never below a few lines' height - a wide screen zoomed in used to squeeze this
+    // carrier to nothing.
     var z = Math.max(0.2, haloCam.zoom);
-    var room = Math.min(arc.cx, s.w - arc.cx, arc.cy, s.h - arc.cy) / z;
-    var inside = Math.max(plan.font * 2.4, Math.min(s.R * 0.86, room * 0.86));
+    var room = Math.max(0, Math.min(arc.cx, s.w - arc.cx, arc.cy, s.h - arc.cy) / z);
+    var attached = s.R * 0.72;
+    var screenMax = Math.max(plan.font * 3.2, room * 0.92);
+    var inside = Math.min(attached, screenMax);
     plan.r0 = inside;
-    plan.r1 = Math.max(plan.font * 1.6, inside - gap * 0.8);
+    plan.r1 = Math.max(plan.font * 1.8, inside - gap * 0.8);
     plan.a0 = -Math.PI / 2;
     plan.a1 = plan.a0;
     return plan;
@@ -2535,6 +2580,31 @@ function haloDrawRadialDisc(ctx, item, plan, offset, alpha, pal) {
 // read swings towards the generation point and the new one arrives from the other side of
 // the wheel, both cut by their own window, so the two are aligned on the same disc and the
 // outgoing text meets the incoming one at the seam.
+// A line laid straight along the read ray inside the ring, its translation under it. With the
+// text horizontal it reads at any side of the ring; the line ends at the ring's inner edge so
+// it never crosses the band, and it rides the ring's radius rather than the screen's.
+function haloDrawRadialRow(ctx, item, plan, offset, alpha, pal) {
+  var size = plan.font;
+  var flip = Math.cos(plan.a0) < 0;
+  var width = 0;
+  ctx.save();
+  ctx.rotate(flip ? plan.a0 + Math.PI : plan.a0);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
+  width = haloLyricWidth(item, ctx, size);
+  var x0 = flip ? -(plan.r0 + width) : plan.r0 - width;
+  x0 += offset;
+  ctx.fillStyle = haloRgba(pal.highlight, alpha);
+  ctx.fillText(item.text, x0, 0);
+  if (item.sub) {
+    ctx.font = '400 ' + (size * 0.62).toFixed(1) + 'px ' + HALO_FONT;
+    ctx.fillStyle = haloRgba(pal.primary, alpha * 0.8);
+    ctx.fillText(item.sub, x0, size * 0.95);
+  }
+  ctx.restore();
+}
+
 function haloDrawRadialLyric(ctx, region) {
   var s = haloState;
   var items = haloLyric.items;
@@ -2547,6 +2617,18 @@ function haloDrawRadialLyric(ctx, region) {
   var ease = haloEaseIO(phase);
   ctx.save();
   ctx.translate(s.cx, s.cy);
+  if (plan.mode === 'radial') {
+    // The straight line does not turn like a disc: it slides in along the ray and fades.
+    var slide = plan.font * 1.6;
+    if (rl.prev >= 0 && rl.prev !== cur && phase < 1 && items[rl.prev]) {
+      haloDrawRadialRow(ctx, items[rl.prev], plan, Math.min(0, phase * slide), 1 - phase * 0.5, pal);
+    }
+    if (items[cur]) {
+      haloDrawRadialRow(ctx, items[cur], plan, -Math.max(0, 1 - phase) * slide, Math.min(1, 0.35 + phase * 0.65), pal);
+    }
+    ctx.restore();
+    return;
+  }
   if (rl.prev >= 0 && rl.prev !== cur && phase < 1 && items[rl.prev]) {
     // The disc turns: the line being left behind has gone `ease` of the way to the seam,
     // the new one is still `1 - ease` of the way behind it.

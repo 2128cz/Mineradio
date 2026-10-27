@@ -159,20 +159,26 @@ function draw() {
 }
 
 const baseFont = sandbox.haloLyricFontPx();
+// `axial` is the console switch: on keeps the bent list whatever the camera shows, off is
+// the radial carrier. The camera only picks where on the ring the radial line sits.
 const cases = [
-  { name: 'the side view the preset ships with', pan: [0, 0, 1], want: 'side' },
-  { name: 'centred and zoomed in, only the middle on screen', pan: [CENTRE_PAN, 0, 2.2], want: 'inside' },
-  { name: 'centred, ring too big to fit', pan: [CENTRE_PAN, 0, 1.4], want: 'inside' },
+  { name: 'the side view the preset ships with', pan: [0, 0, 1], want: 'side', axial: 1 },
+  // With the switch off, the same side view gets the straight line inside the ring - the
+  // case where a bent line would stand on end, and the one that used to vanish.
+  { name: 'radial on, side view: a straight line inside the ring', pan: [0, 0, 1], want: 'inline', axial: 0 },
+  { name: 'centred and zoomed in, only the middle on screen', pan: [CENTRE_PAN, 0, 2.2], want: 'inside', axial: 0 },
+  { name: 'centred, ring too big to fit', pan: [CENTRE_PAN, 0, 1.4], want: 'inside', axial: 0 },
   // The ring fits, but the ring its outside text would ride on does not: the text goes
   // inside instead of being painted into the screen edge.
-  { name: 'centred, ring fits but not its outside text', pan: [CENTRE_PAN, 0, 0.7], want: 'inside' },
-  { name: 'looking at the bottom of the ring', pan: [CENTRE_PAN, 600, 1.6], want: 'bottom' },
-  { name: 'looking at the top of the ring', pan: [CENTRE_PAN, -600, 1.6], want: 'top' },
-  { name: 'the whole ring on screen', pan: [CENTRE_PAN, 0, 0.55], want: 'whole' }
+  { name: 'centred, ring fits but not its outside text', pan: [CENTRE_PAN, 0, 0.7], want: 'inside', axial: 0 },
+  { name: 'looking at the bottom of the ring', pan: [CENTRE_PAN, 600, 1.6], want: 'bottom', axial: 0 },
+  { name: 'looking at the top of the ring', pan: [CENTRE_PAN, -600, 1.6], want: 'top', axial: 0 },
+  { name: 'the whole ring on screen', pan: [CENTRE_PAN, 0, 0.55], want: 'whole', axial: 0 }
 ];
 
 const readings = [];
 for (const c of cases) {
+  sandbox.haloTuning.axialLyric = c.axial;
   camera(c.pan[0], c.pan[1], c.pan[2]);
   const frame = draw();
   assert.strictEqual(frame.region, c.want,
@@ -225,12 +231,41 @@ for (const c of cases) {
     assert(meanY(main) > VIEW_H / 2, 'a bottom view keeps the text in the lower half of the screen');
     assert(plan.r0 < plan.r1, 'a bottom view puts the original on the inner arc, which is the upper one there');
   }
+  if (c.want === 'inline') {
+    assert(Math.max(plan.r0, plan.r1) < s.R,
+      `the straight inside line must sit inside the ring (${plan.r0.toFixed(0)} against ${s.R.toFixed(0)})`);
+    assert(Math.abs(plan.r0 - (s.R - s.band * 1.1)) < 1e-6 || plan.r0 >= baseFont * 3,
+      'and ride the ring inner edge unless the screen is closer');
+  }
   if (c.want === 'inside') {
     assert(Math.max(plan.r0, plan.r1) < s.R, 'an inside carrier stays inside the ring');
+    assert(plan.r0 >= baseFont * 3 - 1e-6,
+      `an inside carrier must never collapse below a few line heights, got ${plan.r0.toFixed(0)}px`);
+    // When the ring fits the view, the carrier rides the ring's own fraction of its radius:
+    // moving the camera then carries it the way it carries everything else on the ring.
+    if (c.pan[2] === 0.7) {
+      assert(Math.abs(plan.r0 - s.R * 0.72) < 1e-6,
+        `an inside carrier that fits must ride the ring (${plan.r0.toFixed(1)} against ${(s.R * 0.72).toFixed(1)})`);
+    }
   }
 }
 
 console.log('  carriers: ' + readings.join(' | '));
+
+// The console decides the carrier; the camera only decides where the radial line sits.
+{
+  sandbox.haloTuning.axialLyric = 1;
+  for (const pan of [[0, 0, 1], [CENTRE_PAN, 0, 0.55], [CENTRE_PAN, 600, 1.6], [CENTRE_PAN, 0, 2.2]]) {
+    camera(pan[0], pan[1], pan[2]);
+    assert.strictEqual(sandbox.haloViewRegion(), 'side',
+      'with 侧边轴向歌词 on, the list stays whatever the camera shows');
+  }
+  sandbox.haloTuning.axialLyric = 0;
+  camera(0, 0, 1);
+  assert.strictEqual(sandbox.haloViewRegion(), 'inline',
+    'with the switch off, even the side view uses the radial carrier - never the list');
+  sandbox.haloTuning.axialLyric = 1;
+}
 
 // The seam: where a line is born and dies. It is the point opposite the read mark, the same
 // point the dial's rows are cut at, so the read-angle knob moves both carriers alike.
@@ -269,6 +304,7 @@ console.log('  carriers: ' + readings.join(' | '));
 // The disc: a line change swings the old line towards the seam and brings the new one in on
 // the same wheel. Mid-swing both are painted, on opposite sides of where the line reads.
 {
+  sandbox.haloTuning.axialLyric = 0;
   camera(CENTRE_PAN, -600, 1.6);
   const cur = sandbox.haloLyric.current;
   sandbox.haloLyric.radial = { item: cur, prev: cur - 1, phase: 0.5, startAt: 0, dur: 1 };
@@ -304,6 +340,7 @@ console.log('  carriers: ' + readings.join(' | '));
 // The colour is the app's lyric colour, not one of the ring's own: a custom colour reaches
 // the glyphs, and moving it moves them.
 {
+  sandbox.haloTuning.axialLyric = 0;
   camera(CENTRE_PAN, 0, 0.55);
   const before = draw();
   const mainFill = before.glyphs.find((g) => (g.fontPx || 0) >= before.plan.font * 0.9).fill;
@@ -323,12 +360,32 @@ console.log('  carriers: ' + readings.join(' | '));
 // The axial carrier paints with the same palette: the row being sung is the highlight and
 // the others the lyric colour.
 {
+  sandbox.haloTuning.axialLyric = 1;
   camera(0, 0, 1);
   const frame = draw();
   assert.strictEqual(frame.region, 'side', 'the shipped framing is the axial carrier');
   const fills = frame.glyphs.map((g) => g.fill);
   assert(fills.some((f) => /255,240,184/.test(f)), 'the sung row must use the highlight colour');
   assert(fills.some((f) => /126,200,216/.test(f)), 'the other rows must use the lyric colour');
+}
+
+// The camera reset: dragging and zooming are not knobs, so they get their own way back. The
+// function is read out of the store module and run, rather than trusted by its shape.
+{
+  const tuningPath = process.env.HALO_TUNING_PATH
+    ? path.resolve(process.env.HALO_TUNING_PATH)
+    : path.join(__dirname, '..', 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const start = tuningText.indexOf('function resetHaloCamera(');
+  assert(start > 0, 'the ring camera needs a reset of its own, separate from the knobs');
+  const end = tuningText.indexOf('\n}', start) + 2;
+  const context = { haloCam: { panX: 240, panY: -80, zoom: 1.7 }, showToast() {} };
+  vm.createContext(context);
+  vm.runInContext(tuningText.slice(start, end) + '\nthis.reset = resetHaloCamera;', context);
+  context.reset();
+  assert.strictEqual(context.haloCam.panX, 0, 'the reset must put the pan back horizontally');
+  assert.strictEqual(context.haloCam.panY, 0, 'and vertically');
+  assert.strictEqual(context.haloCam.zoom, 1, 'and the zoom');
 }
 
 console.log('[OK] The ring picks its lyric carrier from the camera, keeps the text on screen and paints it in the app\'s colours.');

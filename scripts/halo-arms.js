@@ -507,10 +507,19 @@ function checkHaloRotationArms(haloText, fail) {
     fail('the ring has to derive its own rotation from the dial by taking the re-anchors back out');
   }
   // Every place that re-anchors the list has to remember that it did, or the effects follow
-  // the bookkeeping.
-  const anchors = (haloText.match(/haloLyric\.rebase \+= rebase\d?;/g) || []).length;
-  if (anchors !== 3) {
-    fail(`the lyric dial re-anchors in three places and must remember each one; found ${anchors} of 3`);
+  // the bookkeeping. The shift lives in one helper now; what matters is that the helper
+  // records it and that every path which moves the dial calls it.
+  const anchorFn = haloSliceFunction(haloText, 'haloAnchorLyric');
+  if (!anchorFn || !/haloLyric\.rebase \+= shift;/.test(anchorFn)) {
+    fail('the re-anchor helper must add its shift to haloLyric.rebase, or the effects follow the bookkeeping');
+  }
+  if (!/haloLyric\.rebase \+= rebase;/.test(haloText)) {
+    fail('a finished turn must still record its re-anchor');
+  }
+  const updateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
+  const calls = updateFn ? (updateFn.match(/haloAnchorLyric\(/g) || []).length : 0;
+  if (calls < 4) {
+    fail(`every path that moves the dial must re-anchor the list, found ${calls} of at least 4`);
   }
   const buildFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
   if (buildFn && !buildFn.includes('haloLyric.rebase = 0;')) {
@@ -579,6 +588,15 @@ function checkHaloRadialArms(haloText, fail) {
   }
   if (!/if \(centred && fits\) return 'whole';/.test(regionFn)) {
     fail('the whole-ring carrier must be chosen only when the ring its text rides on fits too');
+  }
+  if (!/if \(haloParam\('axialLyric'\) > 0\) return 'side';/.test(regionFn)) {
+    fail('the console switch must decide the carrier; the camera must not flip it back to the list');
+  }
+  if ((regionFn.match(/'side'/g) || []).length !== 1) {
+    fail('the radial region logic must never return the axial list: the switch is the only way to it');
+  }
+  if (!/var inside = Math\.min\(attached, screenMax\);/.test(planFn)) {
+    fail('an inside carrier must ride the ring radius and only give way to the screen');
   }
   if (!/return 'inside'/.test(regionFn)) {
     fail('a ring that is on screen but too big to fit its outside text must carry the text inside it');
