@@ -32,7 +32,6 @@
 var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four places)
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
-var HALO_LYRIC_MIN_SCALE = 0.5;     // a line never shrinks below this
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
 var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
@@ -60,11 +59,14 @@ var HALO_TUNING_SCHEMA = {
   spectrumGain: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
   shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
+  levelGain: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
   readAngle: { def: 0, min: -180, max: 180, kind: 'deg', rebuild: 'lyric' },
   textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
   lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
+  lyricRows: { def: 7, min: 1, max: 16, kind: 'count', rebuild: 'live' },
   rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
   rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
+  beatTurn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   panelRefresh: { def: 5, min: 1, max: 12, kind: 'count', rebuild: 'live' }
 };
 
@@ -125,10 +127,19 @@ var haloState = {
   dpr: 1,
   time: 0,
   ringRot: 0,
+  // The ring's rotation as the things painted on it see it. The lyric dial re-anchors its
+  // own angles when a turn finishes (so the angles stay small), and that bookkeeping must
+  // not move anything else: it subtracts the same amount from `rot` and from the line
+  // angles, which cancels for a lyric line and shows up as a snap for every other element.
+  // This is `ringRot` with the re-anchors taken back out: it moves when the ring turns and
+  // stays put when the list re-anchors.
+  decoRot: 0,
   webRot: 0,
   idleSpin: 0,
+  beat: { step: 0, origin: 0, source: '' },   // the tempo grid the turn timing is taken from
   ringPulse: 0,      // the beat's envelope: 1 at the hit, decaying after it
   pulse: 1,          // the scale the whole ring is drawn at
+  levelGate: 0,      // how much of the beat the sound allows, 0 in silence
   shakeX: 0,
   shakeY: 0,
   basePanX: 0,       // the framing knobs' own pan, in world units
@@ -159,6 +170,8 @@ var haloLyric = {
   current: -1,
   pending: -1,
   rot: 0,
+  rebase: 0,     // the total by which the line angles have been re-anchored; haloState.decoRot takes it back out
+  turnSource: '', // which producer decided the last turn's timing, printed by the status probe
   tween: null,
   baseAngle: 0,
   builtFontPx: 0,     // the font the measured widths belong to
@@ -575,12 +588,15 @@ function haloReadAudioBands(t) {
     return;
   }
   a.kickOnset = 0;
-  var analyser = (typeof analyser !== 'undefined') ? analyser : null;
-  if (!analyser || typeof analyser.getByteFrequencyData !== 'function') return;
-  var bins = analyser.frequencyBinCount || 0;
+  // The analyser is a global of the app. It must not be named `analyser` here: a local
+  // `var analyser` shadows the global from the top of the function, so `typeof analyser`
+  // would always be 'undefined' and the fallback would never read anything.
+  var an = (typeof analyser !== 'undefined') ? analyser : null;
+  if (!an || typeof an.getByteFrequencyData !== 'function') return;
+  var bins = an.frequencyBinCount || 0;
   if (!bins) return;
   if (!a.buffer || a.buffer.length !== bins) a.buffer = new Uint8Array(bins);
-  try { analyser.getByteFrequencyData(a.buffer); } catch (err) { return; }
+  try { an.getByteFrequencyData(a.buffer); } catch (err) { return; }
   var nyquist = 22050;
   var sampleRate = (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate : 44100;
   nyquist = sampleRate / 2;
@@ -758,8 +774,6 @@ function haloReadAngle() { return haloParam('readAngle') * Math.PI / 180; }
 // every line starts on its own radial line at the rim and runs outward from there, so the
 // block still reads top to bottom, one row per line.
 function haloBuildLyricRing() {
-  var canvas = haloCanvasElement();
-  var ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
   // A different list of lines is new evidence for 自动, the same way a new plan is for the PV
   // layer: the decision belongs to one song's content and does not carry into the next.
   var prevKey = haloLyric.songKey;
@@ -772,39 +786,23 @@ function haloBuildLyricRing() {
   haloLyric.pending = -1;
   haloLyric.tween = null;
   haloLyric.rot = haloReadAngle();
+  haloLyric.rebase = 0;
   haloLyric.baseAngle = 0;
   var fontPx = haloLyricFontPx();
-  var measure = ctx || null;
-  // The characters are measured with the font they will be drawn in, otherwise the line
-  // lengths are computed against the default 10px face and the list does not line up.
-  if (measure) {
-    measure.save();
-    measure.font = '600 ' + fontPx + 'px ' + HALO_FONT;
-  }
   // One row per line: the step is a line height plus the gap the user asked for.
-  var step = (fontPx * 1.45 + haloParam('lineGap')) / Math.max(1, haloState.RO);
+  var step = haloLyricStep();
   var acc = 0;
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
     var text = String((line && line.text) || '').trim();
     if (!text) continue;
-    var chars = Array.from(text);
-    var widths = [];
-    var total = 0;
-    for (var c = 0; c < chars.length; c++) {
-      var w = measure ? measure.measureText(chars[c]).width : chars[c].length * fontPx;
-      if (!isFinite(w) || w <= 0) w = fontPx * 0.6;
-      widths.push(w);
-      total += w;
-    }
-    // The room on a ray changes while the ring turns, so the fit is not decided here:
-    // the line keeps its measured width and is fitted when it is drawn.
+    // The width is not measured here: only the lines inside the window are measured, and
+    // only when they are drawn. A song has hundreds of lines and the dial shows a handful.
     var item = {
       index: haloLyric.items.length,
       text: text,
-      chars: chars,
-      widths: widths,
-      textWidth: total,
+      textWidth: 0,      // measured with the font of the row that shows it
+      widthFontPx: 0,
       angle: acc,
       startAt: Math.max(0, (Number(line.t) || 0) + offset),
       sub: ''
@@ -813,11 +811,109 @@ function haloBuildLyricRing() {
     haloLyric.items.push(item);
     acc += step;
   }
-  if (measure) measure.restore();
   haloLyric.builtFontPx = fontPx;
   haloLyric.songKey = haloLyricSignature();
   if (prevKey !== haloLyric.songKey) haloAutoReset('a new lyric list');
   return haloLyric.items.length;
+}
+
+// The row height of the dial as the angle it takes on the ring: one line plus the gap.
+function haloLyricStep() {
+  return (haloLyricFontPx() * 1.45 + haloParam('lineGap')) / Math.max(1, haloState.RO);
+}
+
+// How many lines the dial may hold. The list is a window around the line being sung, not
+// the whole song: with every line laid out on the ring, a long song spread its words over
+// the full circle, so lines that are not being sung yet read side by side - some of them
+// on the far side of the ring.
+function haloLyricWindow() {
+  var items = haloLyric.items;
+  var rows = Math.max(1, Math.round(haloParam('lyricRows')));
+  var anchor = haloLyric.current < 0 ? 0 : haloLyric.current;
+  var from = Math.max(0, anchor - Math.ceil(rows / 2));
+  var to = Math.min(items.length - 1, from + rows - 1);
+  return { from: from, to: to, rows: rows };
+}
+
+// Half the angle the window covers, with the thickness of a row in it. The mask is drawn
+// over this arc around the read mark, so a line that leaves the window is cut there rather
+// than reappearing somewhere else on the ring.
+function haloLyricArcHalf(win) {
+  var textR = haloState.RO + haloParam('textGap');
+  var step = haloLyricStep();
+  return (Math.max(0, win.rows - 1) / 2) * step + step + (haloLyricFontPx() * 1.6) / Math.max(1, textR);
+}
+
+// The width of a line, measured with the font of the row that shows it and kept for the
+// frames it stays in the window.
+function haloLyricWidth(item, ctx, fontPx) {
+  if (item.textWidth > 0 && item.widthFontPx === fontPx) return item.textWidth;
+  var w = ctx && typeof ctx.measureText === 'function' ? ctx.measureText(item.text).width : 0;
+  if (!isFinite(w) || w <= 0) w = item.text.length * fontPx * 0.6;
+  item.textWidth = w;
+  item.widthFontPx = fontPx;
+  return w;
+}
+
+// The song's beat grid: how far apart its rhythm points are, and a beat to count them from.
+//
+// The point of the whole thing is that this spacing is fixed for a song, so it can drive how
+// fast the ring turns: a fast song turns fast, a slow song turns slow. Three producers, in
+// the order the app trusts its own data: the beat map's grid step, the gaps between the map's
+// own beat times (older caches and podcast maps carry no step), then the realtime tempo
+// tracker. `step: 0` means none of them knows, and `source` says which one was reached.
+function haloBeatGrid() {
+  haloState.beat = { step: 0, origin: 0, source: 'knob off' };
+  if (!(haloParam('beatTurn') > 0)) return haloState.beat;
+  var map = (typeof currentBeatMap !== 'undefined' && currentBeatMap) ? currentBeatMap : null;
+  var list = (haloBeat.source === 'map' && haloBeat.list.length >= 4) ? haloBeat.list : null;
+  var step = map ? Number(map.gridStep) || 0 : 0;
+  if (!(step > 0.15 && step <= 2) && list) {
+    var gaps = [];
+    for (var i = 1; i < Math.min(list.length, 12); i++) {
+      var d = list[i].t - list[i - 1].t;
+      if (d > 0.15 && d <= 2) gaps.push(d);
+    }
+    if (gaps.length) {
+      gaps.sort(function (a, b) { return a - b; });
+      step = gaps[gaps.length >> 1];
+    }
+  }
+  if (step > 0.15 && step <= 2 && list) {
+    haloState.beat = { step: step, origin: list[0].t, source: 'beat map' };
+    return haloState.beat;
+  }
+  var rt = (typeof rtBeat !== 'undefined' && rtBeat) ? Number(rtBeat.tempoGap) || 0 : 0;
+  if (rt > 0.15 && rt <= 2) {
+    haloState.beat = { step: rt, origin: Number(rtBeat.lastHitAt) || 0, source: 'realtime' };
+    return haloState.beat;
+  }
+  haloState.beat = { step: 0, origin: 0, source: map ? 'beat map has no grid' : 'no beat map, no realtime tempo' };
+  return haloState.beat;
+}
+
+// When the ring starts turning for the line that begins at `startAt`, and for how long.
+//
+// With the knob off, that is the framing the console gives: rotLead seconds of lead and
+// rotDur seconds of travel. With it on, the tempo decides: one beat of travel, and the start
+// snapped back onto a beat, so the movement lands with the rhythm instead of stopping
+// somewhere between two beats. The turn always ends on the line, because the sung line has
+// to arrive at the read mark.
+function haloTurnWindow(startAt) {
+  var grid = haloBeatGrid();
+  if (grid.step > 0 && grid.origin) {
+    var start = grid.origin + Math.floor((startAt - grid.step - grid.origin) / grid.step) * grid.step;
+    if (start < startAt - grid.step * 2) start = startAt - grid.step * 2;
+    var dur = startAt - start;
+    if (dur > 0.05) return { startAt: start, dur: dur, source: grid.source + ' beat ' + grid.step.toFixed(3) + 's' };
+  }
+  return {
+    startAt: startAt - Math.max(0, haloParam('rotLead')),
+    dur: Math.max(0.05, haloParam('rotDur')),
+    // Starts with 'knobs' on purpose: the reason the knobs won is printed after it, and a
+    // reader (or a test) must not mistake that reason for the tempo having decided.
+    source: 'knobs, because ' + grid.source
+  };
 }
 
 function haloLyricUpdate(t) {
@@ -833,10 +929,13 @@ function haloLyricUpdate(t) {
   if (sung < 0) sung = 0;
   if (upcoming < 0) upcoming = items.length - 1;
 
-  // The turn starts rotLead seconds before the line and lasts rotDur seconds: the
-  // knob is the speed of the turn, not a by-product of how much time was left.
-  var dur = Math.max(0.05, haloParam('rotDur'));
-  var turnStart = items[upcoming].startAt - Math.max(0, haloParam('rotLead'));
+  // The turn starts on the song's beat grid when the app knows it (the 按节拍转环 knob), and
+  // on the console's own lead otherwise: the knob is the speed of the turn, not a by-product
+  // of how much time was left.
+  var turn = haloTurnWindow(items[upcoming].startAt);
+  var dur = turn.dur;
+  var turnStart = turn.startAt;
+  haloLyric.turnSource = turn.source;
 
   if (haloLyric.tween) {
     var tw = haloLyric.tween;
@@ -860,6 +959,7 @@ function haloLyricUpdate(t) {
         var rebase = items[tw.item].angle;
         for (var j = 0; j < items.length; j++) items[j].angle -= rebase;
         haloLyric.rot += rebase;
+        haloLyric.rebase += rebase;
       }
       return;
     }
@@ -879,6 +979,7 @@ function haloLyricUpdate(t) {
     var rebase2 = items[sung].angle;
     for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
     haloLyric.rot += rebase2;
+    haloLyric.rebase += rebase2;
     return;
   }
 
@@ -891,6 +992,7 @@ function haloLyricUpdate(t) {
     var rebase3 = items[upcoming].angle;
     for (var n = 0; n < items.length; n++) items[n].angle -= rebase3;
     haloLyric.rot += rebase3;
+    haloLyric.rebase += rebase3;
     return;
   }
   haloLyric.pending = upcoming;
@@ -1110,7 +1212,7 @@ function haloBuildSlots() {
 function haloSlotVisible(slot) {
   var s = haloState;
   var mid = s.R + s.band * 0.42;
-  var angle = slot.a + haloState.ringRot;
+  var angle = slot.a + haloState.decoRot;
   var p = haloToScreen(s.cx + Math.cos(angle) * mid, s.cy + Math.sin(angle) * mid);
   return p.x > -140 && p.x < s.w + 140 && p.y > -140 && p.y < s.h + 140;
 }
@@ -1502,26 +1604,65 @@ function haloBuildStrands() {
 
 // How far out the screen reaches along a given direction: the distance from the ring's
 // centre to the viewport edge, measured along that ray.
-function haloVisibleRadius(angle) {
+//
+// The ray starts at the ring's centre, because that is the point the world is arranged
+// around: the camera transform puts the centre wherever the framing knobs and the user's
+// own pan put it, and everything on the ring is measured from there. Measuring from the
+// world origin instead (the transform's own offset) keeps the wrong rays and drops the
+// ones that are really on screen, which is what made the decorations and the lyrics
+// appear and vanish as the ring was dragged.
+//
+// Both ends of the run matter. The centre is off screen in the default framing (and
+// whenever the user pans it out), and then the screen does not start at the centre: the
+// ray first crosses a viewport edge at `enter`. A test on the exit alone keeps the stretch
+// between the centre and that edge, which is drawn for nothing and, for a lyric line,
+// starts the text off screen.
+function haloVisibleSpan(angle) {
   var s = haloState;
   var z = haloSceneZoom(1);
-  var sx0 = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
-  var sy0 = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
+  var ox = s.w / 2 - haloCam.zoom * haloPanTotalX() + s.shakeX;
+  var oy = s.h / 2 - haloCam.zoom * haloPanTotalY() + s.shakeY;
   var ca = Math.cos(angle);
   var sa = Math.sin(angle);
-  var t = Infinity;
-  if (ca > 1e-6) t = Math.min(t, (s.w - sx0) / (z * ca));
-  else if (ca < -1e-6) t = Math.min(t, (0 - sx0) / (z * ca));
-  if (sa > 1e-6) t = Math.min(t, (s.h - sy0) / (z * sa));
-  else if (sa < -1e-6) t = Math.min(t, (0 - sy0) / (z * sa));
-  if (!isFinite(t)) return 1e9;
-  return t > 0 ? t : 0;
+  var enter = 0;
+  var exit = Infinity;
+  if (Math.abs(ca) > 1e-6) {
+    var tx1 = (0 - ox) / (z * ca);
+    var tx2 = (s.w - ox) / (z * ca);
+    enter = Math.max(enter, Math.min(tx1, tx2));
+    exit = Math.min(exit, Math.max(tx1, tx2));
+  } else if (ox < 0 || ox > s.w) {
+    return { enter: Infinity, exit: -Infinity };
+  }
+  if (Math.abs(sa) > 1e-6) {
+    var ty1 = (0 - oy) / (z * sa);
+    var ty2 = (s.h - oy) / (z * sa);
+    enter = Math.max(enter, Math.min(ty1, ty2));
+    exit = Math.min(exit, Math.max(ty1, ty2));
+  } else if (oy < 0 || oy > s.h) {
+    return { enter: Infinity, exit: -Infinity };
+  }
+  if (exit < enter) return { enter: Infinity, exit: -Infinity };
+  return { enter: enter, exit: exit };
+}
+
+// Does the stretch [r0, r1] of the ray at `angle` reach the screen?
+function haloRayVisible(angle, r0, r1) {
+  var span = haloVisibleSpan(angle);
+  return span.exit >= r0 && span.enter <= r1;
 }
 
 function haloWedgeVisible(wedge, layer) {
-  var rot = haloState.ringRot * layer.rotK + layer.off;
+  var s = haloState;
+  var rot = s.decoRot * layer.rotK + layer.off;
+  var r0 = s.RO + 3;
+  // A wedge is a block of lines over its own angular span (up to about 20deg on the dense
+  // layer). Deciding the block on its middle ray alone drops the whole block, the lines
+  // that are still on screen with it, so the block's two edges get a say too.
+  var a0 = (wedge.i0 + 0.5) * layer.step + rot;
+  var a1 = (wedge.i0 + wedge.n - 0.5) * layer.step + rot;
   var mid = (wedge.i0 + wedge.n / 2) * layer.step + rot;
-  return haloVisibleRadius(mid) > haloState.RO;
+  return haloRayVisible(a0, r0, s.RMAX) || haloRayVisible(mid, r0, s.RMAX) || haloRayVisible(a1, r0, s.RMAX);
 }
 
 function haloUpdateStrands(dt, env) {
@@ -1536,7 +1677,7 @@ function haloUpdateStrands(dt, env) {
     var layer = haloStrandLayers[i];
     for (var w = 0; w < layer.wedges.length; w++) {
       var wedge = layer.wedges[w];
-      var rot = s.ringRot * layer.rotK + layer.off;
+      var rot = s.decoRot * layer.rotK + layer.off;
       var am = haloNormAngle((wedge.i0 + wedge.n / 2) * layer.step + rot);
       wedge.vis = haloWedgeVisible(wedge, layer);
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
@@ -1620,7 +1761,7 @@ function haloDrawStrands(ctx, layer, collect) {
   var s = haloState;
   var span = (s.RMAX - s.RO - 20) * haloParam('beamLength');
   var r0 = s.RO + 3;
-  var rot = s.ringRot * layer.rotK + layer.off;
+  var rot = s.decoRot * layer.rotK + layer.off;
   var edgeAlpha = [0.28, 0.62, 1];
   ctx.lineCap = 'butt';
   for (var i = 0; i < layer.wedges.length; i++) {
@@ -1716,7 +1857,7 @@ function haloSpawnComet(ang, travel, weight, hitAt) {
     win: haloRand(0.22, 0.4),
     glow: Math.random() < 0.4,
     tint: Math.random() < 0.15,
-    rot0: s.ringRot,
+    rot0: s.decoRot,
     hit: false,
     angle: ang
   });
@@ -1756,7 +1897,7 @@ function haloFlashSlotAt(angle) {
   var bd = 9;
   for (var i = 0; i < haloSlotList.length; i++) {
     var slot = haloSlotList[i];
-    var d = Math.abs(haloNormAngle(slot.a + haloState.ringRot - angle));
+    var d = Math.abs(haloNormAngle(slot.a + haloState.decoRot - angle));
     if (d < bd) { bd = d; best = slot; }
   }
   if (best && bd < 0.12) best.flash = Math.max(best.flash, 0.8);
@@ -1773,7 +1914,7 @@ function haloUpdateComets(dt) {
     }
     if (!c.hit && haloPlayheadSeconds() >= c.endAt) {
       c.hit = true;
-      haloFlashSlotAt(c.angle + (haloState.ringRot - c.rot0));
+      haloFlashSlotAt(c.angle + (haloState.decoRot - c.rot0));
     }
   }
 }
@@ -1794,7 +1935,7 @@ function haloDrawComets(ctx) {
     var fade = c.life > span ? Math.max(0, 1 - (c.life - span) / 0.25) : 1;
     if (fade <= 0) continue;
     ctx.save();
-    ctx.rotate(s.ringRot - c.rot0);
+    ctx.rotate(s.decoRot - c.rot0);
     var col = c.tint ? '200,190,250' : '255,255,255';
     ctx.strokeStyle = 'rgba(' + col + ',' + (0.5 * fade).toFixed(3) + ')';
     ctx.lineWidth = 1;
@@ -1833,7 +1974,7 @@ function haloNewFlyer(init) {
   }
   var s = haloState;
   return {
-    a: a - s.ringRot,
+    a: a - s.decoRot,
     len: 20 + Math.pow(Math.random(), 2) * 320,
     r: init ? haloRand(s.RO, s.RMAX) : s.RO + haloRand(0, 25),
     sp: haloRand(260, 900),
@@ -1885,7 +2026,7 @@ function haloSpawnFlyBurst() {
   var lv = Math.random() < 0.45 ? 2 : 1;
   for (var i = 0; i < n; i++) {
     haloFlyerList.push({
-      a: a + (i / n - 0.5) * spread + haloGauss() * 0.0015 - s.ringRot,
+      a: a + (i / n - 0.5) * spread + haloGauss() * 0.0015 - s.decoRot,
       len: len * haloRand(0.7, 1.15),
       r: r0 - haloRand(0, len * 0.35),
       sp: sp * haloRand(0.92, 1.08),
@@ -1910,9 +2051,8 @@ function haloDrawFlyers(ctx, bursts) {
   for (var i = 0; i < haloFlyerList.length; i++) {
     var f = haloFlyerList[i];
     if (f.burst !== bursts) continue;
-    var a = haloNormAngle(f.a + s.ringRot);
-    var reach = haloVisibleRadius(a);
-    if (f.r - f.len > reach) continue;
+    var a = haloNormAngle(f.a + s.decoRot);
+    if (!haloRayVisible(a, Math.max(s.RO + 3, f.r - f.len), f.r)) continue;
     var key = f.tint * 10 + f.lv + (f.lw > 1.15 ? 100 : 0) + (f.burst ? 1000 : 0);
     if (!buckets[key]) { buckets[key] = []; order.push(key); }
     buckets[key].push(f, a);
@@ -1970,7 +2110,7 @@ function haloRadialLines(ctx, a0, a1, step, r0, L, seed, lo) {
 function haloSpawnHaze(init) {
   var k = Math.random();
   haloHazeList.push({
-    a: haloRand(0, HALO_TAU) - haloState.ringRot,
+    a: haloRand(0, HALO_TAU) - haloState.decoRot,
     w: Math.random() < 0.7 ? haloRand(0.015, 0.07) : haloRand(0.08, 0.18),
     len: haloRand(0.35, 1),
     cur: init ? haloRand(0.2, 0.8) : 0,
@@ -1985,7 +2125,7 @@ function haloSpawnHaze(init) {
 
 function haloSpawnFlare(a) {
   haloFlareList.push({
-    a: a == null ? haloRand(0, HALO_TAU) * 0.95 - haloState.ringRot : a,
+    a: a == null ? haloRand(0, HALO_TAU) * 0.95 - haloState.decoRot : a,
     w: haloRand(0.006, 0.04),
     len: haloRand(18, 110),
     age: 0,
@@ -2046,7 +2186,7 @@ function haloDrawHaze(ctx) {
     if (e <= 0.01) continue;
     var L = h.cur * span;
     if (L < 4) continue;
-    var mid = h.a + s.ringRot + h.drift * h.age;
+    var mid = h.a + s.decoRot + h.drift * h.age;
     haloRadialLines(ctx, mid - h.w / 2, mid + h.w / 2, step, r0, L, h.seed, 0.45);
     ctx.strokeStyle = haloGradient['h' + h.tint] || haloGradient.h1;
     var haze = haloParam('hazeAmount');
@@ -2074,7 +2214,7 @@ function haloDrawFlares(ctx) {
     var e = (t < 0.15 ? t / 0.15 : Math.pow(1 - (t - 0.15) / 0.85, 2)) * f.alpha;
     if (e <= 0.01) continue;
     var L = f.len * (0.6 + 0.4 * haloEaseOut(Math.min(1, t * 3)));
-    var mid = f.a + s.ringRot;
+    var mid = f.a + s.decoRot;
     haloRadialLines(ctx, mid - f.w / 2, mid + f.w / 2, step, r0, L, f.seed, 0.4);
     ctx.globalAlpha = Math.min(1, e * 0.06);
     ctx.lineWidth = 2.6;
@@ -2149,7 +2289,7 @@ function haloDrawRing(ctx, dt) {
     if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 2.2);
     if (!slot.c) continue;
     if (!haloSlotVisible(slot)) continue;
-    var A = slot.a + s.ringRot;
+    var A = slot.a + s.decoRot;
     var hh = slot.hpx + 2;
     ctx.save();
     ctx.rotate(A);
@@ -2168,13 +2308,15 @@ function haloDrawRing(ctx, dt) {
 }
 
 // Ticks are culled against the viewport instead of the original's half-plane test: the
-// original's ring sat at the left edge, this one sits in the middle.
-function haloRingTicks(stepRad, fn) {
+// original's ring sat at the left edge, this one sits in the middle. Each loop names the
+// radii it really draws at — the hairlines are in the band, the inner ticks inside R and
+// the outer ones past RO — because one shared threshold keeps the wrong set.
+function haloRingTicks(stepRad, r0, r1, fn) {
   var s = haloState;
   var count = Math.ceil(HALO_TAU / stepRad);
   for (var n = 0; n < count; n++) {
-    var a = n * stepRad + s.ringRot;
-    if (haloVisibleRadius(a) < s.R) continue;
+    var a = n * stepRad + s.decoRot;
+    if (!haloRayVisible(a, r0, r1)) continue;
     fn(Math.cos(a), Math.sin(a), n, a);
   }
 }
@@ -2185,7 +2327,7 @@ function haloDrawRim(ctx) {
   var pulse = s.ringPulse || 0;
   ctx.beginPath();
   var step = 0.5 * Math.PI / 180;
-  haloRingTicks(step, function (ca, sa, n) {
+  haloRingTicks(step, s.R, s.RO, function (ca, sa, n) {
     var m = ((n % 6) + 6) % 6;
     var li = m === 0 ? RB : RB * (0.5 + 0.35 * haloHash(n));
     var lo = m === 0 ? RB : RB * (0.5 + 0.35 * haloHash(n + 77));
@@ -2220,11 +2362,11 @@ function haloDrawRim(ctx) {
   ctx.globalCompositeOperation = 'source-over';
   arc(s.RO, 1.3, 0.95);
   ctx.beginPath();
-  haloRingTicks(1 * Math.PI / 180, function (ca, sa) {
+  haloRingTicks(1 * Math.PI / 180, s.R - 5, s.R - 2, function (ca, sa) {
     ctx.moveTo(ca * (s.R - 2), sa * (s.R - 2));
     ctx.lineTo(ca * (s.R - 5), sa * (s.R - 5));
   });
-  haloRingTicks(0.25 * Math.PI / 180, function (ca, sa, n) {
+  haloRingTicks(0.25 * Math.PI / 180, s.RO + 2, s.RO + 11, function (ca, sa, n) {
     var m = ((n % 20) + 20) % 20;
     var L = m === 0 ? 9 : m % 5 === 0 ? 5 : 2.5;
     ctx.moveTo(ca * (s.RO + 2), sa * (s.RO + 2));
@@ -2237,43 +2379,59 @@ function haloDrawRim(ctx) {
 
 // The lyric list is an ordinary left-aligned list that has been bent over the ring's
 // edge: every line starts on its own radial line at the rim and runs outward from
-// there, so the block still reads top to bottom, one row per line.
+// there, so the block still reads top to bottom, one row per line. The line being sung
+// sits on the read mark, which is the middle of the block: the lines already sung are
+// above it and the ones still to come below, so the list runs in at the bottom and out
+// at the top.
+//
+// The block is a window, not the whole song. It holds lyricRows lines; the rest of the
+// song is not measured and not drawn, and a mask over the window's arc cuts a line that
+// has scrolled past the end rather than letting it reappear on the other side of the ring.
 function haloDrawLyricText(ctx) {
   var s = haloState;
   var items = haloLyric.items;
   if (!items.length) return;
   var fontPx = haloLyricFontPx();
   var textR = s.RO + haloParam('textGap');
+  var read = haloReadAngle();
+  var win = haloLyricWindow();
+  var arcHalf = haloLyricArcHalf(win);
   ctx.save();
   ctx.translate(s.cx, s.cy);
   ctx.textBaseline = 'middle';
-  for (var i = 0; i < items.length; i++) {
+  ctx.beginPath();
+  ctx.arc(0, 0, textR - fontPx, read - arcHalf, read + arcHalf);
+  ctx.arc(0, 0, s.RMAX * 4, read + arcHalf, read - arcHalf, true);
+  ctx.closePath();
+  ctx.clip();
+  for (var i = win.from; i <= win.to; i++) {
     var item = items[i];
+    if (!item) continue;
     var center = item.angle + s.ringRot;
-    if (haloVisibleRadius(center) < s.RO) continue;
     var current = i === haloLyric.current;
-    var near = Math.abs(haloNormAngle(center - haloReadAngle()));
+    // The screen's own run along this ray. The ring's centre sits off screen, so a line
+    // that starts between the centre and the edge of the screen would be drawn with its
+    // first words already gone.
+    var span = haloVisibleSpan(center);
+    if (span.enter > textR || span.exit < textR) continue;
+    var near = Math.abs(haloNormAngle(center - read));
     var focus = current ? 1 : Math.max(0.12, 1 - near * 1.6);
     var alpha = current ? 1 : 0.16 + 0.5 * focus;
-    var size = current ? fontPx : fontPx * 0.92;
+    var size = fontPx;
+    // One size for every row, whatever the line says. A row used to be scaled down to fit
+    // the room its own ray had, and that room is measured through the camera - so the text
+    // shrank as the ring pulsed to the beat, and a long line was smaller than a short one.
+    // A line that does not fit runs off the edge of the screen the way a list scrolls off
+    // its container; nothing about the font depends on how much of the ray is left.
+    ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
+    var drawnW = haloLyricWidth(item, ctx, fontPx);
     // The line runs away from the centre. On the left half of the ring that would put
     // the glyphs upside down, so there the line is turned around and anchored by its
     // far end instead; the reading direction stays left to right either way.
     var flip = Math.cos(center) < 0;
     ctx.save();
     ctx.rotate(flip ? center + Math.PI : center);
-    ctx.font = '600 ' + size.toFixed(1) + 'px ' + HALO_FONT;
-    // The ring turns, so the room on this ray changes from frame to frame: the fit is
-    // taken here, on the angle the line actually sits at, not on the angle it was
-    // built at. A line that used to be fitted against a ray pointing off screen would
-    // otherwise be drawn tiny for the rest of the song.
-    var drawnW = item.textWidth * (size / fontPx);
-    var allow = haloVisibleRadius(center) - textR;
-    var sc = drawnW > 0 ? Math.min(1, Math.max(HALO_LYRIC_MIN_SCALE, allow / drawnW)) : 1;
-    var width = drawnW * sc;
-    // Anchored at the rim, then scaled, so a long line still fits on its own ray.
-    ctx.translate(flip ? -(textR + width) : textR, 0);
-    ctx.scale(sc, sc);
+    ctx.translate(flip ? -(textR + drawnW) : textR, 0);
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(238,241,248,' + alpha.toFixed(3) + ')';
     ctx.fillText(item.text, 0, 0);
@@ -2511,16 +2669,35 @@ function haloRebuild() {
   return true;
 }
 
+// How much of the beat the sound allows. The beat map is a fixed timeline: it fires on
+// the grid whatever the music is doing, so a silent passage - or a track that is not
+// playing at all - used to shake the ring just like a chorus. The level is the honest
+// signal: no sound, no motion. The level of most music sits well below 1, so it is
+// scaled up before it is clamped. The knob at zero turns the gate off, which is the
+// old behaviour: the beat moves the ring whatever the music does.
+function haloLevelGate() {
+  var gain = haloParam('levelGain');
+  if (!(gain > 0)) return 1;
+  return haloClamp(haloAudio.level * gain, 0, 1);
+}
+
 function haloRenderFrame(canvas, now, dt) {
   var s = haloState;
   if (!s.ready) return false;
   var t = haloPlayheadSeconds();
   s.time = t;
+  // The audio has to be read before the ring moves: the level decides how much it moves.
+  haloReadAudioBands(t);
   // The beat's own job: the ring pops out and shakes where it stands. The camera is
   // the user's and nothing here moves it.
   s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt * HALO_PULSE_DECAY);
-  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse;
-  var shake = haloParam('shakePx') * s.ringPulse;
+  // The ring's motion follows the sound. The beat map is a fixed timeline, so it keeps
+  // firing over a silent passage and over a track that is not playing at all; the level
+  // is what says whether there is anything to react to.
+  var gate = haloLevelGate();
+  s.levelGate += (gate - (s.levelGate || 0)) * Math.min(1, dt * 10);
+  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * s.levelGate;
+  var shake = haloParam('shakePx') * s.ringPulse * s.levelGate;
   s.shakeX = Math.sin(s.time * 47.3) * shake;
   s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
@@ -2531,7 +2708,8 @@ function haloRenderFrame(canvas, now, dt) {
   }
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
-  haloReadAudioBands(t);
+  // The things painted on the ring follow the ring, not the lyric list's bookkeeping.
+  s.decoRot = s.ringRot - haloLyric.rebase;
   haloScheduleBeats(t);
   haloRunBeatEvents(t);
   var env = haloAudio.level;
@@ -2623,6 +2801,9 @@ function haloReleaseHaloLayer() {
   haloState.ready = false;
   haloState.ringPulse = 0;
   haloState.pulse = 1;
+  haloState.ringRot = 0;
+  haloState.decoRot = 0;
+  haloState.levelGate = 0;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
   // A released layer is not evidence for 自动: the next song starts from the full picture.
@@ -2691,6 +2872,14 @@ function haloPresetStatus() {
       probeCost: haloPresetState.probeCost,
       probeVerdict: haloPresetState.probeVerdict,
       probeLog: haloPresetState.probeLog,
+    },
+    // Which producer set the last turn's length, and what it thought the beat spacing was.
+    // A zero here has to say whether the knob is off or nothing knows the tempo.
+    turn: {
+      beatSec: Math.round(haloState.beat.step * 1000) / 1000,
+      beatSource: haloState.beat.source,
+      lastTurn: haloLyric.turnSource,
+      dur: haloLyric.tween ? Math.round(haloLyric.tween.dur * 1000) / 1000 : 0
     },
     camera: {
       panX: Math.round(haloCam.panX),

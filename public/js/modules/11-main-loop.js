@@ -594,7 +594,10 @@ function animate() {
   var shelfDimTarget = shouldDimWallpaperForShelf() ? 0.48 : skullBackdropDim;
   var shelfDimEase = shelfDimTarget < uniforms.uParticleDim.value ? 0.18 : 0.10;
   uniforms.uParticleDim.value += (shelfDimTarget - uniforms.uParticleDim.value) * Math.min(1, shelfDimEase * Math.max(1, dt * 60));
-  if (typeof updateBackgroundStarRiverState === 'function') updateBackgroundStarRiverState(dt, false);
+  // A takeover owner that asked for the star river gets it suppressed. The mask has named
+  // this layer since it was written; until now nothing read it, so the river kept drawing
+  // full-screen over the owner's own canvas.
+  if (!takeoverMask.suppress.starRiver && typeof updateBackgroundStarRiverState === 'function') updateBackgroundStarRiverState(dt, false);
 
   // 通用转场脉冲: 只作为切换预设时的短促提亮。
   uniforms.uBurstAmt.value *= 0.90;
@@ -602,7 +605,9 @@ function animate() {
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.uniforms-preset', visualUniformPerfStart);
 
   var coverLayerPerfStart = performance.now();
-  updateRipples(dt);
+  // The ripples feed the cover shader's uniform; an owner that took the cover layers
+  // over gets them stopped rather than left updating a uniform nothing reads.
+  if (!takeoverMask.suppress.ripples) updateRipples(dt);
   updateFloatLayer(dt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.cover-layers', coverLayerPerfStart);
   var shelfPerfStart = performance.now();
@@ -719,6 +724,11 @@ function applyVisualTakeover(mask) {
   if (floatGroup) floatGroup.visible = !mask.suppress.float;
   if (backCoverGroup) backCoverGroup.visible = !mask.suppress.backCover;
   if (stageLyrics.group) stageLyrics.group.visible = !mask.suppress.stageLyrics;
+  // The river's own alpha is eased by the frame loop, which is parked while nothing plays;
+  // an owner that takes the screen over has to get it hidden here and now.
+  if (typeof backgroundStarRiverParticles !== 'undefined' && backgroundStarRiverParticles) {
+    backgroundStarRiverParticles.visible = !mask.suppress.starRiver;
+  }
 }
 
 if (typeof setVisualTakeoverApplier === 'function') setVisualTakeoverApplier(applyVisualTakeover);

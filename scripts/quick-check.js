@@ -976,50 +976,10 @@ function runPvPresetLiveProbe(modulePath) {
 
 // Preset 14 (HALO ring). The static half guards the source; there is no live half yet
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
-// Reads one function back out of a module so a guard can be written against the body
-// instead of against the whole file. Comments and strings are skipped, so a brace inside
-// them does not move the depth.
-function haloSliceFunction(text, name) {
-  const head = 'function ' + name + '(';
-  const start = text.indexOf(head);
-  if (start < 0) return null;
-  const open = text.indexOf('{', start + head.length);
-  if (open < 0) return null;
-  let i = open;
-  let depth = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === '/' && text[i + 1] === '/') {
-      const nl = text.indexOf('\n', i);
-      i = nl < 0 ? text.length : nl + 1;
-      continue;
-    }
-    if (ch === '/' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2);
-      i = end < 0 ? text.length : end + 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      const quote = ch;
-      i += 1;
-      while (i < text.length) {
-        if (text[i] === '\\') { i += 2; continue; }
-        if (text[i] === quote) { i += 1; break; }
-        i += 1;
-      }
-      continue;
-    }
-    if (ch === '{') { depth += 1; i += 1; continue; }
-    if (ch === '}') {
-      depth -= 1;
-      i += 1;
-      if (depth === 0) return text.slice(start, i);
-      continue;
-    }
-    i += 1;
-  }
-  return null;
-}
+// The arms that read the module's body back live in scripts/halo-arms.js, so the mutation
+// driver can run the very same code on a mutated copy of the module.
+const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms } = require('./halo-arms');
+const { checkTakeoverLayerConsumers } = require('./takeover-arms');
 
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
@@ -1038,7 +998,7 @@ function runHaloPresetCheck() {
   if (!(haloIndex === ceiling)) {
     fail(`HALO_PRESET_INDEX=${haloIndex} must track MAX_VISUAL_PRESET_INDEX=${ceiling}`);
   }
-  if (!/光环/.test(archiveText) || !/HALO RING/.test(archiveText)) {
+  if (!/环形数据流/.test(archiveText) || !/RING DATA STREAM/.test(archiveText)) {
     fail('the HALO preset must be a labelled, selectable card');
   }
   if (!/id="halo-layer"/.test(htmlText) || !/id="halo-canvas"/.test(htmlText) || !/#halo-layer\s*\{/.test(cssText)) {
@@ -1156,87 +1116,19 @@ function runHaloPresetCheck() {
   // starts on its own radial line at the rim and runs outward from there.
   for (const [pattern, why] of [
     [/haloParam\('textGap'\)/, 'the distance between the rim and the lyrics must be a knob'],
-    [/ctx\.translate\(flip \? -\(textR \+ width\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
-    [/ctx\.scale\(sc, sc\)/, 'a line that does not fit its own ray must be scaled down'],
+    [/ctx\.translate\(flip \? -\(textR \+ drawnW\) : textR, 0\)/, 'the lyric line must be anchored at the rim, outside the ring'],
     [/function haloLyricFontPx\(/, 'the lyric size must be resolved in one place'],
     [/fx\.lyricScale/, 'the lyric size must reuse the app\'s own fx.lyricScale'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
   }
-  // The offline half-plane culling of the original does not hold for a centred ring: a camera
-  // zoom has to be able to cull by the analytic visible radius instead.
-  if (!/haloVisibleRadius/.test(haloText)) {
-    fail('the outer beams must be culled against the visible radius, not a fixed half-plane');
-  }
-  // --- the two defects the user hit in the ring on 2026-10-26 ---------------------
-  // (1) The ring turned too fast on every lyric change and ignored the 转环时长 knob.
-  //     The tween used to be created only after the line it was aiming at had already
-  //     started, so its duration was clamped by the time that was left (which was ~0)
-  //     and every turn snapped instead of travelling.
-  // (2) The lyrics shrank the longer the song played. The per-line fit was baked at
-  //     build time against the line's own un-rotated angle: a later line points up-left,
-  //     where there is almost no room, so it was scaled down once and stayed that way.
-  //     The fit has to be taken when the line is drawn, on the angle it sits at then.
-  const buildLyricFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
-  const lyricUpdateFn = haloSliceFunction(haloText, 'haloLyricUpdate');
-  const drawLyricFn = haloSliceFunction(haloText, 'haloDrawLyricText');
-  if (!buildLyricFn || !lyricUpdateFn || !drawLyricFn) {
-    fail('the halo lyric functions could not be read back; the guards below would be vacuous');
-  }
-  // A slice that stopped early would make the guards below vacuous, so each one has to
-  // still carry the statement it is written about.
-  for (const [slice, marker, name] of [
-    [buildLyricFn, 'haloLyric.items.push(item)', 'haloBuildLyricRing'],
-    [lyricUpdateFn, 'haloLyric.tween = {', 'haloLyricUpdate'],
-    [drawLyricFn, 'ctx.fillText(item.text, 0, 0)', 'haloDrawLyricText'],
-  ]) {
-    if (slice && !slice.includes(marker)) {
-      fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
-    }
-  }
-  if (lyricUpdateFn) {
-    if (!/var dur = Math\.max\(0\.05, haloParam\('rotDur'\)\);/.test(lyricUpdateFn)) {
-      fail('the ring turn must last exactly the 转环时长 knob (rotDur)');
-    }
-    if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn)) {
-      fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-    }
-    for (const clamp of [/\bdur\s*=\s*Math\.min/, /Math\.min\([^)]*\bdur\b[^)]*\)/]) {
-      if (clamp.test(lyricUpdateFn)) {
-        fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-      }
-    }
-    if (!/var turnStart = items\[upcoming\]\.startAt - Math\.max\(0, haloParam\('rotLead'\)\);/.test(lyricUpdateFn)) {
-      fail('the turn must start rotLead seconds before the line it is turning to');
-    }
-    if (!/if \(t >= items\[upcoming\]\.startAt\) \{/.test(lyricUpdateFn)) {
-      fail('a line that is already due must be put on the mark at once');
-    }
-  }
-  if (buildLyricFn) {
-    if (!/textWidth: total,/.test(buildLyricFn)) {
-      fail('the lyric item must keep its measured width: the fit belongs to the draw');
-    }
-    if (/\bscale:/.test(buildLyricFn)) {
-      fail('the per-line scale must not be baked at build time: that is what made the lyrics shrink');
-    }
-  }
-  if (drawLyricFn) {
-    if (!/var allow = haloVisibleRadius\(center\) - textR;/.test(drawLyricFn)) {
-      fail('the draw time fit must measure the room on the ray the line actually sits on');
-    }
-    if (!/var sc = drawnW > 0 \? Math\.min\(1, Math\.max\(HALO_LYRIC_MIN_SCALE, allow \/ drawnW\)\) : 1;/.test(drawLyricFn)) {
-      fail('the lyric fit must be computed at draw time from the line\'s current screen angle');
-    }
-  }
-  if (!/HALO_LYRIC_MIN_SCALE = (0\.\d+);/.test(haloText)) {
-    fail('a lyric line must never shrink below the floor');
-  }
-  // The measured widths belong to the font they were taken with, so a font size change has
-  // to rebuild the ring.
-  if (!/haloLyricFontPx\(\) !== haloLyric\.builtFontPx/.test(haloText)) {
-    fail('the lyric ring must be rebuilt when the app\'s lyric size knob moves');
-  }
+  // The ring's cull and lyric geometry, read back off the module. These arms live in
+  // scripts/halo-arms.js so the mutation driver runs the same code the gate runs.
+  checkHaloCullArms(haloText, fail);
+  // The effects on the ring follow the ring's rotation, not the lyric dial's re-anchors.
+  checkHaloRotationArms(haloText, fail);
+  // The beat map is a fixed timeline, so the ring's motion has to be scaled by the sound.
+  checkHaloAudioArms(haloText, fail);
   // The knobs: the store, the console group, and one slider per knob. A knob that is in
   // the schema but not on a slider is a knob the user cannot reach.
   const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js');
@@ -1253,8 +1145,8 @@ function runHaloPresetCheck() {
   ]) {
     if (!pattern.test(tuningText)) fail(why);
   }
-  if (!/key: 'halo'/.test(consoleText) || !/title: '光环'/.test(consoleText)) {
-    fail('the visual console needs a 光环 group in the 动效 tab');
+  if (!/key: 'halo'/.test(consoleText) || !/title: '环形数据流'/.test(consoleText)) {
+    fail('the visual console needs a 环形数据流 group in the 动效 tab');
   }
   const schema = new Map();
   const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
@@ -1271,8 +1163,32 @@ function runHaloPresetCheck() {
   if (schema.size < 20) {
     fail(`the ring's knob schema must be complete (found ${schema.size} knobs, expected at least 20)`);
   }
+  let boolKnobs = 0;
   for (const [key, spec] of schema) {
     const id = 'fx-halo' + key;
+    const toggleId = 't-halo' + key;
+    if (spec.kind === 'bool') {
+      boolKnobs += 1;
+      // A bool is one of the console's switches, not a slider: it has to be a .fx-toggle that
+      // flips itself, and the store has to paint its state back onto the element.
+      const toggle = htmlText.match(new RegExp('class="fx-toggle" id="' + toggleId + '"[^>]*onclick="toggleHaloTuning\\(\'' + key + '\'\\)"'));
+      if (!toggle) {
+        fail(`the bool knob ${key} has no .fx-toggle (${toggleId} calling toggleHaloTuning('${key}')) in index.html`);
+      }
+      if (!tuningText.includes(`spec.kind === 'bool'`)) {
+        fail(`the knob store does not know the bool kind: ${key} would show a number instead of a switch state`);
+      }
+      if (!tuningText.includes(`document.getElementById('t-halo' + key)`)) {
+        fail(`the knob store must write a bool's state back into its switch, or the console and the ring disagree after a load`);
+      }
+      if (!tuningText.includes('function toggleHaloTuning(')) {
+        fail('the bool knobs need their own setter: the sliders write a value, a switch has to flip one');
+      }
+      if (!consoleText.includes(`fxConsoleItem('${toggleId}'`)) {
+        fail(`the bool knob ${key} must be listed in the console's 环形数据流 group as ${toggleId}`);
+      }
+      continue;
+    }
     const slider = htmlText.match(new RegExp('id="' + id + '"[^>]*min="(-?[\\d.]+)"[^>]*max="(-?[\\d.]+)"'));
     if (!slider) {
       fail(`the knob ${key} has no slider (${id}) in index.html`);
@@ -1285,12 +1201,13 @@ function runHaloPresetCheck() {
       fail(`the slider ${id} must call setHaloTuning('${key}')`);
     }
     if (!consoleText.includes(`fxConsoleItem('${id}'`)) {
-      fail(`the knob ${key} must be listed in the console's 光环 group`);
+      fail(`the knob ${key} must be listed in the console's 环形数据流 group`);
     }
   }
-  const sliderCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length;
-  if (sliderCount !== schema.size) {
-    fail(`the halo sliders in index.html (${sliderCount}) must match the knob schema (${schema.size})`);
+  const controlCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length
+    + (htmlText.match(/id="t-halo[A-Za-z]+"/g) || []).length;
+  if (controlCount !== schema.size) {
+    fail(`the halo controls in index.html (${controlCount}: ${(schema.size - boolKnobs)} sliders + ${boolKnobs} switches) must match the knob schema (${schema.size})`);
   }
   // MIT requires the notice and the licence text to travel with the copy, and this fork ships
   // an installer: "the file exists somewhere in the repo" is not enough, so the sidecar has to
@@ -1328,6 +1245,45 @@ function runHaloPresetCheck() {
     fail(`the ring turn and the lyric fit regression failed: ${rel(lyricTestFile)}`);
   }
   process.stdout.write(lyricTest.stdout || '');
+  // The beat's motion has to follow the sound. This test runs the shipped module in a
+  // sandbox with a controllable analyser and measures the shake: silence must be still,
+  // a loud passage must shake harder.
+  const beatTestFile = path.join(appRoot, 'tests', 'halo-beat-level-gate.test.js');
+  if (!fs.existsSync(beatTestFile)) {
+    fail('tests/halo-beat-level-gate.test.js is missing; the beat would only be checked by shape');
+  }
+  const beatTest = spawnSync(process.execPath, [beatTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (beatTest.status !== 0) {
+    process.stdout.write(beatTest.stdout || '');
+    process.stderr.write(beatTest.stderr || '');
+    fail(`the beat level gate regression failed: ${rel(beatTestFile)}`);
+  }
+  process.stdout.write(beatTest.stdout || '');
+  // Where the effects are painted, frame by frame: the end of a lyric turn must not move them.
+  const continuityTestFile = path.join(appRoot, 'tests', 'halo-ring-turn-continuity.test.js');
+  if (!fs.existsSync(continuityTestFile)) {
+    fail('tests/halo-ring-turn-continuity.test.js is missing; the ring rotation would only be checked by shape');
+  }
+  const continuityTest = spawnSync(process.execPath, [continuityTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (continuityTest.status !== 0) {
+    process.stdout.write(continuityTest.stdout || '');
+    process.stderr.write(continuityTest.stderr || '');
+    fail(`the ring rotation continuity regression failed: ${rel(continuityTestFile)}`);
+  }
+  process.stdout.write(continuityTest.stdout || '');
+  // The turn's length comes from the song's tempo when the app knows it, and the fallback
+  // has to say which producer it reached.
+  const tempoTestFile = path.join(appRoot, 'tests', 'halo-beat-tempo-turn.test.js');
+  if (!fs.existsSync(tempoTestFile)) {
+    fail('tests/halo-beat-tempo-turn.test.js is missing; the beat-driven turn would only be checked by shape');
+  }
+  const tempoTest = spawnSync(process.execPath, [tempoTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (tempoTest.status !== 0) {
+    process.stdout.write(tempoTest.stdout || '');
+    process.stderr.write(tempoTest.stderr || '');
+    fail(`the beat tempo turn regression failed: ${rel(tempoTestFile)}`);
+  }
+  process.stdout.write(tempoTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {
@@ -1353,6 +1309,17 @@ function runVisualTakeoverMaskCheck() {
     process.stderr.write(result.stderr || '');
     fail(`visual takeover mask regression failed: ${rel(testFile)}`);
   }
+  // A layer the mask names but nothing reads is a promise the scene never keeps: the ring
+  // and the PV preset both declared they own the star river, and because no consumer
+  // existed the river kept painting full screen over their canvas while every static check
+  // stayed green. So every name in the layer list has to be read outside the module that
+  // builds the mask.
+  const takeoverFile = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '16-visual-takeover.js');
+  const takeoverText = fs.readFileSync(takeoverFile, 'utf8');
+  const consumerTexts = walk(path.join(appRoot, 'public', 'js'))
+    .filter((file) => file.endsWith('.js') && path.resolve(file) !== path.resolve(takeoverFile))
+    .map((file) => fs.readFileSync(file, 'utf8'));
+  checkTakeoverLayerConsumers(takeoverText, consumerTexts, fail);
   // A module file that is never listed in index-loader.js is dead code that still
   // passes every other syntax check, so the directory and the list must agree.
   const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
