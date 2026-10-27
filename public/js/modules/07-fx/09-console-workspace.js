@@ -165,6 +165,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-halolyricRows', '同屏歌词行数', '环形数据流 歌词 行数 同屏 虚拟 窗口'),
         fxConsoleItem('fx-halorotLead', '转环提前量', '环形数据流 转环 提前 跟唱'),
         fxConsoleItem('fx-halorotDur', '转环时长', '环形数据流 转环 时长 速度'),
+        fxConsoleItem('t-halobeatTurn', '按节拍转环', '环形数据流 转环 节拍 bpm 速度 快歌 慢歌'),
         fxConsoleItem('fx-halopanelRefresh', '拍点刷新块数', '环形数据流 拍点 刷新 数据块'),
         fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认')
       ] },

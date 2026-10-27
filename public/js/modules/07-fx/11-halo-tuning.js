@@ -39,6 +39,7 @@ function haloTuningFormat(key) {
   var spec = HALO_TUNING_SCHEMA[key];
   if (!spec) return '';
   var value = haloTuning[key];
+  if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(value));
   if (spec.kind === 'deg') return Math.round(value) + '°';
   if (spec.kind === 'px') return Math.round(value) + 'px';
@@ -48,6 +49,13 @@ function haloTuningFormat(key) {
 
 function haloTuningSyncInputs() {
   Object.keys(HALO_TUNING_SCHEMA).forEach(function (key) {
+    var spec = HALO_TUNING_SCHEMA[key];
+    if (spec.kind === 'bool') {
+      // A bool is one of the console's switches, not a slider: its state is the `on` class.
+      var toggle = document.getElementById('t-halo' + key);
+      if (toggle && toggle.classList) toggle.classList.toggle('on', haloTuning[key] > 0);
+      return;
+    }
     var input = document.getElementById('fx-halo' + key);
     if (!input) return;
     input.value = String(haloTuning[key]);
@@ -84,6 +92,13 @@ function setHaloTuning(key, value) {
   haloTuningSyncInputs();
   haloTuningApply(key);
   return true;
+}
+
+// A bool knob is one of the console's switches, so it needs the flip rather than a value.
+function toggleHaloTuning(key) {
+  var spec = HALO_TUNING_SCHEMA[key];
+  if (!spec || spec.kind !== 'bool') return false;
+  return setHaloTuning(key, haloTuning[key] > 0 ? 0 : 1);
 }
 
 function resetHaloTuning() {

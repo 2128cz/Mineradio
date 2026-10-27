@@ -989,8 +989,32 @@ function runHaloPresetCheck() {
   if (schema.size < 20) {
     fail(`the ring's knob schema must be complete (found ${schema.size} knobs, expected at least 20)`);
   }
+  let boolKnobs = 0;
   for (const [key, spec] of schema) {
     const id = 'fx-halo' + key;
+    const toggleId = 't-halo' + key;
+    if (spec.kind === 'bool') {
+      boolKnobs += 1;
+      // A bool is one of the console's switches, not a slider: it has to be a .fx-toggle that
+      // flips itself, and the store has to paint its state back onto the element.
+      const toggle = htmlText.match(new RegExp('class="fx-toggle" id="' + toggleId + '"[^>]*onclick="toggleHaloTuning\\(\'' + key + '\'\\)"'));
+      if (!toggle) {
+        fail(`the bool knob ${key} has no .fx-toggle (${toggleId} calling toggleHaloTuning('${key}')) in index.html`);
+      }
+      if (!tuningText.includes(`spec.kind === 'bool'`)) {
+        fail(`the knob store does not know the bool kind: ${key} would show a number instead of a switch state`);
+      }
+      if (!tuningText.includes(`document.getElementById('t-halo' + key)`)) {
+        fail(`the knob store must write a bool's state back into its switch, or the console and the ring disagree after a load`);
+      }
+      if (!tuningText.includes('function toggleHaloTuning(')) {
+        fail('the bool knobs need their own setter: the sliders write a value, a switch has to flip one');
+      }
+      if (!consoleText.includes(`fxConsoleItem('${toggleId}'`)) {
+        fail(`the bool knob ${key} must be listed in the console's 环形数据流 group as ${toggleId}`);
+      }
+      continue;
+    }
     const slider = htmlText.match(new RegExp('id="' + id + '"[^>]*min="(-?[\\d.]+)"[^>]*max="(-?[\\d.]+)"'));
     if (!slider) {
       fail(`the knob ${key} has no slider (${id}) in index.html`);
@@ -1006,9 +1030,10 @@ function runHaloPresetCheck() {
       fail(`the knob ${key} must be listed in the console's 环形数据流 group`);
     }
   }
-  const sliderCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length;
-  if (sliderCount !== schema.size) {
-    fail(`the halo sliders in index.html (${sliderCount}) must match the knob schema (${schema.size})`);
+  const controlCount = (htmlText.match(/id="fx-halo[A-Za-z]+"/g) || []).length
+    + (htmlText.match(/id="t-halo[A-Za-z]+"/g) || []).length;
+  if (controlCount !== schema.size) {
+    fail(`the halo controls in index.html (${controlCount}: ${(schema.size - boolKnobs)} sliders + ${boolKnobs} switches) must match the knob schema (${schema.size})`);
   }
   // MIT requires the notice and the licence text to travel with the copy, and this fork ships
   // an installer: "the file exists somewhere in the repo" is not enough, so the sidecar has to
@@ -1072,6 +1097,19 @@ function runHaloPresetCheck() {
     fail(`the ring rotation continuity regression failed: ${rel(continuityTestFile)}`);
   }
   process.stdout.write(continuityTest.stdout || '');
+  // The turn's length comes from the song's tempo when the app knows it, and the fallback
+  // has to say which producer it reached.
+  const tempoTestFile = path.join(appRoot, 'tests', 'halo-beat-tempo-turn.test.js');
+  if (!fs.existsSync(tempoTestFile)) {
+    fail('tests/halo-beat-tempo-turn.test.js is missing; the beat-driven turn would only be checked by shape');
+  }
+  const tempoTest = spawnSync(process.execPath, [tempoTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (tempoTest.status !== 0) {
+    process.stdout.write(tempoTest.stdout || '');
+    process.stderr.write(tempoTest.stderr || '');
+    fail(`the beat tempo turn regression failed: ${rel(tempoTestFile)}`);
+  }
+  process.stdout.write(tempoTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

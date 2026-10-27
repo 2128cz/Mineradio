@@ -192,23 +192,58 @@ function checkHaloCullArms(haloText, fail) {
     fail('the rim ticks must name the radii they draw at, so the cull judges the right band');
   }
   if (lyricUpdateFn) {
-    if (!/var dur = Math\.max\(0\.05, haloParam\('rotDur'\)\);/.test(lyricUpdateFn)) {
-      fail('the ring turn must last exactly the 转环时长 knob (rotDur)');
+    if (!/var turn = haloTurnWindow\(items\[upcoming\]\.startAt\);/.test(lyricUpdateFn)) {
+      fail('the turn has to ask the song how long it should take, rather than hard-coding the knob');
     }
-    if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn)) {
+    if (!/var dur = turn\.dur;/.test(lyricUpdateFn) || !/var turnStart = turn\.startAt;/.test(lyricUpdateFn)) {
+      fail('the turn length and start both come from the same timing decision');
+    }
+    if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn) || /\bdur\s*=\s*Math\.min/.test(lyricUpdateFn)) {
       fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-    }
-    for (const clamp of [/\bdur\s*=\s*Math\.min/, /Math\.min\([^)]*\bdur\b[^)]*\)/]) {
-      if (clamp.test(lyricUpdateFn)) {
-        fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
-      }
-    }
-    if (!/var turnStart = items\[upcoming\]\.startAt - Math\.max\(0, haloParam\('rotLead'\)\);/.test(lyricUpdateFn)) {
-      fail('the turn must start rotLead seconds before the line it is turning to');
     }
     if (!/if \(t >= items\[upcoming\]\.startAt\) \{/.test(lyricUpdateFn)) {
       fail('a line that is already due must be put on the mark at once');
     }
+  }
+  // The turn timing: the beat grid when the app knows the tempo, the console's own knobs
+  // when it does not - and the fallback has to say which one it reached, so a silent
+  // fallback cannot pass as the beat-driven mode.
+  const turnFn = haloSliceFunction(haloText, 'haloTurnWindow');
+  const gridFn = haloSliceFunction(haloText, 'haloBeatGrid');
+  if (!turnFn || !gridFn) {
+    fail('the turn timing functions could not be read back; the guards below would be vacuous');
+  }
+  if (turnFn) {
+    if (!/haloBeatGrid\(\)/.test(turnFn)) {
+      fail('the ring turn must be timed off the song\'s beat grid');
+    }
+    if (!/Math\.floor\(\(startAt - grid\.step - grid\.origin\) \/ grid\.step\) \* grid\.step/.test(turnFn)) {
+      fail('the turn must start on a beat, not one beat-length before the line wherever that falls');
+    }
+    if (!/dur:\s*Math\.max\(0\.05, haloParam\('rotDur'\)\)/.test(turnFn) ||
+        !/startAt - Math\.max\(0, haloParam\('rotLead'\)\)/.test(turnFn)) {
+      fail('with the knob off the turn must still be exactly the 转环时长 / 转环提前量 knobs');
+    }
+    if (!/source:/.test(turnFn)) {
+      fail('the timing decision must report which producer set it');
+    }
+  }
+  if (gridFn) {
+    if (!/haloParam\('beatTurn'\)/.test(gridFn)) {
+      fail('the beat-driven turn has to be a knob the user can turn off');
+    }
+    if (!/map\.gridStep/.test(gridFn) || !/rtBeat\.tempoGap/.test(gridFn)) {
+      fail('the tempo has to be taken from the song\'s beat map and fall back to the realtime tracker, in that order');
+    }
+    if (!/list\[i\]\.t - list\[i - 1\]\.t/.test(gridFn)) {
+      fail('a map with no grid step still carries beat times: their gap is the same fixed spacing');
+    }
+    if (!/haloState\.beat = \{ step: 0, origin: 0, source:/.test(gridFn)) {
+      fail('when nothing knows the tempo, the reason has to be recorded, not left as a bare zero');
+    }
+  }
+  if (!/turn: \{/.test(haloText) || !/beatSource: haloState\.beat\.source/.test(haloText)) {
+    fail('the status probe must print what set the last turn\'s timing');
   }
   if (buildLyricFn) {
     if (!/textWidth: 0,/.test(buildLyricFn)) {

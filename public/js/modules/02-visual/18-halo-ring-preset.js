@@ -68,6 +68,7 @@ var HALO_TUNING_SCHEMA = {
   lyricRows: { def: 7, min: 1, max: 16, kind: 'count', rebuild: 'live' },
   rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
   rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
+  beatTurn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   panelRefresh: { def: 5, min: 1, max: 12, kind: 'count', rebuild: 'live' }
 };
 
@@ -118,6 +119,7 @@ var haloState = {
   decoRot: 0,
   webRot: 0,
   idleSpin: 0,
+  beat: { step: 0, origin: 0, source: '' },   // the tempo grid the turn timing is taken from
   ringPulse: 0,      // the beat's envelope: 1 at the hit, decaying after it
   pulse: 1,          // the scale the whole ring is drawn at
   levelGate: 0,      // how much of the beat the sound allows, 0 in silence
@@ -152,6 +154,7 @@ var haloLyric = {
   pending: -1,
   rot: 0,
   rebase: 0,     // the total by which the line angles have been re-anchored; haloState.decoRot takes it back out
+  turnSource: '', // which producer decided the last turn's timing, printed by the status probe
   tween: null,
   baseAngle: 0,
   builtFontPx: 0,     // the font the measured widths belong to
@@ -596,6 +599,67 @@ function haloLyricWidth(item, ctx, fontPx) {
   return w;
 }
 
+// The song's beat grid: how far apart its rhythm points are, and a beat to count them from.
+//
+// The point of the whole thing is that this spacing is fixed for a song, so it can drive how
+// fast the ring turns: a fast song turns fast, a slow song turns slow. Three producers, in
+// the order the app trusts its own data: the beat map's grid step, the gaps between the map's
+// own beat times (older caches and podcast maps carry no step), then the realtime tempo
+// tracker. `step: 0` means none of them knows, and `source` says which one was reached.
+function haloBeatGrid() {
+  haloState.beat = { step: 0, origin: 0, source: 'knob off' };
+  if (!(haloParam('beatTurn') > 0)) return haloState.beat;
+  var map = (typeof currentBeatMap !== 'undefined' && currentBeatMap) ? currentBeatMap : null;
+  var list = (haloBeat.source === 'map' && haloBeat.list.length >= 4) ? haloBeat.list : null;
+  var step = map ? Number(map.gridStep) || 0 : 0;
+  if (!(step > 0.15 && step <= 2) && list) {
+    var gaps = [];
+    for (var i = 1; i < Math.min(list.length, 12); i++) {
+      var d = list[i].t - list[i - 1].t;
+      if (d > 0.15 && d <= 2) gaps.push(d);
+    }
+    if (gaps.length) {
+      gaps.sort(function (a, b) { return a - b; });
+      step = gaps[gaps.length >> 1];
+    }
+  }
+  if (step > 0.15 && step <= 2 && list) {
+    haloState.beat = { step: step, origin: list[0].t, source: 'beat map' };
+    return haloState.beat;
+  }
+  var rt = (typeof rtBeat !== 'undefined' && rtBeat) ? Number(rtBeat.tempoGap) || 0 : 0;
+  if (rt > 0.15 && rt <= 2) {
+    haloState.beat = { step: rt, origin: Number(rtBeat.lastHitAt) || 0, source: 'realtime' };
+    return haloState.beat;
+  }
+  haloState.beat = { step: 0, origin: 0, source: map ? 'beat map has no grid' : 'no beat map, no realtime tempo' };
+  return haloState.beat;
+}
+
+// When the ring starts turning for the line that begins at `startAt`, and for how long.
+//
+// With the knob off, that is the framing the console gives: rotLead seconds of lead and
+// rotDur seconds of travel. With it on, the tempo decides: one beat of travel, and the start
+// snapped back onto a beat, so the movement lands with the rhythm instead of stopping
+// somewhere between two beats. The turn always ends on the line, because the sung line has
+// to arrive at the read mark.
+function haloTurnWindow(startAt) {
+  var grid = haloBeatGrid();
+  if (grid.step > 0 && grid.origin) {
+    var start = grid.origin + Math.floor((startAt - grid.step - grid.origin) / grid.step) * grid.step;
+    if (start < startAt - grid.step * 2) start = startAt - grid.step * 2;
+    var dur = startAt - start;
+    if (dur > 0.05) return { startAt: start, dur: dur, source: grid.source + ' beat ' + grid.step.toFixed(3) + 's' };
+  }
+  return {
+    startAt: startAt - Math.max(0, haloParam('rotLead')),
+    dur: Math.max(0.05, haloParam('rotDur')),
+    // Starts with 'knobs' on purpose: the reason the knobs won is printed after it, and a
+    // reader (or a test) must not mistake that reason for the tempo having decided.
+    source: 'knobs, because ' + grid.source
+  };
+}
+
 function haloLyricUpdate(t) {
   var items = haloLyric.items;
   if (!items.length) return;
@@ -609,10 +673,13 @@ function haloLyricUpdate(t) {
   if (sung < 0) sung = 0;
   if (upcoming < 0) upcoming = items.length - 1;
 
-  // The turn starts rotLead seconds before the line and lasts rotDur seconds: the
-  // knob is the speed of the turn, not a by-product of how much time was left.
-  var dur = Math.max(0.05, haloParam('rotDur'));
-  var turnStart = items[upcoming].startAt - Math.max(0, haloParam('rotLead'));
+  // The turn starts on the song's beat grid when the app knows it (the 按节拍转环 knob), and
+  // on the console's own lead otherwise: the knob is the speed of the turn, not a by-product
+  // of how much time was left.
+  var turn = haloTurnWindow(items[upcoming].startAt);
+  var dur = turn.dur;
+  var turnStart = turn.startAt;
+  haloLyric.turnSource = turn.source;
 
   if (haloLyric.tween) {
     var tw = haloLyric.tween;
@@ -2521,6 +2588,14 @@ function haloPresetStatus() {
       strands: haloStrandLayers.length
     },
     lyric: { lines: haloLyric.items.length, current: haloLyric.current, key: haloLyric.songKey },
+    // Which producer set the last turn's length, and what it thought the beat spacing was.
+    // A zero here has to say whether the knob is off or nothing knows the tempo.
+    turn: {
+      beatSec: Math.round(haloState.beat.step * 1000) / 1000,
+      beatSource: haloState.beat.source,
+      lastTurn: haloLyric.turnSource,
+      dur: haloLyric.tween ? Math.round(haloLyric.tween.dur * 1000) / 1000 : 0
+    },
     camera: {
       panX: Math.round(haloCam.panX),
       panY: Math.round(haloCam.panY),

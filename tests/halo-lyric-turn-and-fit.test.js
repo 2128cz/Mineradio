@@ -56,9 +56,19 @@ function makeRecordingContext() {
 const drawContext = makeRecordingContext();
 const canvas = { width: 1920, height: 1080, getContext: () => drawContext };
 
+// The beams and panels are scattered with Math.random, so the fixture brings its own
+// generator: a run that fails must be reproducible, and a claim must not depend on which
+// random layout the machine happened to build.
+const seededMath = Object.create(Math);
+let seed = 20261027;
+seededMath.random = function () {
+  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+  return seed / 0x7fffffff;
+};
+
 const sandbox = {
   console,
-  Math, JSON, Date, Array, Object, String, Number, Boolean, Error, isFinite, isNaN,
+  Math: seededMath, JSON, Date, Array, Object, String, Number, Boolean, Error, isFinite, isNaN,
   parseFloat, parseInt, Set, Map, Uint8ClampedArray,
   setTimeout, clearTimeout, setInterval, clearInterval,
   requestAnimationFrame: () => 0,
@@ -501,26 +511,56 @@ for (const [text, scale] of rowsBefore) {
 }
 
 // ------------------------------------------------------ the decoration band
-// The outer beams hang off the rim, so the ones that show are the ones the screen
-// reaches. The band must sit on the side the lyrics are read on, not on a quadrant of
-// the world origin.
+// A block of beams is kept or dropped as one piece, so the rule has to be judged on the
+// block's own rays. What this refuses to accept: a block dropped while one of its rays is
+// plainly on the screen. The march is the test's own geometry - it walks each ray from the
+// beam base outwards and projects the points - so it does not borrow the module's answer.
+// Blocks whose only hit is within a few pixels of the viewport edge are set aside: there the
+// sampled march and the analytic rule are entitled to disagree, and counting them would make
+// this claim depend on the random scatter of the beams rather than on the rule.
 {
   sandbox.haloBuildStrands();
-  const layer = sandbox.haloStrandLayers[2];
-  let sum = 0;
-  let count = 0;
-  for (const wedge of layer.wedges) {
-    if (!sandbox.haloWedgeVisible(wedge, layer)) continue;
-    const mid = (wedge.i0 + wedge.n / 2) * layer.step + layer.off;
-    sum += sandbox.haloNormAngle(mid);
-    count += 1;
+  const z = sandbox.haloSceneZoom(1);
+  const centre = centreOnScreen();
+  const s = sandbox.haloState;
+  const EDGE = 4;
+  let checked = 0;
+  let setAside = 0;
+  let keptVisible = 0;
+  for (const layer of sandbox.haloStrandLayers) {
+    const rot = s.ringRot * layer.rotK + layer.off;
+    for (const wedge of layer.wedges) {
+      const keep = sandbox.haloWedgeVisible(wedge, layer);
+      let plainlyVisible = false;
+      let borderline = false;
+      for (const frac of [0.5, wedge.n / 2, wedge.n - 0.5]) {
+        const a = (wedge.i0 + frac) * layer.step + rot;
+        for (let r = s.RO + 3; r <= s.RMAX; r += 2) {
+          const x = centre.x + z * r * Math.cos(a);
+          const y = centre.y + z * r * Math.sin(a);
+          if (x < 0 || x > VIEW_W || y < 0 || y > VIEW_H) continue;
+          const nearEdge = Math.min(x, VIEW_W - x, y, VIEW_H - y) < EDGE;
+          if (nearEdge) borderline = true; else plainlyVisible = true;
+        }
+      }
+      if (plainlyVisible) {
+        checked += 1;
+        if (keep) keptVisible += 1;
+        assert(keep,
+          `a block of ${wedge.n} beams had a ray plainly on the screen and was dropped anyway ` +
+          `(layer step ${(layer.step * 180 / Math.PI).toFixed(2)}deg)`);
+      } else if (borderline) {
+        setAside += 1;
+      }
+      if (!keep) {
+        // The other direction, where it is unambiguous: nothing of the block is on screen.
+        assert(!plainlyVisible, 'a block was dropped although a ray of it was on the screen');
+      }
+    }
   }
-  assert(count > 0, 'some beams must be visible');
-  const mean = sum / count;
-  assert(
-    Math.abs(mean) < 0.35,
-    `the visible beams must sit on the side the lyrics are read on, but their mean angle is ${mean} rad`
-  );
+  assert(checked >= 5, `the fixture must put several blocks plainly on screen, got ${checked}`);
+  assert(keptVisible === checked, 'every plainly visible block must be kept');
+  console.log(`  beams: ${checked} blocks plainly on screen (all kept), ${setAside} set aside at the edge`);
 }
 
 console.log('[OK] The ring turn lasts the 转环时长 knob, the cull follows the screen and the lyric rows keep one size.');
