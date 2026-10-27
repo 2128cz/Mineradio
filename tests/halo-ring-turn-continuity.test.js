@@ -95,7 +95,9 @@ sandbox.haloTuning.rotDur = 0.4;
 sandbox.haloTuning.rotLead = 0.3;
 
 const LINES = 24;
-for (let i = 0; i < LINES; i++) sandbox.lyricsLines.push({ t: i * 2, text: 'line ' + (i + 1) });
+const WIDE = [];
+for (let i = 0; i < LINES; i++) WIDE.push({ t: i * 2, text: 'line ' + (i + 1) });
+sandbox.lyricsLines = WIDE;
 sandbox.haloLayoutStage(1920, 1080);
 sandbox.haloBuildWeb();
 sandbox.haloBuildSlots();
@@ -199,5 +201,66 @@ assert(worstBeamJump < step * 0.25,
 
 // The lyric list still does what the re-anchor is for.
 assert(markError < 1e-6, `the sung line must stay on the read mark, worst error ${markError}`);
+
+// ------------------------------------------------------- a turn that never got to finish
+// Lines this close together mean the next turn is due before the running one has landed, so
+// the dial must chain: keep going at the speed it had and bend towards the new line. The old
+// behaviour aimed the new turn from a standstill, which reads as the previous animation being
+// killed and restarted from zero.
+{
+  const tight = [];
+  for (let i = 0; i < 40; i++) tight.push({ t: 1.2 + i * 0.35, text: 'tight line ' + (i + 1) });
+  sandbox.lyricsLines = tight;
+  sandbox.haloTuning.beatTurn = 0;      // the knobs decide here: there is no beat map in this fixture
+  sandbox.haloTuning.rotDur = 0.4;
+  sandbox.haloTuning.rotLead = 0.3;
+  sandbox.haloBuildLyricRing();
+
+  const speeds = [];
+  const joins = [];
+  let lastTween = null;
+  let lastStartAt = null;
+  let pending = null;
+  let prev = null;
+  for (let t = 0; t <= 8; t += dt) {
+    audio.currentTime = t;
+    sandbox.haloRenderFrame(canvas, t * 1000, dt);
+    const rot = sandbox.haloLyric.rot;
+    const v = prev === null ? 0 : (rot - prev) / dt;
+    // The frame after a hand-over is where the carried speed shows: the turn joins at the
+    // value the dial already had, so the switch frame itself cannot move - that is position
+    // continuity, not a stop.
+    if (pending) {
+      joins.push({ before: pending, after: v });
+      pending = null;
+    }
+    const tw = sandbox.haloLyric.tween;
+    // A hand-over is the same live turn re-aimed at a newer line: the object survives and
+    // only its start moves. A fresh turn after a landing is not one - the dial had stopped.
+    if (tw && tw === lastTween && tw.startAt !== lastStartAt && speeds.length) {
+      pending = speeds[speeds.length - 1];
+    }
+    if (tw) { lastStartAt = tw.startAt; }
+    lastTween = tw;
+    speeds.push(v);
+    prev = rot;
+  }
+  assert(joins.length >= 2, `the fixture must hand over mid-turn at least twice, got ${joins.length}`);
+  for (const join of joins) {
+    assert(Math.abs(join.before) > 1e-4, 'the fixture must hand over while the dial is actually moving');
+    const kept = Math.abs(join.after - join.before) / Math.abs(join.before);
+    assert(kept < 0.6,
+      `at the hand-over the dial lost ${(kept * 100).toFixed(0)}% of its speed in one frame ` +
+      `(${join.before.toFixed(4)} -> ${join.after.toFixed(4)} rad/s): the running turn was killed ` +
+      'and restarted from rest instead of joining the next one');
+  }
+  console.log(`  hand-overs: ${joins.length}, worst speed change ${(Math.max.apply(null, joins.map((j) => Math.abs(j.after - j.before) / Math.abs(j.before))) * 100).toFixed(1)}%`);
+
+  sandbox.lyricsLines = WIDE.slice();
+  sandbox.haloTuning.beatTurn = 1;
+  sandbox.haloTuning.rotDur = 0.55;
+  sandbox.haloTuning.rotLead = 0.55;
+  sandbox.haloBuildLyricRing();
+}
 
 console.log('[OK] The ring\'s rotation carries the effects through the turn instead of snapping back at its end.');

@@ -152,6 +152,9 @@ var haloLyric = {
   current: -1,
   pending: -1,
   rot: 0,
+  lastT: -1,      // the frame the last rotation was measured at, for the hand-over speed
+  lastRot: 0,
+  vel: 0,         // the dial's angular velocity, rad/s, as of the previous frame
   rebase: 0,     // the total by which the line angles have been re-anchored; haloState.decoRot takes it back out
   turnSource: '', // which producer decided the last turn's timing, printed by the status probe
   tween: null,
@@ -193,6 +196,17 @@ function haloGauss() { return (Math.random() + Math.random() + Math.random() - 1
 function haloClamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function haloNormAngle(a) { return ((a + Math.PI) % HALO_TAU + HALO_TAU) % HALO_TAU - Math.PI; }
 function haloEaseIO(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+
+// One turn of the dial. With nothing to inherit this is the same ease-in-out curve the turn
+// has always used; when it takes over mid-flight, `v0` - the speed the dial already had - is
+// the slope it starts from, so the movement joins at that speed and still lands on the line
+// at rest. That hand-over is the difference between continuing a motion and restarting one.
+function haloEaseJoin(k, from, to, v0, dur) {
+  if (!v0) return from + (to - from) * haloEaseIO(k);
+  var k2 = k * k;
+  var k3 = k2 * k;
+  return (2 * k3 - 3 * k2 + 1) * from + (k3 - 2 * k2 + k) * (v0 * dur) + (-2 * k3 + 3 * k2) * to;
+}
 function haloEaseOut(t) { return 1 - Math.pow(1 - t, 3); }
 
 // The clock is behind a function so a probe can override it instead of assigning the audio
@@ -531,6 +545,9 @@ function haloBuildLyricRing() {
   haloLyric.tween = null;
   haloLyric.rot = haloReadAngle();
   haloLyric.rebase = 0;
+  // A rebuilt dial has teleported: nothing is in motion any more.
+  haloLyric.vel = 0;
+  haloLyric.lastT = -1;
   haloLyric.baseAngle = 0;
   var fontPx = haloLyricFontPx();
   // One row per line: the step is a line height plus the gap the user asked for.
@@ -662,6 +679,12 @@ function haloTurnWindow(startAt) {
 function haloLyricUpdate(t) {
   var items = haloLyric.items;
   if (!items.length) return;
+  // The dial's angular velocity, read before anything moves it: a turn that takes over
+  // while the previous one is still running has to carry that speed, not restart from rest.
+  var elapsed = t - haloLyric.lastT;
+  if (elapsed > 1e-6 && elapsed < 0.5) haloLyric.vel = (haloLyric.rot - haloLyric.lastRot) / elapsed;
+  haloLyric.lastT = t;
+  haloLyric.lastRot = haloLyric.rot;
   // The line being sung, and the one the ring is turning towards.
   var sung = -1;
   var upcoming = -1;
@@ -685,16 +708,21 @@ function haloLyricUpdate(t) {
     if (sung > tw.item) {
       // A seek jumped past the line this turn was heading for: drop the turn.
       haloLyric.tween = null;
+      haloLyric.vel = 0;
     } else {
       if (tw.item !== upcoming && t >= turnStart) {
-        // A newer line is due before this turn finished: aim at that one instead.
+        // A newer line is due before this turn finished: aim at that one instead, and carry
+        // the speed the dial already had. Restarting the curve from rest is what made the
+        // ring stop dead for a frame and ease back up, which reads as a new animation
+        // cutting the old one off.
         tw.item = upcoming;
         tw.from = haloLyric.rot;
         tw.to = haloReadAngle() - items[upcoming].angle;
         tw.startAt = t;
+        tw.v0 = haloLyric.vel;
       }
       var k = haloClamp((t - tw.startAt) / Math.max(0.05, tw.dur), 0, 1);
-      haloLyric.rot = tw.from + (tw.to - tw.from) * haloEaseIO(k);
+      haloLyric.rot = haloEaseJoin(k, tw.from, tw.to, tw.v0 || 0, tw.dur);
       if (k >= 1) {
         haloLyric.tween = null;
         haloLyric.current = tw.item;
@@ -712,6 +740,7 @@ function haloLyricUpdate(t) {
     // First line: put it on the mark straight away.
     haloLyric.current = sung;
     haloLyric.rot = haloReadAngle() - items[sung].angle;
+    haloLyric.vel = 0;
     return;
   }
 
@@ -723,6 +752,8 @@ function haloLyricUpdate(t) {
     for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
     haloLyric.rot += rebase2;
     haloLyric.rebase += rebase2;
+    // The line arrived by jump, not by glide: there is no motion left to hand over.
+    haloLyric.vel = 0;
     return;
   }
 
@@ -736,6 +767,7 @@ function haloLyricUpdate(t) {
     for (var n = 0; n < items.length; n++) items[n].angle -= rebase3;
     haloLyric.rot += rebase3;
     haloLyric.rebase += rebase3;
+    haloLyric.vel = 0;
     return;
   }
   haloLyric.pending = upcoming;
@@ -744,7 +776,8 @@ function haloLyricUpdate(t) {
     from: haloLyric.rot,
     to: haloReadAngle() - items[upcoming].angle,
     startAt: t,
-    dur: dur
+    dur: dur,
+    v0: haloLyric.vel
   };
 }
 

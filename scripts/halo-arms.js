@@ -198,11 +198,43 @@ function checkHaloCullArms(haloText, fail) {
     if (!/var dur = turn\.dur;/.test(lyricUpdateFn) || !/var turnStart = turn\.startAt;/.test(lyricUpdateFn)) {
       fail('the turn length and start both come from the same timing decision');
     }
+    // A turn that takes over while the dial is still moving has to inherit its speed; the
+    // value is continuous either way, so only the speed tells the two apart.
+    if (!/haloLyric\.vel = \(haloLyric\.rot - haloLyric\.lastRot\) \/ elapsed;/.test(lyricUpdateFn)) {
+      fail('the dial must know its own angular velocity, measured before anything moves it');
+    }
+    if (!/haloLyric\.rot = haloEaseJoin\(k, tw\.from, tw\.to, tw\.v0 \|\| 0, tw\.dur\);/.test(lyricUpdateFn)) {
+      fail('the turn must be evaluated with the speed it inherited, not from rest');
+    }
+    if (!/tw\.v0 = haloLyric\.vel;/.test(lyricUpdateFn)) {
+      fail('a re-aimed turn must carry the running speed into the new curve');
+    }
+    if (!/v0: haloLyric\.vel/.test(lyricUpdateFn)) {
+      fail('a turn created while the dial is still moving must inherit that speed too');
+    }
+    // Every path that teleports the dial (a seek, a landing after the loop was parked, the
+    // first line) must drop the speed: nothing glided there, so there is nothing to hand on.
+    const jumps = (lyricUpdateFn.match(/haloLyric\.vel = 0;/g) || []).length;
+    if (jumps < 4) {
+      fail(`every path that moves the dial by jump must zero its speed; found ${jumps} of the 4 such paths`);
+    }
     if (/Math\.min\([^)]*rotDur/.test(lyricUpdateFn) || /\bdur\s*=\s*Math\.min/.test(lyricUpdateFn)) {
       fail('the turn duration must not be clamped by the time left before the line: that is what made it snap');
     }
     if (!/if \(t >= items\[upcoming\]\.startAt\) \{/.test(lyricUpdateFn)) {
       fail('a line that is already due must be put on the mark at once');
+    }
+  }
+  {
+    const joinFn = haloSliceFunction(haloText, 'haloEaseJoin');
+    if (!joinFn) {
+      fail('haloEaseJoin could not be read back; the turn curve would be unchecked');
+    }
+    if (joinFn && !/v0 \* dur/.test(joinFn)) {
+      fail('the inherited speed has to be scaled by the turn length, or the join is in the wrong units');
+    }
+    if (joinFn && !/if \(!v0\) return from \+ \(to - from\) \* haloEaseIO\(k\);/.test(joinFn)) {
+      fail('with nothing to inherit, the turn must keep the ease-in-out curve it always used');
     }
   }
   // The turn timing: the beat grid when the app knows the tempo, the console's own knobs
