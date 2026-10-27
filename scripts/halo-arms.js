@@ -289,7 +289,9 @@ function checkHaloCullArms(haloText, fail) {
     }
   }
   // The window and its mask must be one number: the knob that says how many lines read
-  // also says how wide the clipped arc is.
+  // also says how wide the clipped arc is. At the shipped 0 the knob is a cap and the list
+  // runs the whole way round, stopping at the point opposite the read mark - so a line is
+  // born and dies behind the ring instead of popping into view at the side of the screen.
   {
     const windowFn = haloSliceFunction(haloText, 'haloLyricWindow');
     const arcFn = haloSliceFunction(haloText, 'haloLyricArcHalf');
@@ -302,8 +304,26 @@ function checkHaloCullArms(haloText, fail) {
     if (windowFn && !/haloLyric\.current/.test(windowFn)) {
       fail('the lyric window must be centred on the line being sung');
     }
-    if (arcFn && !/win\.rows/.test(arcFn)) {
+    if (windowFn && !/items\[anchor\][^\n]*\.angle/.test(windowFn)) {
+      fail('the window must be measured from the sung line\'s own angle, not from the song\'s first line');
+    }
+    if (windowFn && !/while \(from > 0 && base - items\[from - 1\]\.angle < Math\.PI\) from--/.test(windowFn)) {
+      fail('an uncapped dial must run back to the point opposite the read mark');
+    }
+    if (windowFn && !/while \(to < items\.length - 1 && items\[to \+ 1\]\.angle - base < Math\.PI\) to\+\+/.test(windowFn)) {
+      fail('an uncapped dial must run forward to the point opposite the read mark');
+    }
+    if (windowFn && /if \(!\(rows > 0\)\)/.test(windowFn) === false) {
+      fail('the knob must be a cap: 0 has to mean the whole circle, not no lines at all');
+    }
+    if (windowFn && /Math\.ceil\(rows \/ 2\)/.test(windowFn)) {
+      fail('a capped window must keep the sung line inside it: rounding the half row the wrong way drops it at rows 1');
+    }
+    if (arcFn && !/items\[win\.from\]\.angle - win\.base/.test(arcFn)) {
       fail('the masked arc must be as wide as the window it clips');
+    }
+    if (arcFn && !/Math\.min\(Math\.PI,/.test(arcFn)) {
+      fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
   if (drawLyricFn) {
@@ -311,10 +331,7 @@ function checkHaloCullArms(haloText, fail) {
       fail('the draw time fit must measure the screen\'s run on the ray the line actually sits on');
     }
     if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
-      fail('a line must be drawn only when its own start is on screen: both ends of the run decide');
-    }
-    if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
-      fail('a line must be drawn only when its own start is on screen: both ends of the run decide');
+      fail('a line must be drawn only when its own start is on screen: both ends of the run decides');
     }
     // The dial is a window: the lines around the one being sung, not the whole song.
     if (!/var win = haloLyricWindow\(\);/.test(drawLyricFn)) {

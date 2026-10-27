@@ -64,7 +64,7 @@ var HALO_TUNING_SCHEMA = {
   readAngle: { def: 0, min: -180, max: 180, kind: 'deg', rebuild: 'lyric' },
   textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
   lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
-  lyricRows: { def: 7, min: 1, max: 16, kind: 'count', rebuild: 'live' },
+  lyricRows: { def: 0, min: 0, max: 240, kind: 'count', rebuild: 'live' },
   rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
   rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
   beatTurn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
@@ -582,26 +582,42 @@ function haloLyricStep() {
   return (haloLyricFontPx() * 1.45 + haloParam('lineGap')) / Math.max(1, haloState.RO);
 }
 
-// How many lines the dial may hold. The list is a window around the line being sung, not
-// the whole song: with every line laid out on the ring, a long song spread its words over
-// the full circle, so lines that are not being sung yet read side by side - some of them
-// on the far side of the ring.
+// How many lines the dial holds, and the arc they cover.
+//
+// The knob is a cap. At 0 - the shipped default - the list runs the whole way round: it
+// stops at the point opposite the read mark, so a line is born and dies behind the ring
+// instead of popping into view at two or four o'clock. Any other number centres a shorter
+// list on the line being sung, which is what the pitch and the gap alone would give.
 function haloLyricWindow() {
   var items = haloLyric.items;
-  var rows = Math.max(1, Math.round(haloParam('lyricRows')));
+  var rows = Math.round(haloParam('lyricRows'));
   var anchor = haloLyric.current < 0 ? 0 : haloLyric.current;
-  var from = Math.max(0, anchor - Math.ceil(rows / 2));
-  var to = Math.min(items.length - 1, from + rows - 1);
-  return { from: from, to: to, rows: rows };
+  // Measured from the line being sung, not from the song's first line: the dial is
+  // re-anchored when a turn finishes, but the first line of a seeked song is not, and the
+  // opposite point has to be the opposite of the mark either way.
+  var base = items[anchor] ? items[anchor].angle : 0;
+  if (!(rows > 0)) {
+    var from = anchor;
+    var to = anchor;
+    while (from > 0 && base - items[from - 1].angle < Math.PI) from--;
+    while (to < items.length - 1 && items[to + 1].angle - base < Math.PI) to++;
+    return { from: from, to: to, rows: 0, base: base };
+  }
+  var first = Math.max(0, anchor - Math.floor(rows / 2));
+  return { from: first, to: Math.min(items.length - 1, first + rows - 1), rows: rows, base: base };
 }
 
 // Half the angle the window covers, with the thickness of a row in it. The mask is drawn
 // over this arc around the read mark, so a line that leaves the window is cut there rather
-// than reappearing somewhere else on the ring.
+// than reappearing somewhere else on the ring. It never exceeds the circle itself: when the
+// window runs the whole way round, the mask's two ends meet behind the ring.
 function haloLyricArcHalf(win) {
+  var items = haloLyric.items;
   var textR = haloState.RO + haloParam('textGap');
-  var step = haloLyricStep();
-  return (Math.max(0, win.rows - 1) / 2) * step + step + (haloLyricFontPx() * 1.6) / Math.max(1, textR);
+  if (!items.length || !items[win.from] || !items[win.to]) return Math.PI;
+  var span = Math.max(Math.abs(items[win.from].angle - win.base), Math.abs(items[win.to].angle - win.base));
+  var thickness = haloLyricStep() + (haloLyricFontPx() * 1.6) / Math.max(1, textR);
+  return Math.min(Math.PI, span + thickness);
 }
 
 // The width of a line, measured with the font of the row that shows it and kept for the
@@ -2160,9 +2176,10 @@ function haloDrawRim(ctx) {
 // above it and the ones still to come below, so the list runs in at the bottom and out
 // at the top.
 //
-// The block is a window, not the whole song. It holds lyricRows lines; the rest of the
-// song is not measured and not drawn, and a mask over the window's arc cuts a line that
-// has scrolled past the end rather than letting it reappear on the other side of the ring.
+// The block is a window, not the whole song: at 0 on the knob it runs to the point
+// opposite the read mark, and any other number caps it to that many lines centred on the
+// one being sung. Lines outside it are not measured and not drawn, and the mask over the
+// window's arc cuts a line at the window's end rather than letting it reappear elsewhere.
 function haloDrawLyricText(ctx) {
   var s = haloState;
   var items = haloLyric.items;

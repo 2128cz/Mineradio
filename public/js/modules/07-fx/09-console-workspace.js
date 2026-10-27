@@ -162,7 +162,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-haloreadAngle', '读词位置', '环形数据流 歌词 读词 角度'),
         fxConsoleItem('fx-halotextGap', '歌词离环距离', '环形数据流 歌词 距离 间隙'),
         fxConsoleItem('fx-halolineGap', '歌词行距', '环形数据流 歌词 行距 间距'),
-        fxConsoleItem('fx-halolyricRows', '同屏歌词行数', '环形数据流 歌词 行数 同屏 虚拟 窗口'),
+        fxConsoleItem('fx-halolyricRows', '同屏歌词行数上限', '环形数据流 歌词 行数 上限 同屏 虚拟 整圆'),
         fxConsoleItem('fx-halorotLead', '转环提前量', '环形数据流 转环 提前 跟唱'),
         fxConsoleItem('fx-halorotDur', '转环时长', '环形数据流 转环 时长 速度'),
         fxConsoleItem('t-halobeatTurn', '按节拍转环', '环形数据流 转环 节拍 bpm 速度 快歌 慢歌'),

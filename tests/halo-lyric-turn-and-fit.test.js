@@ -324,12 +324,17 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
 // had rotated off the bottom and dropped the rows that were on screen.
 {
   const win = sandbox.haloLyricWindow();
+  // The shipped default is the whole circle and this song is shorter than one turn, so the
+  // window is the song itself: the claim below then reads as "what the screen shows is what
+  // is drawn", with no window left to hide a dropped line behind.
+  assert.strictEqual(win.from, 0, 'a song shorter than the circle must not be cut at its start');
+  assert.strictEqual(win.to, items.length - 1, 'a song shorter than the circle must not be cut at its end');
   const expected = [];
   for (let i = win.from; i <= win.to; i++) {
     if (anchorOnScreen(items[i].angle + sandbox.haloState.ringRot).inside) expected.push(items[i].text);
   }
   for (const text of expected) {
-    assert(rowsBefore.has(text), `the line "${text}" is in the window and on screen and must be drawn`);
+    assert(rowsBefore.has(text), `the line "${text}" is on the screen and must be drawn`);
   }
   assert.strictEqual(
     drawnTexts.length,
@@ -338,27 +343,19 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
   );
 }
 
-// Virtualization, second half: the dial holds no more lines than the knob says, and they
-// are the lines around the one being sung. A long song used to spread every line over the
-// circle, so several lines you were not singing read at once.
+// The window is measured from the line being sung, not from the song's first line: the dial
+// is re-anchored on the sung line when a turn ends, but that has not happened for the first
+// line of a song the user seeked into. Here the sung line is row 3 of a short song, and the
+// window still holds the rows on both sides of it.
 {
   const win = sandbox.haloLyricWindow();
-  assert(drawnTexts.length <= win.rows,
-    `at most ${win.rows} rows may read at once, got ${drawnTexts.length}`);
-  const indexByText = new Map(items.map((item, i) => [item.text, i]));
-  for (const text of drawnTexts) {
-    const distance = Math.abs(indexByText.get(text) - sandbox.haloLyric.current);
-    assert(distance <= win.rows,
-      `the drawn line "${text}" is ${distance} lines away from the sung one, outside the window`);
-  }
-  assert(
-    items.slice(win.from, win.to + 1).every((item) => item.textWidth > 0),
-    'the rows inside the window are measured once they are drawn'
-  );
-  assert(
-    items.filter((item, i) => i < win.from || i > win.to).every((item) => item.textWidth === 0),
-    'a row outside the window is never measured'
-  );
+  assert(win.from <= sandbox.haloLyric.current && sandbox.haloLyric.current <= win.to,
+    `the window [${win.from},${win.to}] must hold the line being sung (${sandbox.haloLyric.current})`);
+  sandbox.haloLyric.current = 0;
+  const atStart = sandbox.haloLyricWindow();
+  assert.strictEqual(atStart.from, 0, 'a dial sung on the first row must start at the first row');
+  assert(atStart.to > atStart.from, 'and it must still run forward from there');
+  sandbox.haloLyric.current = 3;
 }
 
 // The mask: the dial is clipped to the window's arc, so a line that leaves the window is
@@ -389,10 +386,17 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
     assert(off <= arcHalf + 1e-9,
       `the drawn line "${text}" sits ${off.toFixed(3)}rad from the read mark, outside the masked arc (${arcHalf.toFixed(3)})`);
   }
-  // The whole song would spread over this much of the circle if every line were laid out.
-  const spread = Math.abs(items[items.length - 1].angle - items[0].angle);
-  assert(spread > arcHalf * 4,
-    `the fixture must be long enough to wrap past the arc: song spread ${spread.toFixed(2)}rad, arc ${arcHalf.toFixed(2)}rad`);
+  // The arc is the window's own, not a wider one: it reaches past the last row by no more
+  // than the thickness of a row, and it stops short of the full circle while the song is
+  // shorter than that.
+  const base = items[sandbox.haloLyric.current].angle;
+  const spanAbs = Math.max(Math.abs(items[win.from].angle - base), Math.abs(items[win.to].angle - base));
+  assert(arcHalf >= spanAbs - 1e-9,
+    `the mask must cover the window it is drawn for (arc ${arcHalf.toFixed(3)}rad, window ${spanAbs.toFixed(3)}rad)`);
+  assert(arcHalf <= spanAbs + 2 * sandbox.haloLyricStep() + 1e-9,
+    `the mask must not be wider than the window by more than a row (arc ${arcHalf.toFixed(3)}rad, window ${spanAbs.toFixed(3)}rad, step ${sandbox.haloLyricStep().toFixed(3)}rad)`);
+  assert(arcHalf < Math.PI - 1e-9,
+    `a song shorter than the circle must not get the whole circle as its mask (arc ${arcHalf.toFixed(3)}rad)`);
 }
 
 // Every row keeps the size the app's lyric knob asks for: a list whose rows grow and
@@ -407,19 +411,63 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
   );
 }
 
-// The dial turns under the list: the same lines read, each one carried to where the ring
-// has been turned to, and none of them resized on the way.
+// The dial turns under the list: every row the screen still shows is carried to where the
+// ring has been turned to, at the same size, and the rows that come and go do so at the edge
+// of what the screen shows - a row must not light up in the middle of the visible band.
 const beforeAngles = new Map(lastDrawAngles);
 const dialTurn = sandbox.haloLyricStep() * 2;
-const rowsAfter = drawAndReadRows(dialTurn);
-assert.strictEqual(rowsAfter.size, rowsBefore.size, 'the window keeps its lines while the dial turns');
+const ringRotBefore = sandbox.haloReadAngle() - items[sandbox.haloLyric.current].angle;
+
+// Draw the dial turned by `extra` and say what the screen shows of it against what is drawn:
+// the two must agree row by row, and the rows that changed tell us which edge of the band
+// they crossed.
+function crossings(extra) {
+  const rows = drawAndReadRows(extra);
+  const angles = new Map(lastDrawAngles);
+  let entered = 0;
+  let left = 0;
+  let onBand = 0;
+  for (let i = 0; i < items.length; i++) {
+    const vis = anchorOnScreen(items[i].angle + ringRotBefore + extra).inside;
+    const isDrawn = rows.has(items[i].text);
+    assert(isDrawn === vis,
+      `the line "${items[i].text}" ${vis ? 'is on the screen and was not drawn' : 'is off the screen and was drawn anyway'}`);
+    if (vis) {
+      onBand += 1;
+      if (!rowsBefore.has(items[i].text)) entered += 1;
+    } else if (rowsBefore.has(items[i].text)) left += 1;
+  }
+  return { rows, angles, entered, left, onBand };
+}
+
+const onward = crossings(dialTurn);
+const rowsAfter = onward.rows;
 assert(rowsAfter.size > 0, 'the dial must still show lines');
-for (const text of rowsBefore.keys()) {
-  assert(rowsAfter.has(text), `the line "${text}" must still read while the dial turns`);
-  const moved = sandbox.haloNormAngle(lastDrawAngles.get(text) - beforeAngles.get(text));
+// Turned the other way as well, so the edge rows come in at is judged too and not only the
+// edge this fixture happens to have rows against.
+const back = crossings(-dialTurn);
+assert(onward.left > 0, `turning the dial must carry rows out of the band (out ${onward.left})`);
+assert(back.entered > 0, `and turning it back must carry rows into the band (in ${back.entered})`);
+assert(onward.entered + onward.left <= 6 && back.entered + back.left <= 6,
+  `rows may only change at the edge of the band, not in numbers (forward ${onward.entered}/${onward.left}, back ${back.entered}/${back.left})`);
+// A row that stays on the screen is carried by exactly the turn - it does not hold its place
+// while the ring moves, and it does not overshoot.
+let carried = 0;
+for (const text of rowsAfter.keys()) {
+  if (!rowsBefore.has(text)) continue;
+  const moved = sandbox.haloNormAngle(onward.angles.get(text) - beforeAngles.get(text));
   assert(Math.abs(moved - dialTurn) < 1e-6,
     `the line "${text}" must be carried by the turn (${dialTurn.toFixed(4)}rad), moved ${moved.toFixed(4)}rad`);
+  carried += 1;
 }
+assert(carried >= rowsAfter.size - 6,
+  `the turn must carry the rows it had, not replace them (carried ${carried} of ${rowsAfter.size} rows)`);
+// Every row the screen shows sits on the reading side of the ring, where the list runs
+// outward from the rim: a row is measured by the point its first glyph is anchored on, and on
+// the far half of the ring the line is turned around and anchored by its far end instead.
+assert.strictEqual(back.onBand, back.rows.size,
+  `every row on the screen must be one the list reads outward from (band ${back.onBand}, drawn ${back.rows.size})`);
+console.log(`  dial turn: ${rowsBefore.size} rows read before, ${onward.rows.size} after (${onward.entered} crossed in, ${onward.left} out; turning back ${back.entered} in, ${back.left} out)`);
 for (const [text, scale] of rowsBefore) {
   if (!rowsAfter.has(text)) continue;
   assert(
@@ -528,6 +576,169 @@ for (const [text, scale] of rowsBefore) {
   sandbox.haloBuildLyricRing();
 }
 
+// -------------------------------------------- the window that runs the whole way round
+// The complaint this answers: a line came into view at about four o'clock, well inside the
+// band of the ring the screen shows. At the shipped cap of 0 the dial is laid out the whole
+// way round and stops at the point opposite the read mark, so a row is born and dies behind
+// the ring where nothing of it reads. A song shorter than one turn cannot show any of this -
+// its window is the song itself - so the fixture here is a long one.
+{
+  const LONG = 240;
+  const lines = [];
+  for (let i = 0; i < LONG; i++) lines.push({ t: i * 4, text: `line ${i} of the long song` });
+  sandbox.lyricsLines = lines;
+  sandbox.haloTuning.lyricRows = 0;
+  sandbox.haloBuildLyricRing();
+  const song = sandbox.haloLyric.items;
+  const step = sandbox.haloLyricStep();
+  const read = sandbox.haloReadAngle();
+  // The pose the user sees: the sung line parked on the read mark, which is where a turn
+  // leaves it. The dial's own angles are measured from that line.
+  const ringRotAt = (k) => read - song[k].angle;
+  // Where the first glyph of row i sits on the screen when the dial is aimed at row k.
+  const anchorAt = (i, k) => anchorOnScreen(song[i].angle + ringRotAt(k));
+
+  const spread = song[song.length - 1].angle - song[0].angle;
+  assert(spread > 2 * Math.PI + step,
+    `the fixture must be a song that wraps past the circle, spread ${spread.toFixed(2)}rad against ${step.toFixed(3)}rad rows`);
+  const perSide = Math.floor(Math.PI / step);
+  assert(perSide >= 4 && 2 * perSide + 1 < LONG,
+    `the circle must hold fewer rows than the song has (${perSide} each side, song ${LONG})`);
+
+  function pose(k) {
+    sandbox.haloLyric.current = k;
+    sandbox.haloState.ringRot = ringRotAt(k);
+    drawContext.calls.length = 0;
+    sandbox.haloDrawLyricText(drawContext);
+    const drawn = [];
+    for (const call of drawContext.calls) {
+      if (call.op === 'fillText' && drawn.indexOf(call.text) < 0) drawn.push(call.text);
+    }
+    const win = sandbox.haloLyricWindow();
+    return { k, win, arcHalf: sandbox.haloLyricArcHalf(win), drawn: new Set(drawn) };
+  }
+
+  // Rows well inside the song, where it is the circle and not the song's own start or end
+  // that bounds the window on both sides.
+  // The framing is the one the app ships with (the ring centre off screen to the left, nobody
+  // panning): the point opposite the read mark is then behind the ring and out of the screen.
+  // A user who drags the camera until that point shows has asked to see the seam itself, which
+  // any bounded window has to have somewhere.
+  const from = perSide + 1;
+  const to = LONG - perSide - 2;
+  let births = 0;
+  let deaths = 0;
+  let bandRows = 0;
+  let previous = null;
+  for (let k = from; k <= to; k++) {
+    const here = pose(k);
+    const win = here.win;
+    assert(win.from <= k && k <= win.to,
+      `the window [${win.from},${win.to}] must hold the line being sung (${k})`);
+    const back = song[k].angle - song[win.from].angle;
+    const fwd = song[win.to].angle - song[k].angle;
+    assert(back <= Math.PI + 1e-9 && fwd <= Math.PI + 1e-9,
+      `no row may sit further from the sung line than the point opposite the read mark (back ${back.toFixed(3)}rad, forward ${fwd.toFixed(3)}rad)`);
+    // It has to reach that point, not stop short of it: stopping short is what left a gap
+    // the row popped into view across.
+    if (win.from > 0) {
+      assert(Math.PI - back <= step + 1e-9,
+        `the window must run back to the opposite point, not stop ${Math.PI - back}rad short of it`);
+      assert(back < Math.PI && song[k].angle - song[win.from - 1].angle > Math.PI,
+        'the row the window leaves out behind it must really sit past the opposite point');
+    }
+    if (win.to < song.length - 1) {
+      assert(Math.PI - fwd <= step + 1e-9,
+        `the window must run forward to the opposite point, not stop ${Math.PI - fwd}rad short of it`);
+    }
+    // Both ends of the run are the same place on the ring: the list covers the whole circle.
+    assert(Math.abs(sandbox.haloNormAngle(song[win.to].angle - song[win.from].angle)) <= step + 1e-9,
+      `the window's two ends must meet (${sandbox.haloNormAngle(song[win.to].angle - song[win.from].angle).toFixed(3)}rad apart)`);
+    // The masked arc is then the circle itself, so the mask cuts nothing the screen shows.
+    assert(Math.abs(here.arcHalf - Math.PI) < 1e-9,
+      `an uncapped dial must be masked over the whole circle, arc ${here.arcHalf.toFixed(4)}rad`);
+    // What the screen shows of those rows is what is drawn, and nothing else.
+    let onScreen = 0;
+    for (let i = 0; i < song.length; i++) {
+      const vis = anchorAt(i, k).inside;
+      const isDrawn = here.drawn.has(song[i].text);
+      if (i >= win.from && i <= win.to) {
+        assert(vis === isDrawn,
+          `row ${i} ${vis ? 'is on the screen and was not drawn' : 'is off the screen and was drawn anyway'} (sung row ${k}, ${sandbox.haloNormAngle(song[i].angle - song[k].angle).toFixed(3)}rad from the mark)`);
+        if (vis) onScreen += 1;
+      } else {
+        assert(!isDrawn, `row ${i} is outside the window and must not be drawn (sung row ${k})`);
+      }
+    }
+    assert(onScreen > 3, `the pose must leave several rows on the screen, got ${onScreen}`);
+    bandRows = onScreen;
+    // A row that changes whether the dial holds it must be off the screen for both poses:
+    // that is what being born at the point opposite the read mark has to mean on screen. If
+    // it were on screen, the user would watch a line appear in the middle of the band.
+    if (previous) {
+      for (let i = 0; i < song.length; i++) {
+        const was = i >= previous.win.from && i <= previous.win.to;
+        const now = i >= win.from && i <= win.to;
+        if (was === now) continue;
+        assert(!anchorAt(i, previous.k).inside && !anchorAt(i, k).inside,
+          `row ${i} entered or left the window while the screen showed it (sung row ${previous.k} -> ${k}, ${anchorAt(i, k).x.toFixed(0)},${anchorAt(i, k).y.toFixed(0)})`);
+        if (!was) births += 1; else deaths += 1;
+      }
+    }
+    previous = here;
+  }
+  assert(births >= to - from, `every row of singing must take in a row at the opposite point, got ${births}`);
+  assert(deaths >= to - from, `and drop one there, got ${deaths}`);
+  console.log(`  whole circle: window holds ${2 * perSide + 1} of ${LONG} rows, ${bandRows} of them on the screen, ${births} rows born and ${deaths} dropped behind the ring`);
+
+  // The knob still caps: fewer rows, a narrower mask, and rows the screen shows left out on
+  // purpose. Without this the cap-0 branch above would only be proving that a big window is
+  // a big window.
+  for (const cap of [1, 3, 7, 20]) {
+    sandbox.haloTuning.lyricRows = cap;
+    const k = Math.floor(LONG / 2);
+    const here = pose(k);
+    const win = here.win;
+    assert.strictEqual(win.rows, cap, `the cap must be the number of rows the window holds, got ${win.rows}`);
+    assert.strictEqual(win.to - win.from + 1, cap, `a cap of ${cap} must hold ${cap} rows, got ${win.to - win.from + 1}`);
+    assert(win.from <= k && k <= win.to,
+      `the capped window [${win.from},${win.to}] must still hold the line being sung (${k})`);
+    const back = song[k].angle - song[win.from].angle;
+    const fwd = song[win.to].angle - song[k].angle;
+    assert(here.arcHalf >= Math.max(back, fwd) - 1e-9,
+      `the mask must cover the rows the cap keeps (arc ${here.arcHalf.toFixed(3)}rad, window ${Math.max(back, fwd).toFixed(3)}rad)`);
+    assert(here.arcHalf < Math.PI - 1e-9,
+      `a capped dial must be masked to less than the circle, arc ${here.arcHalf.toFixed(3)}rad`);
+    let leftOut = 0;
+    for (let i = 0; i < song.length; i++) {
+      const inWindow = i >= win.from && i <= win.to;
+      const vis = anchorAt(i, k).inside;
+      if (inWindow) assert(here.drawn.has(song[i].text) === vis, `row ${i} must read exactly when the screen shows it (cap ${cap})`);
+      else if (vis) leftOut += 1;
+    }
+    assert(leftOut > 0, `a cap of ${cap} must leave rows the screen shows undrawn, got ${leftOut}`);
+  }
+
+  // Virtualization, the half of it the whole circle cannot show on its own: a row outside the
+  // window is never measured, and only the rows that are drawn get measured.
+  sandbox.haloTuning.lyricRows = 9;
+  sandbox.haloBuildLyricRing();
+  const fresh = sandbox.haloLyric.items;
+  assert(fresh.every((item) => item.textWidth === 0), 'a rebuilt dial measures nothing');
+  const k = Math.floor(LONG / 2);
+  const capped = pose(k);
+  const win = capped.win;
+  for (let i = 0; i < fresh.length; i++) {
+    const measured = fresh[i].textWidth > 0;
+    const isDrawn = capped.drawn.has(fresh[i].text);
+    assert(measured === isDrawn, `row ${i} ${measured ? 'was measured but not drawn' : 'was drawn but not measured'}`);
+  }
+  assert(capped.drawn.size < fresh.length,
+    `a song of ${fresh.length} rows must not be measured or drawn in full (drew ${capped.drawn.size})`);
+  sandbox.haloTuning.lyricRows = 0;
+  sandbox.haloBuildLyricRing();
+}
+
 // ------------------------------------------------------ the decoration band
 // A block of beams is kept or dropped as one piece, so the rule has to be judged on the
 // block's own rays. What this refuses to accept: a block dropped while one of its rays is
@@ -541,12 +752,15 @@ for (const [text, scale] of rowsBefore) {
   const z = sandbox.haloSceneZoom(1);
   const centre = centreOnScreen();
   const s = sandbox.haloState;
+  // The beams turn with the decorations, not with the lyric dial: the two are different
+  // quantities since the dial was split off, and a test that read the wrong one would agree
+  // with the module only while that quantity happened to be zero.
   const EDGE = 4;
   let checked = 0;
   let setAside = 0;
   let keptVisible = 0;
   for (const layer of sandbox.haloStrandLayers) {
-    const rot = s.ringRot * layer.rotK + layer.off;
+    const rot = s.decoRot * layer.rotK + layer.off;
     for (const wedge of layer.wedges) {
       const keep = sandbox.haloWedgeVisible(wedge, layer);
       let plainlyVisible = false;
