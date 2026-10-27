@@ -297,4 +297,58 @@ function checkHaloCullArms(haloText, fail) {
   }
 }
 
-module.exports = { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms };
+// The rotation the painted effects follow.
+//
+// When a lyric turn finishes, the dial re-anchors its line angles: it takes a whole step off
+// every angle and adds it back to its own rotation, which cancels for a lyric line and does
+// not for anything else. The user saw every effect on the ring slide with the turn and then
+// jump back when it ended. So the effects read `decoRot` - the ring's rotation with those
+// re-anchors taken out - and only the lyric dial reads the dial's own `ringRot`.
+function checkHaloRotationArms(haloText, fail) {
+  if (!/decoRot: 0,/.test(haloText)) {
+    fail('the ring needs its own rotation field for the things painted on it');
+  }
+  const renderFn = haloSliceFunction(haloText, 'haloRenderFrame');
+  if (!renderFn) {
+    fail('haloRenderFrame could not be read back; the rotation guards below would be vacuous');
+    return;
+  }
+  if (!renderFn.includes('s.ringRot = haloLyric.rot;') || !renderFn.includes('s.decoRot = s.ringRot - haloLyric.rebase;')) {
+    fail('the ring has to derive its own rotation from the dial by taking the re-anchors back out');
+  }
+  // Every place that re-anchors the list has to remember that it did, or the effects follow
+  // the bookkeeping.
+  const anchors = (haloText.match(/haloLyric\.rebase \+= rebase\d?;/g) || []).length;
+  if (anchors !== 3) {
+    fail(`the lyric dial re-anchors in three places and must remember each one; found ${anchors} of 3`);
+  }
+  const buildFn = haloSliceFunction(haloText, 'haloBuildLyricRing');
+  if (buildFn && !buildFn.includes('haloLyric.rebase = 0;')) {
+    fail('a rebuilt lyric dial must start its re-anchor total again');
+  }
+  // The effects follow the ring; only the lyric list follows the dial.
+  const effectFns = ['haloDrawRing', 'haloDrawStrands', 'haloRingTicks', 'haloDrawFlyers',
+    'haloSlotVisible', 'haloWedgeVisible', 'haloDrawComets', 'haloDrawHaze'];
+  for (const name of effectFns) {
+    const fn = haloSliceFunction(haloText, name);
+    if (!fn) {
+      fail(`${name} could not be read back; the rotation guard for it would be vacuous`);
+      continue;
+    }
+    if (!/decoRot/.test(fn)) {
+      fail(`${name} must place its elements with the ring's own rotation (decoRot), not the lyric dial's`);
+    }
+    if (/ringRot/.test(fn)) {
+      fail(`${name} still reads the lyric dial's rotation: it would snap back when a turn ends`);
+    }
+  }
+  const lyricFn = haloSliceFunction(haloText, 'haloDrawLyricText');
+  if (lyricFn && !/item\.angle \+ s\.ringRot/.test(lyricFn)) {
+    fail('the lyric line is placed in the dial\'s own frame: it must follow the dial, not the ring');
+  }
+  if (lyricFn && /s\.decoRot/.test(lyricFn)) {
+    fail('the lyric dial must not take the re-anchors out: they are what puts each sung line on the mark');
+  }
+}
+
+module.exports = { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms };

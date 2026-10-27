@@ -803,7 +803,7 @@ function runPvPresetLiveProbe(modulePath) {
 // because the ring needs a playing song, a lyric timeline and a renderer to measure against.
 // The arms that read the module's body back live in scripts/halo-arms.js, so the mutation
 // driver can run the very same code on a mutated copy of the module.
-const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms } = require('./halo-arms');
+const { haloSliceFunction, checkHaloAudioArms, checkHaloCullArms, checkHaloRotationArms } = require('./halo-arms');
 const { checkTakeoverLayerConsumers } = require('./takeover-arms');
 
 function runHaloPresetCheck() {
@@ -951,6 +951,8 @@ function runHaloPresetCheck() {
   // The ring's cull and lyric geometry, read back off the module. These arms live in
   // scripts/halo-arms.js so the mutation driver runs the same code the gate runs.
   checkHaloCullArms(haloText, fail);
+  // The effects on the ring follow the ring's rotation, not the lyric dial's re-anchors.
+  checkHaloRotationArms(haloText, fail);
   // The beat map is a fixed timeline, so the ring's motion has to be scaled by the sound.
   checkHaloAudioArms(haloText, fail);
   // The knobs: the store, the console group, and one slider per knob. A knob that is in
@@ -1058,6 +1060,18 @@ function runHaloPresetCheck() {
     fail(`the beat level gate regression failed: ${rel(beatTestFile)}`);
   }
   process.stdout.write(beatTest.stdout || '');
+  // Where the effects are painted, frame by frame: the end of a lyric turn must not move them.
+  const continuityTestFile = path.join(appRoot, 'tests', 'halo-ring-turn-continuity.test.js');
+  if (!fs.existsSync(continuityTestFile)) {
+    fail('tests/halo-ring-turn-continuity.test.js is missing; the ring rotation would only be checked by shape');
+  }
+  const continuityTest = spawnSync(process.execPath, [continuityTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (continuityTest.status !== 0) {
+    process.stdout.write(continuityTest.stdout || '');
+    process.stderr.write(continuityTest.stderr || '');
+    fail(`the ring rotation continuity regression failed: ${rel(continuityTestFile)}`);
+  }
+  process.stdout.write(continuityTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

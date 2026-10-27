@@ -109,6 +109,13 @@ var haloState = {
   dpr: 1,
   time: 0,
   ringRot: 0,
+  // The ring's rotation as the things painted on it see it. The lyric dial re-anchors its
+  // own angles when a turn finishes (so the angles stay small), and that bookkeeping must
+  // not move anything else: it subtracts the same amount from `rot` and from the line
+  // angles, which cancels for a lyric line and shows up as a snap for every other element.
+  // This is `ringRot` with the re-anchors taken back out: it moves when the ring turns and
+  // stays put when the list re-anchors.
+  decoRot: 0,
   webRot: 0,
   idleSpin: 0,
   ringPulse: 0,      // the beat's envelope: 1 at the hit, decaying after it
@@ -144,6 +151,7 @@ var haloLyric = {
   current: -1,
   pending: -1,
   rot: 0,
+  rebase: 0,     // the total by which the line angles have been re-anchored; haloState.decoRot takes it back out
   tween: null,
   baseAngle: 0,
   builtFontPx: 0,     // the font the measured widths belong to
@@ -520,6 +528,7 @@ function haloBuildLyricRing() {
   haloLyric.pending = -1;
   haloLyric.tween = null;
   haloLyric.rot = haloReadAngle();
+  haloLyric.rebase = 0;
   haloLyric.baseAngle = 0;
   var fontPx = haloLyricFontPx();
   // One row per line: the step is a line height plus the gap the user asked for.
@@ -627,6 +636,7 @@ function haloLyricUpdate(t) {
         var rebase = items[tw.item].angle;
         for (var j = 0; j < items.length; j++) items[j].angle -= rebase;
         haloLyric.rot += rebase;
+        haloLyric.rebase += rebase;
       }
       return;
     }
@@ -646,6 +656,7 @@ function haloLyricUpdate(t) {
     var rebase2 = items[sung].angle;
     for (var m = 0; m < items.length; m++) items[m].angle -= rebase2;
     haloLyric.rot += rebase2;
+    haloLyric.rebase += rebase2;
     return;
   }
 
@@ -658,6 +669,7 @@ function haloLyricUpdate(t) {
     var rebase3 = items[upcoming].angle;
     for (var n = 0; n < items.length; n++) items[n].angle -= rebase3;
     haloLyric.rot += rebase3;
+    haloLyric.rebase += rebase3;
     return;
   }
   haloLyric.pending = upcoming;
@@ -877,7 +889,7 @@ function haloBuildSlots() {
 function haloSlotVisible(slot) {
   var s = haloState;
   var mid = s.R + s.band * 0.42;
-  var angle = slot.a + haloState.ringRot;
+  var angle = slot.a + haloState.decoRot;
   var p = haloToScreen(s.cx + Math.cos(angle) * mid, s.cy + Math.sin(angle) * mid);
   return p.x > -140 && p.x < s.w + 140 && p.y > -140 && p.y < s.h + 140;
 }
@@ -1319,7 +1331,7 @@ function haloRayVisible(angle, r0, r1) {
 
 function haloWedgeVisible(wedge, layer) {
   var s = haloState;
-  var rot = s.ringRot * layer.rotK + layer.off;
+  var rot = s.decoRot * layer.rotK + layer.off;
   var r0 = s.RO + 3;
   // A wedge is a block of lines over its own angular span (up to about 20deg on the dense
   // layer). Deciding the block on its middle ray alone drops the whole block, the lines
@@ -1342,7 +1354,7 @@ function haloUpdateStrands(dt, env) {
     var layer = haloStrandLayers[i];
     for (var w = 0; w < layer.wedges.length; w++) {
       var wedge = layer.wedges[w];
-      var rot = s.ringRot * layer.rotK + layer.off;
+      var rot = s.decoRot * layer.rotK + layer.off;
       var am = haloNormAngle((wedge.i0 + wedge.n / 2) * layer.step + rot);
       wedge.vis = haloWedgeVisible(wedge, layer);
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
@@ -1426,7 +1438,7 @@ function haloDrawStrands(ctx, layer, collect) {
   var s = haloState;
   var span = (s.RMAX - s.RO - 20) * haloParam('beamLength');
   var r0 = s.RO + 3;
-  var rot = s.ringRot * layer.rotK + layer.off;
+  var rot = s.decoRot * layer.rotK + layer.off;
   var edgeAlpha = [0.28, 0.62, 1];
   ctx.lineCap = 'butt';
   for (var i = 0; i < layer.wedges.length; i++) {
@@ -1522,7 +1534,7 @@ function haloSpawnComet(ang, travel, weight, hitAt) {
     win: haloRand(0.22, 0.4),
     glow: Math.random() < 0.4,
     tint: Math.random() < 0.15,
-    rot0: s.ringRot,
+    rot0: s.decoRot,
     hit: false,
     angle: ang
   });
@@ -1562,7 +1574,7 @@ function haloFlashSlotAt(angle) {
   var bd = 9;
   for (var i = 0; i < haloSlotList.length; i++) {
     var slot = haloSlotList[i];
-    var d = Math.abs(haloNormAngle(slot.a + haloState.ringRot - angle));
+    var d = Math.abs(haloNormAngle(slot.a + haloState.decoRot - angle));
     if (d < bd) { bd = d; best = slot; }
   }
   if (best && bd < 0.12) best.flash = Math.max(best.flash, 0.8);
@@ -1579,7 +1591,7 @@ function haloUpdateComets(dt) {
     }
     if (!c.hit && haloPlayheadSeconds() >= c.endAt) {
       c.hit = true;
-      haloFlashSlotAt(c.angle + (haloState.ringRot - c.rot0));
+      haloFlashSlotAt(c.angle + (haloState.decoRot - c.rot0));
     }
   }
 }
@@ -1600,7 +1612,7 @@ function haloDrawComets(ctx) {
     var fade = c.life > span ? Math.max(0, 1 - (c.life - span) / 0.25) : 1;
     if (fade <= 0) continue;
     ctx.save();
-    ctx.rotate(s.ringRot - c.rot0);
+    ctx.rotate(s.decoRot - c.rot0);
     var col = c.tint ? '200,190,250' : '255,255,255';
     ctx.strokeStyle = 'rgba(' + col + ',' + (0.5 * fade).toFixed(3) + ')';
     ctx.lineWidth = 1;
@@ -1639,7 +1651,7 @@ function haloNewFlyer(init) {
   }
   var s = haloState;
   return {
-    a: a - s.ringRot,
+    a: a - s.decoRot,
     len: 20 + Math.pow(Math.random(), 2) * 320,
     r: init ? haloRand(s.RO, s.RMAX) : s.RO + haloRand(0, 25),
     sp: haloRand(260, 900),
@@ -1691,7 +1703,7 @@ function haloSpawnFlyBurst() {
   var lv = Math.random() < 0.45 ? 2 : 1;
   for (var i = 0; i < n; i++) {
     haloFlyerList.push({
-      a: a + (i / n - 0.5) * spread + haloGauss() * 0.0015 - s.ringRot,
+      a: a + (i / n - 0.5) * spread + haloGauss() * 0.0015 - s.decoRot,
       len: len * haloRand(0.7, 1.15),
       r: r0 - haloRand(0, len * 0.35),
       sp: sp * haloRand(0.92, 1.08),
@@ -1716,7 +1728,7 @@ function haloDrawFlyers(ctx, bursts) {
   for (var i = 0; i < haloFlyerList.length; i++) {
     var f = haloFlyerList[i];
     if (f.burst !== bursts) continue;
-    var a = haloNormAngle(f.a + s.ringRot);
+    var a = haloNormAngle(f.a + s.decoRot);
     if (!haloRayVisible(a, Math.max(s.RO + 3, f.r - f.len), f.r)) continue;
     var key = f.tint * 10 + f.lv + (f.lw > 1.15 ? 100 : 0) + (f.burst ? 1000 : 0);
     if (!buckets[key]) { buckets[key] = []; order.push(key); }
@@ -1775,7 +1787,7 @@ function haloRadialLines(ctx, a0, a1, step, r0, L, seed, lo) {
 function haloSpawnHaze(init) {
   var k = Math.random();
   haloHazeList.push({
-    a: haloRand(0, HALO_TAU) - haloState.ringRot,
+    a: haloRand(0, HALO_TAU) - haloState.decoRot,
     w: Math.random() < 0.7 ? haloRand(0.015, 0.07) : haloRand(0.08, 0.18),
     len: haloRand(0.35, 1),
     cur: init ? haloRand(0.2, 0.8) : 0,
@@ -1790,7 +1802,7 @@ function haloSpawnHaze(init) {
 
 function haloSpawnFlare(a) {
   haloFlareList.push({
-    a: a == null ? haloRand(0, HALO_TAU) * 0.95 - haloState.ringRot : a,
+    a: a == null ? haloRand(0, HALO_TAU) * 0.95 - haloState.decoRot : a,
     w: haloRand(0.006, 0.04),
     len: haloRand(18, 110),
     age: 0,
@@ -1851,7 +1863,7 @@ function haloDrawHaze(ctx) {
     if (e <= 0.01) continue;
     var L = h.cur * span;
     if (L < 4) continue;
-    var mid = h.a + s.ringRot + h.drift * h.age;
+    var mid = h.a + s.decoRot + h.drift * h.age;
     haloRadialLines(ctx, mid - h.w / 2, mid + h.w / 2, step, r0, L, h.seed, 0.45);
     ctx.strokeStyle = haloGradient['h' + h.tint] || haloGradient.h1;
     var haze = haloParam('hazeAmount');
@@ -1879,7 +1891,7 @@ function haloDrawFlares(ctx) {
     var e = (t < 0.15 ? t / 0.15 : Math.pow(1 - (t - 0.15) / 0.85, 2)) * f.alpha;
     if (e <= 0.01) continue;
     var L = f.len * (0.6 + 0.4 * haloEaseOut(Math.min(1, t * 3)));
-    var mid = f.a + s.ringRot;
+    var mid = f.a + s.decoRot;
     haloRadialLines(ctx, mid - f.w / 2, mid + f.w / 2, step, r0, L, f.seed, 0.4);
     ctx.globalAlpha = Math.min(1, e * 0.06);
     ctx.lineWidth = 2.6;
@@ -1954,7 +1966,7 @@ function haloDrawRing(ctx, dt) {
     if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 2.2);
     if (!slot.c) continue;
     if (!haloSlotVisible(slot)) continue;
-    var A = slot.a + s.ringRot;
+    var A = slot.a + s.decoRot;
     var hh = slot.hpx + 2;
     ctx.save();
     ctx.rotate(A);
@@ -1980,7 +1992,7 @@ function haloRingTicks(stepRad, r0, r1, fn) {
   var s = haloState;
   var count = Math.ceil(HALO_TAU / stepRad);
   for (var n = 0; n < count; n++) {
-    var a = n * stepRad + s.ringRot;
+    var a = n * stepRad + s.decoRot;
     if (!haloRayVisible(a, r0, r1)) continue;
     fn(Math.cos(a), Math.sin(a), n, a);
   }
@@ -2381,6 +2393,8 @@ function haloRenderFrame(canvas, now, dt) {
   }
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
+  // The things painted on the ring follow the ring, not the lyric list's bookkeeping.
+  s.decoRot = s.ringRot - haloLyric.rebase;
   haloScheduleBeats(t);
   haloRunBeatEvents(t);
   var env = haloAudio.level;
@@ -2461,6 +2475,8 @@ function haloReleaseHaloLayer() {
   haloState.ready = false;
   haloState.ringPulse = 0;
   haloState.pulse = 1;
+  haloState.ringRot = 0;
+  haloState.decoRot = 0;
   haloState.levelGate = 0;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
