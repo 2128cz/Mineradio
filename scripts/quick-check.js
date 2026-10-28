@@ -528,12 +528,14 @@ function runFxConsoleRegistrationCheck() {
   }
   // The PV group registers the live dials and the two plan-time ones plus the button that makes
   // them take effect. Cut counts/style/aspect are baked into the archive, so they are not here.
+  const pvSliderIds = ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity'];
+  const pvItemIds = pvSliderIds.concat(['t-pvunify']);
   const pvGroup = /\{ key: 'pv', title: '[^']*', hint: '[^']*', items: \[([\s\S]*?)\] \}/.exec(workspace);
   if (!pvGroup) fail('the console layout must register the 歌词 PV group');
   else {
     const items = (pvGroup[1].match(/fxConsoleItem\(/g) || []).length;
     if (items !== 8) fail(`the 歌词 PV group must register its seven dials and the regenerate button (found ${items})`);
-    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity', 't-pvunify'].forEach(function (id) {
+    pvItemIds.forEach(function (id) {
       if (pvGroup[1].indexOf(id) < 0) fail(`the 歌词 PV group is missing ${id}`);
       if (htmlText.indexOf('id="' + id + '"') < 0) fail(`index.html is missing the ${id} control the group points at`);
     });
@@ -590,7 +592,53 @@ function runFxConsoleRegistrationCheck() {
   if (!/var fps = typeof pvTuningFps === 'function' \? pvTuningFps\(\) : PV_TARGET_FPS/.test(presetText)) {
     fail('the koma dial must drive the frame gate, or 更新节拍 would do nothing');
   }
-  console.log('[OK] console sync + PV dials (live + plan-time + regenerate) registered.');
+  // Every slider row carries its own reset in the row's last column. The ring and the PV layer
+  // keep their knobs outside fx, so their rows have to be wired to their own schema default --
+  // a group-wide reset is not the same thing, and one knob's button must not move the others.
+  const bindingsText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '07-bindings-shelf-immersive.js'), 'utf8');
+  const haloTuningText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js'), 'utf8');
+  if (!/function ensureFxSliderResetButton\(id, key, resetValue\)/.test(perf)) {
+    fail('the shared slider reset button must take the store its row belongs to');
+  }
+  if (!/typeof resetValue === 'function' \? resetValue : resetFxSliderValue/.test(perf)) {
+    fail('a slider row with no store of its own must keep resetting through fxDefaults');
+  }
+  if (!/ensureFxSliderResetButton\(pair\[0\], pair\[1\]\);/.test(bindingsText)) {
+    fail('bindFxPanel must still hand every app slider its own reset button');
+  }
+  if (!/function resetPvTuningValue\(/.test(tuning) || !/ensureFxSliderResetButton\('fx-pv' \+ key, key, resetPvTuningValue\)/.test(tuning)) {
+    fail('each PV dial needs its own reset, wired to that dial\'s default');
+  }
+  if (!/function bindPvTuningResetButtons\(/.test(tuning) || !/bindPvTuningResetButtons\(\);/.test(tuning)) {
+    fail('the PV tuning init must bind the per-dial resets, or the rows stay bare');
+  }
+  if (!/function resetHaloTuningValue\(/.test(haloTuningText) || !/ensureFxSliderResetButton\('fx-halo' \+ key, key, resetHaloTuningValue\)/.test(haloTuningText)) {
+    fail('each ring knob needs its own reset, wired to that knob\'s schema default');
+  }
+  if (!/function bindHaloTuningResetButtons\(/.test(haloTuningText) || !/bindHaloTuningResetButtons\(\);/.test(haloTuningText)) {
+    fail('the ring tuning init must bind the per-knob resets, or the rows stay bare');
+  }
+  // A button is appended to the row, so a slider the markup left outside a .fx-slider row has
+  // nowhere to put it and would silently carry none.
+  pvSliderIds.forEach(function (id) {
+    const at = htmlText.indexOf('id="' + id + '"');
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (at < 0 || rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+  });
+  const knobTestFile = path.join(appRoot, 'tests', 'knob-reset-buttons.test.js');
+  if (!fs.existsSync(knobTestFile)) {
+    fail('tests/knob-reset-buttons.test.js is missing; the per-field resets would only be checked by shape');
+  }
+  const knobTest = spawnSync(process.execPath, [knobTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (knobTest.status !== 0) {
+    process.stdout.write(knobTest.stdout || '');
+    process.stderr.write(knobTest.stderr || '');
+    fail(`the per-field reset button regression failed: ${rel(knobTestFile)}`);
+  }
+  process.stdout.write(knobTest.stdout || '');
+  console.log('[OK] console sync + PV dials (live + plan-time + regenerate) + per-field resets registered.');
 }
 
 function runWindowVisibilityTraceCheck() {
@@ -1223,6 +1271,12 @@ function runHaloPresetCheck() {
     if (!slider) {
       fail(`the knob ${key} has no slider (${id}) in index.html`);
       continue;
+    }
+    // The per-knob reset is appended to the row, so a slider outside a .fx-slider row has no row
+    // to carry its button.
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', htmlText.indexOf('id="' + id + '"'));
+    if (rowStart < 0 || htmlText.slice(rowStart, htmlText.indexOf('id="' + id + '"')).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
     }
     if (Number(slider[1]) !== spec.min || Number(slider[2]) !== spec.max) {
       fail(`the slider ${id} must run from ${spec.min} to ${spec.max} (found ${slider[1]}..${slider[2]})`);

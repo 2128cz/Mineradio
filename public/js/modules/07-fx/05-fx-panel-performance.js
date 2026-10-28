@@ -520,9 +520,13 @@ function resetFxSliderValue(id, key, btn) {
   animateFxResetButton(btn);
   showToast('已恢复默认数值');
 }
-function ensureFxSliderResetButton(id, key) {
+// Every slider row carries its own reset in the row's last grid column. The store is a
+// parameter because the ring and the PV layer keep their knobs outside `fx`: their defaults
+// live in their own schema, and the rows still want the same button.
+function ensureFxSliderResetButton(id, key, resetValue) {
   var el = document.getElementById(id);
   if (!el || !el.parentElement || el.parentElement.querySelector('.fx-reset-one')) return;
+  var apply = typeof resetValue === 'function' ? resetValue : resetFxSliderValue;
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'fx-reset-one';
@@ -532,7 +536,7 @@ function ensureFxSliderResetButton(id, key) {
   btn.addEventListener('click', function (e) {
     e.preventDefault();
     e.stopPropagation();
-    resetFxSliderValue(id, key, btn);
+    apply(id, key, btn);
   });
   el.parentElement.appendChild(btn);
 }
