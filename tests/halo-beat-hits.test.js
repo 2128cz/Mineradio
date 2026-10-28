@@ -3,10 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-// The ring's pop has to land on the drum hits the analysis heard, not on the tempo grid it
-// lays over the song. This runs the shipped ring module against a map that holds both - a
-// metronome grid at 120 BPM and real hits between its points - and watches which times the
-// ring actually fires on, plus the pulse each hit leaves behind.
+// The ring's pop keeps the tempo grid's timing, and the analysis' detected hits decide how
+// hard each beat lands: a grid beat with a drum under it pops harder than one with nothing
+// under it, and a hit that sits between beats does not move the pop at all.
 
 const appRoot = path.join(__dirname, '..');
 const pick = (envName, relPath) => (process.env[envName] ? path.resolve(process.env[envName]) : path.join(appRoot, relPath));
@@ -93,9 +92,15 @@ const HITS = HIT_TIMES.map((time, i) => ({
 }));
 // Entries that must not count as hits: one the analysis did not judge drum-like, and one the
 // analysis synthesised as a grid point.
+// Two hits that land on grid beats: those beats must pop harder than the rest. And two
+// entries near other grid beats that must not count at all.
+const ACCENT_HITS = [
+  { time: 0.26, strength: 0.95, impact: 0.90, camera: true },
+  { time: 1.76, strength: 0.95, impact: 0.90, camera: true }
+];
 const NOT_HITS = [
   { time: 0.70, strength: 0.80, impact: 0.80, camera: false },
-  { time: 2.66, strength: 0.80, impact: 0.80, camera: true, grid: true }
+  { time: 2.70, strength: 0.80, impact: 0.80, camera: true, grid: true }
 ];
 
 function setMap(overrides) {
@@ -106,7 +111,7 @@ function setMap(overrides) {
     cameraBeats: GRID,
     pulseBeats: GRID,
     beats: GRID,
-    hits: HITS.concat(NOT_HITS)
+    hits: HITS.concat(ACCENT_HITS).concat(NOT_HITS)
   }, overrides || {});
 }
 
@@ -135,50 +140,52 @@ function nearest(target, list) {
   return list.reduce((best, v) => Math.min(best, Math.abs(v - target)), Infinity);
 }
 
-// ------------------------------------------------- the ring fires on the hits, not the grid
+// ---------------------------- the ring keeps the tempo grid's timing; hits only add weight
 {
   setMap();
   const fired = drive(3);
-  assert(fired.length > 0, 'the ring must fire on the map');
-  assert.strictEqual(fired.length, HIT_TIMES.length,
-    `the ring must fire once per hit (${HIT_TIMES.length}), got ${fired.length}: ${fired.map((f) => f.t.toFixed(2)).join(', ')}`);
-  for (const f of fired) {
-    assert(nearest(f.t, HIT_TIMES) < 1 / 30,
-      `a pop at ${f.t.toFixed(3)}s is not on a hit (hits: ${HIT_TIMES.join(', ')})`);
+  const want = GRID.filter((g) => g.time <= 3).map((g) => g.time);
+  assert.strictEqual(fired.length, want.length,
+    `the ring must pop on every grid beat (${want.length}), got ${fired.length}: ${fired.map((f) => f.t.toFixed(2)).join(', ')}`);
+  for (let i = 0; i < fired.length; i++) {
+    assert(Math.abs(fired[i].t - want[i]) < 1 / 30,
+      `the pop must keep the grid's time: ${fired[i].t.toFixed(3)}s against ${want[i].toFixed(2)}s`);
   }
-  // A grid point with no drum underneath it must stay quiet: that is the metronome the ring
-  // used to follow. (A hit that happens to land on the beat is fine - real kicks do.)
-  for (const g of GRID) {
-    if (nearest(g.time, HIT_TIMES) < 1 / 30) continue;
-    assert(nearest(g.time, fired.map((x) => x.t)) > 0.1,
-      `the grid point at ${g.time.toFixed(2)}s has no drum hit and must not pop the ring`);
+  // The syncopated hits do not move the timing at all: that detector is what made the ring
+  // feel wrong, so it is not allowed to say when a beat lands.
+  for (const t of HIT_TIMES) {
+    assert(nearest(t, fired.map((f) => f.t)) > 0.1,
+      `the hit at ${t}s must not move a pop (the grid is at ${GRID[0].time.toFixed(2)}, ${GRID[1].time.toFixed(2)}…)`);
   }
-  for (const f of NOT_HITS) {
-    assert(nearest(f.time, fired.map((x) => x.t)) > 0.1,
-      `the entry at ${f.time}s is not a drum hit and must not fire (${f.camera === false ? 'not drum-like' : 'a grid point'})`);
-  }
-  // The pulse follows the hit's own strength: the heavy hit pops harder than a light one.
-  const byStrength = fired.map((f) => ({ w: f.w, pulse: f.pulse })).sort((a, b) => b.w - a.w);
-  assert(byStrength[0].w > byStrength[byStrength.length - 1].w + 0.2,
-    'the fixture must hold one heavy hit and one light one');
-  assert(byStrength[0].pulse > byStrength[byStrength.length - 1].pulse + 0.1,
-    `a heavy hit must pop harder (${byStrength[0].pulse.toFixed(2)} against ${byStrength[byStrength.length - 1].pulse.toFixed(2)})`);
-  assert(byStrength[0].pulse <= 1.0001 && byStrength[0].pulse > 0.8,
-    `the heaviest hit must reach a full pop, got ${byStrength[0].pulse.toFixed(2)}`);
-  console.log(`  hits: ${fired.map((f) => f.t.toFixed(2) + 's/' + f.pulse.toFixed(2)).join(', ')} ` +
-    `(grid at ${GRID[0].time.toFixed(2)}, ${GRID[1].time.toFixed(2)}…)`);
+  const pulseAt = (t) => {
+    const f = fired.find((x) => Math.abs(x.t - t) < 1 / 30);
+    assert(f, `a pop must land on the grid beat at ${t}s`);
+    return f.pulse;
+  };
+  // A grid beat with a drum under it pops harder than one with nothing under it.
+  assert(pulseAt(0.25) > pulseAt(1.25) + 0.1,
+    `a grid beat with a drum under it must pop harder (${pulseAt(0.25).toFixed(2)} against ${pulseAt(1.25).toFixed(2)})`);
+  // Two entries near other grid beats that are not hits: one the analysis rejected as not
+  // drum-like, one it synthesised. Neither may add weight.
+  assert(Math.abs(pulseAt(0.75) - pulseAt(1.25)) < 0.05,
+    `an entry the analysis did not judge drum-like must not accent a beat (${pulseAt(0.75).toFixed(2)} against ${pulseAt(1.25).toFixed(2)})`);
+  assert(Math.abs(pulseAt(2.75) - pulseAt(2.25)) < 0.05,
+    `a synthesised grid entry must not accent a beat (${pulseAt(2.75).toFixed(2)} against ${pulseAt(2.25).toFixed(2)})`);
+  console.log(`  grid: ${fired.map((f) => f.t.toFixed(2) + 's/' + f.pulse.toFixed(2)).join(', ')} ` +
+    `(with a drum ${pulseAt(0.25).toFixed(2)}, without ${pulseAt(1.25).toFixed(2)})`);
 }
 
-// ------------------------------------------- a map with no hits falls back to its own beats
+// ------------------------------------------- a map with no grid falls back to its own hits
 {
-  setMap({ hits: [], beats: [], pulseBeats: [], cameraBeats: GRID });
+  setMap({ cameraBeats: [], pulseBeats: [] });
   const fired = drive(1.6);
-  assert(fired.length > 0, 'a map without hits must still fire');
+  assert(fired.length > 0, 'a map without a grid must still fire');
+  const allHits = HIT_TIMES.concat(ACCENT_HITS.map((h) => h.time));
   for (const f of fired) {
-    assert(nearest(f.t, GRID.map((g) => g.time)) < 1 / 30,
-      `the fallback must use the camera beats (${f.t.toFixed(3)}s)`);
+    assert(nearest(f.t, allHits) < 1 / 30,
+      `the fallback must use the detected hits (${f.t.toFixed(3)}s)`);
   }
-  console.log(`  fallback: ${fired.length} pops on the grid`);
+  console.log(`  fallback: ${fired.length} pops on the detected hits`);
 }
 
 // --------------------------------------- the analysis hands the hits to the map at all
@@ -225,4 +232,4 @@ function nearest(target, list) {
   console.log(`  cache: ${packed.hits.length} hits packed and ${back.hits.length} unpacked, v${packer.VERSION}, v3 dropped`);
 }
 
-console.log('[OK] The ring pops on the detected drum hits, with each hit\'s own strength.');
+console.log('[OK] The ring keeps the tempo grid and pops harder where the analysis heard a drum.');

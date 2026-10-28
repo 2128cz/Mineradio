@@ -192,6 +192,9 @@ function visibleNear(centre, half) {
 // ------------------------------------------------------- a beat grows every beam, then falls
 {
   s.beamKick = 0;
+  // The beat's stretch is gated by the music's level, exactly like the pop and the shake:
+  // this fixture is a passage with sound in it.
+  s.levelGate = 1;
   useSpectrum(spectrum(128));
   step(1 / 30, 150);
   const before = wedges().filter((w) => w.vis);

@@ -37,6 +37,7 @@ var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
 var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
 var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
+var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is playing
 var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
 var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
@@ -668,19 +669,36 @@ function haloBeatList(events, requireCamera) {
     if (!isFinite(impact)) impact = strength;
     out.push({ t: time, w: haloClamp(strength * 0.5 + impact * 0.5, 0, 1) });
   }
+  out.sort(function (a, b) { return a.t - b.t; });
   return out.length ? out : null;
+}
+
+// A grid beat that has a detected drum hit under it keeps its strength; one with nothing
+// under it is a metronome tick and pops lighter. The timing never moves - the hit detector
+// is only allowed to say how hard a beat lands, not when.
+function haloAccentGridWithHits(list, hits) {
+  if (!list || !list.length || !hits || !hits.length) return list;
+  var j = 0;
+  for (var i = 0; i < list.length; i++) {
+    while (j < hits.length && hits[j].t < list[i].t - 0.09) j++;
+    var onHit = j < hits.length && Math.abs(hits[j].t - list[i].t) <= 0.09;
+    var w = list[i].w;
+    list[i].w = haloClamp(onHit ? Math.max(w, hits[j].w * 0.85) : w * 0.55, 0, 1);
+  }
+  return list;
 }
 
 function haloBeatMapEvents() {
   if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
-  // The ring's beat is a drum hit, not the song's tempo. On a music-tempo map `cameraBeats`
-  // is a grid at the detected BPM: it says where a beat would have been, and a ring that
-  // pops on it reads as a metronome. `hits` are the onsets the analysis actually heard,
-  // each with its own strength; the grid stays where it belongs - on the turn's timing.
-  return haloBeatList(currentBeatMap.hits, true) ||
-    haloBeatList(currentBeatMap.beats, true) ||
-    haloBeatList(currentBeatMap.pulseBeats, false) ||
-    haloBeatList(currentBeatMap.cameraBeats || currentBeatMap.kicks, false);
+  // The pulse rides the song's tempo grid: the detected hits change from song to song and
+  // from passage to passage, so following them moved the ring around; the grid is steady and
+  // the level gate is what makes it sit under the music. The hits are still used, but only
+  // to say whether a grid beat has a drum under it - a beat without one pops lighter.
+  var list = haloBeatList(currentBeatMap.cameraBeats || currentBeatMap.pulseBeats, false);
+  if (list) return haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true));
+  return haloBeatList(currentBeatMap.pulseBeats, false) ||
+    haloBeatList(currentBeatMap.hits, true) ||
+    haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false);
 }
 
 function haloRefreshBeatSource() {
@@ -1862,7 +1880,10 @@ function haloUpdateStrands(dt, env) {
 // A beat sends a wave around the ring and kicks a few wedges.
 function haloStrandBeat(weight) {
   var s = haloState;
-  s.beamKick = Math.min(1.2, Math.max(s.beamKick || 0, 0.35 + (Number(weight) || 0) * 0.75));
+  // The beams stretch with the beat only as far as the music allows, the same rule the pop
+  // and the shake follow.
+  var room = 0.2 + 0.8 * haloClamp(s.levelGate || 0, 0, 1);
+  s.beamKick = Math.min(1.2, Math.max(s.beamKick || 0, (0.35 + (Number(weight) || 0) * 0.75) * room));
   var dir = Math.random() < 0.5 ? 1 : -1;
   var big = weight > 0.75;
   var pulse = {
@@ -3255,10 +3276,15 @@ function haloRebuild() {
 // signal: no sound, no motion. The level of most music sits well below 1, so it is
 // scaled up before it is clamped. The knob at zero turns the gate off, which is the
 // old behaviour: the beat moves the ring whatever the music does.
+// How much of the beat the sound allows. The level is the music's own spectrum, not the
+// player's volume: silence (or a passage with nothing in it) reads near zero. The floor is
+// there because an analyser never quite reaches zero - without it a quiet room already
+// opened the gate, which is why the ring moved the same in silence and in a chorus.
 function haloLevelGate() {
   var gain = haloParam('levelGain');
   if (!(gain > 0)) return 1;
-  return haloClamp(haloAudio.level * gain, 0, 1);
+  var level = Number(haloAudio.level) || 0;
+  return haloClamp((level - HALO_LEVEL_FLOOR) * gain, 0, 1);
 }
 
 function haloRenderFrame(canvas, now, dt) {
@@ -3478,6 +3504,12 @@ lyric: {
       panX: Math.round(haloCam.panX),
       panY: Math.round(haloCam.panY),
       zoom: Math.round(haloCam.zoom * 1000) / 1000
+    },
+    // What the ring hears: the music's own level and how much of the beat it allows. A
+    // gate of 0 with a song playing is the analyser's fault, not the music's silence.
+    audio: {
+      level: Math.round((haloAudio.level || 0) * 1000) / 1000,
+      gate: Math.round((haloState.levelGate || 0) * 1000) / 1000
     },
     tuning: (function () {
       var out = {};

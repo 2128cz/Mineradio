@@ -97,12 +97,21 @@ assert.strictEqual(sandbox.haloLevelGate(), 0, 'silence must not let the ring mo
 // A room level track lets the whole beat through.
 sandbox.haloAudio.level = 0.5;
 assert.strictEqual(sandbox.haloLevelGate(), 1, 'a loud passage must let the whole beat through');
-// In between it is proportional, so a quiet passage moves the ring less.
+// In between it is proportional above the floor, so a quiet passage moves the ring less.
 sandbox.haloAudio.level = 0.2;
 assert(
-  Math.abs(sandbox.haloLevelGate() - 0.52) < 1e-9,
-  `the gate must follow the level proportionally, not ${sandbox.haloLevelGate()}`
+  Math.abs(sandbox.haloLevelGate() - (0.2 - 0.06) * 2.6) < 1e-9,
+  `the gate must follow the level above its floor, not ${sandbox.haloLevelGate()}`
 );
+// The floor is the point: an analyser never reaches zero, so a quiet room must not already
+// open the gate the way a full chorus does.
+sandbox.haloAudio.level = 0.05;
+assert.strictEqual(sandbox.haloLevelGate(), 0,
+  'a level under the floor is the same as silence, not a quieter beat');
+sandbox.haloAudio.level = 0.09;
+const justAbove = sandbox.haloLevelGate();
+assert(justAbove > 0 && justAbove < 0.1,
+  `just above the floor the gate must only crack open, got ${justAbove}`);
 // The knob at zero turns the gate off, which is the old behaviour: the beat moves the
 // ring whatever the music does.
 sandbox.haloTuning.levelGain = 0;
@@ -161,6 +170,26 @@ function runFrames(count) {
   const quiet = shakeAt(40);
   const loud = shakeAt(200);
   assert(loud > quiet, `a louder passage must shake the ring harder (${loud} vs ${quiet})`);
+}
+
+// --------------------------------------------- the beams' beat stretch follows the same gate
+{
+  const before = sandbox.haloState.beamKick || 0;
+  sandbox.haloAudio.level = 0;
+  sandbox.haloState.levelGate = 0;
+  sandbox.haloStrandBeat(1);
+  const silentKick = sandbox.haloState.beamKick || 0;
+  sandbox.haloState.beamKick = 0;
+  sandbox.haloAudio.level = 0.5;
+  sandbox.haloState.levelGate = 1;
+  sandbox.haloStrandBeat(1);
+  const loudKick = sandbox.haloState.beamKick || 0;
+  assert(loudKick > silentKick * 2,
+    `a beat must stretch the beams far less in silence (${silentKick.toFixed(2)} against ${loudKick.toFixed(2)})`);
+  sandbox.haloState.beamKick = before;
+  sandbox.haloAudio.level = 0;
+  sandbox.haloState.levelGate = 0;
+  console.log(`  beam kick on a beat: silence ${silentKick.toFixed(2)}, loud ${loudKick.toFixed(2)}`);
 }
 
 console.log('[OK] The ring\'s beat motion follows the sound: silence is still, a loud passage shakes harder.');
