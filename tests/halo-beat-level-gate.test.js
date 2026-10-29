@@ -220,4 +220,34 @@ function runFrames(count) {
   console.log(`  beam kick on a beat: silence ${silentKick.toFixed(2)}, loud ${loudKick.toFixed(2)}`);
 }
 
+// --------------------------------------------------- the shake belongs to the hit
+// The throw used to be a sine of the playhead. Its phase had nothing to do with the drum, so
+// a beat that landed on a node of that sine moved nothing, and the frames between beats kept
+// jittering at an amplitude the beat had no part in choosing. The hit throws now, and the
+// picture slides back as that beat's envelope dies.
+{
+  analyserByte = 200;
+  runFrames(60);
+  sandbox.haloState.ringPulse = 1;
+  sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+  const onTheHit = Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY);
+  assert(onTheHit >= sandbox.haloTuning.shakePx * 0.5,
+    `the hit's own frame must carry most of the knob, got ${onTheHit.toFixed(2)}px`);
+  const decays = [];
+  for (let level = 0.75; level >= 0.25; level -= 0.25) {
+    sandbox.haloState.ringPulse = level;
+    sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+    decays.push(Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY));
+  }
+  for (let i = 1; i < decays.length; i++) {
+    assert(decays[i] < decays[i - 1],
+      `the throw must slide back from the hit, not buzz (${decays[i].toFixed(2)} against ${decays[i - 1].toFixed(2)})`);
+  }
+  sandbox.haloState.ringPulse = 0;
+  sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+  assert.strictEqual(Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY), 0,
+    'with nothing left of the beat there is nothing left of the throw');
+  console.log(`  throw: hit ${onTheHit.toFixed(2)}px, then ${decays.map((v) => v.toFixed(1)).join(' > ')} and still`);
+}
+
 console.log('[OK] The ring\'s beat motion follows the sound: silence is still, a loud passage shakes harder.');

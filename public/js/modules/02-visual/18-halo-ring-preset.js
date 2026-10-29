@@ -151,6 +151,8 @@ var haloState = {
   levelGate: 0,      // how much of the beat the sound allows, 0 in silence
   shakeX: 0,
   shakeY: 0,
+  shakeDirX: 1,      // which way the last beat threw the picture, both ends away from zero
+  shakeDirY: 0.5,
   beamKick: 0,       // the beat's envelope on the outer beams, 0..1.2, falling on its own
   basePanX: 0,       // the framing knobs' own pan, in world units
   basePanY: 0
@@ -821,6 +823,10 @@ function haloBeatHit(e) {
   var kick = haloClamp(Number(haloAudio.kick) || 0, 0, 1);
   if (kick > weight) weight = kick;
   haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * weight);
+  // Which way this beat throws the picture. Both ends are kept away from zero so a beat
+  // always has a throw to read, and the two axes are not tied to the same sign.
+  haloState.shakeDirX = haloRand(0.55, 1) * (Math.random() < 0.5 ? -1 : 1);
+  haloState.shakeDirY = haloRand(0.35, 0.85) * (Math.random() < 0.5 ? -1 : 1);
   haloStrandBeat(weight);
 }
 
@@ -3338,8 +3344,12 @@ function haloRenderFrame(canvas, now, dt) {
   var motion = haloMotionGate();
   s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * motion;
   var shake = haloParam('shakePx') * s.ringPulse * motion;
-  s.shakeX = Math.sin(s.time * 47.3) * shake;
-  s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
+  // The throw is the beat's own: the picture is displaced along the direction the hit chose
+  // and slides back as that beat's envelope dies. It used to be a sine of the playhead - a
+  // buzz at a phase with nothing to do with the drum, so a beat that happened to land on a
+  // node of that sine was a beat nobody could see, and the whole ring jittered between hits.
+  s.shakeX = s.shakeDirX * shake;
+  s.shakeY = s.shakeDirY * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
   // lyric size knob may have moved: the measured widths belong to the font they were
   // taken with.
@@ -3447,6 +3457,8 @@ function haloReleaseHaloLayer() {
   haloState.levelGate = 0;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
+  haloState.shakeDirX = 1;
+  haloState.shakeDirY = 0.5;
   // A released layer is not evidence for 自动: the next song starts from the full picture.
   haloAutoReset();
   // The clock starts again with the layer: the gap between the last frame of the old layer
