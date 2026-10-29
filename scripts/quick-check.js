@@ -1063,8 +1063,28 @@ function runHaloPresetCheck() {
 
   const ceiling = Number((coreText.match(/MAX_VISUAL_PRESET_INDEX = (\d+)/) || [])[1]);
   const haloIndex = Number((fs.readFileSync(modulePath, 'utf8').match(/HALO_PRESET_INDEX = (\d+)/) || [])[1]);
-  if (!(haloIndex === ceiling)) {
-    fail(`HALO_PRESET_INDEX=${haloIndex} must track MAX_VISUAL_PRESET_INDEX=${ceiling}`);
+  // A preset number is what saved archives, the display order and the takeover mask point at, so
+  // one that has shipped must never move. The ceiling has to be the highest number that is
+  // actually declared somewhere - the old arm compared the ring's index with the ceiling, which
+  // was really the claim "the ring is the newest preset" and stopped being true on purpose.
+  const declaredIndexes = {};
+  ['00-state/00-core-stores.js', '02-visual/01-float-skull-backcover.js', '02-visual/17-pv-preset.js',
+    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js'].forEach(function (rel) {
+    const text = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', rel), 'utf8');
+    const re = /\b([A-Z][A-Z0-9_]*_PRESET_INDEX) = (\d+)/g;
+    let found;
+    while ((found = re.exec(text))) declaredIndexes[found[1]] = Number(found[2]);
+  });
+  const highestDeclared = Math.max.apply(null, Object.keys(declaredIndexes).map(function (key) { return declaredIndexes[key]; }));
+  if (highestDeclared !== ceiling) {
+    fail(`MAX_VISUAL_PRESET_INDEX=${ceiling} must be the highest declared preset index (${highestDeclared}): ${JSON.stringify(declaredIndexes)}`);
+  }
+  if (haloIndex !== 14) {
+    fail(`HALO_PRESET_INDEX must stay 14 (found ${haloIndex}): archives and the display order name numbers, not labels`);
+  }
+  const blackHoleIndex = Number((fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '19-galaxy-blackhole-preset.js'), 'utf8').match(/BLACKHOLE_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (blackHoleIndex !== 15) {
+    fail(`BLACKHOLE_PRESET_INDEX must stay 15 (found ${blackHoleIndex}) for the same reason`);
   }
   if (!/环形数据流/.test(archiveText) || !/RING DATA STREAM/.test(archiveText)) {
     fail('the HALO preset must be a labelled, selectable card');
@@ -1416,6 +1436,110 @@ function runHaloPresetCheck() {
     }
   }
   console.log(`[OK] HALO ring wired: preset ${haloIndex}, user camera + beat pulse + spectrum beams + ring-side lyrics + ${schema.size} knobs.`);
+}
+
+// The galactic black hole (preset 15): a real post-processing pass, the ported Kerr-Schild
+// kernel, and lyrics that stay inside the render target so the lens can actually bend them.
+function runBlackHolePresetCheck() {
+  logStep('Galactic black hole preset (post pass, ported kernel, lyric flight, knobs)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '19-galaxy-blackhole-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '12-blackhole-tuning.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/19-galaxy-blackhole-preset.js is missing; preset 15 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/12-blackhole-tuning.js is missing; the hole would have knobs without a store');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const index = Number((text.match(/BLACKHOLE_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 15) fail(`BLACKHOLE_PRESET_INDEX must be 15 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/19-galaxy-blackhole-preset.js'") < 0) {
+    fail('19-galaxy-blackhole-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/12-blackhole-tuning.js'") < 0) {
+    fail('12-blackhole-tuning.js must be listed in index-loader.js; without it the hole has no knobs');
+  }
+  if (!/银河黑洞/.test(archiveText) || !/GALACTIC BLACK HOLE/.test(archiveText)) {
+    fail('the black hole must be a labelled, selectable card');
+  }
+  // The pass: scene into a target, one quad out, and a fallback when it cannot run. A pass that
+  // renders the scene twice, or that draws nothing when it fails, cannot be shipped.
+  for (const [pattern, why] of [
+    [/new THREE\.WebGLRenderTarget\(/, 'the pass needs a render target to refract'],
+    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,200}renderer\.render\(scene, camera\)[\s\S]{0,200}setRenderTarget\(null\)[\s\S]{0,120}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
+    [/getDrawingBufferSize\(/, 'the target has to follow the renderer drawing buffer, not the window'],
+    [/function bhDisposePass\(/, 'leaving the preset must give the GPU memory back'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if (!/renderBlackHoleFrame\(\)/.test(loopText) || !/if \(!lensFrameDone\) renderer\.render\(scene, camera\)/.test(loopText)) {
+    fail('the main loop must render through the lens and fall back to the plain render when it declines');
+  }
+  const atCamera = loopText.indexOf('blackHoleApplyCamera(dt)');
+  const atLayout = loopText.indexOf('updateStageLyrics3D(stageLyricsStepDt)');
+  if (atCamera < 0 || atLayout < 0 || atCamera > atLayout) {
+    fail('the fov knob must be written before the lyric layout measures the visible height');
+  }
+  const atFlight = loopText.indexOf('updateBlackHoleLyricFlight(dt)');
+  if (atFlight < 0 || atFlight < atLayout) {
+    fail('the flight must run after the app laid the lyric rows out');
+  }
+  if (!/applyBlackHolePresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the pass and leaving it must release it');
+  // The decisive ownership call: the lens can only bend what is inside its target, so the lyric
+  // layer must stay ON. Copying the ring's or the PV layer's "suppress everything" would make the
+  // text disappear from the pass silently.
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'blackhole-pass'/.test(ownerBlock)) fail('the pass must register as a takeover owner');
+  if (/stageLyrics: true/.test(ownerBlock)) fail('a pass cannot refract a layer it suppressed');
+  if (!/stageLyrics: false/.test(ownerBlock)) fail('stageLyrics must stay on: text outside the render target cannot be bent by the lens');
+  // The ported kernel has to be in the shader, where it is actually evaluated.
+  const shader = text.slice(text.indexOf('var BH_PASS_FS'));
+  if (!/float ksRadius\(float px, float py, float pz, float a\)/.test(shader)) fail('the fragment stage must carry the Kerr-Schild radius');
+  if (!/2\.0 \* a2 \* y2\) \/ max\(1e-20, det - b\)/.test(shader)) fail('the b < 0 branch of the reference expression must be kept');
+  if (!/uDeflect \* horizon \* rp \* rp \/ impact/.test(shader)) fail('the bend must be the 1/b law expressed in rp');
+  // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the
+  // per-field reset button), and a console group that lists them all.
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(text))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 15) fail(`the hole knob schema must be complete (found ${schema.size})`);
+  for (const [key, spec] of schema) {
+    const id = 'fx-bh' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setBlackHoleTuning('${key}', this.value)`)) fail(`the slider ${id} must call setBlackHoleTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 银河黑洞 group`);
+  }
+  if (!/key: 'blackhole'/.test(consoleText) || !/title: '银河黑洞'/.test(consoleText)) {
+    fail('the visual console needs a 银河黑洞 group in the 动效 tab');
+  }
+  if (!/mineradio-blackhole-tuning-v1/.test(tuningText) || !/function bindBlackHoleTuningResetButtons\(/.test(tuningText)) {
+    fail('the hole knobs need their own store and one reset button per row');
+  }
+  const testFile = path.join(appRoot, 'tests', 'blackhole-lens.test.js');
+  if (!fs.existsSync(testFile)) fail('tests/blackhole-lens.test.js is missing; the lens and the flight would only be checked by eye');
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`the black hole lens regression failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(result.stdout || '');
+  console.log(`[OK] Galactic black hole wired: preset ${index}, scene->target->quad lens, ${schema.size} knobs, lyric flight from the sides.`);
 }
 
 function runVisualTakeoverMaskCheck() {
@@ -4721,10 +4845,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 14/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 15/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -7073,6 +7197,7 @@ async function main() {
   runPvPresetCheck();
   runBeatTempoCeilingCheck();
   runHaloPresetCheck();
+  runBlackHolePresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

@@ -23,7 +23,7 @@ var FX_CONSOLE_LAYOUT = [
     key: 'home',
     groups: [
       { key: 'presets', title: '视觉预设', hint: '先选整体风格，再进入细节调整', open: true, items: [
-        fxConsoleItem('preset-grid', '视觉预设', '风格 场景 Emily 安魂 音域 星河 唱片 星球 滚筒 虚空 月蚀圣环 雨幕霓虹 折光蝶群 深海绽放 Eclipse Halo Neon Drizzle Prism Flock Abyssal Bloom')
+        fxConsoleItem('preset-grid', '视觉预设', '风格 场景 Emily 安魂 音域 星河 唱片 星球 滚筒 虚空 月蚀圣环 雨幕霓虹 折光蝶群 深海绽放 歌词PV 环形数据流 银河黑洞 Eclipse Halo Neon Drizzle Prism Flock Abyssal Bloom Lyric PV Ring Data Stream Galactic Black Hole')
       ] },
       { key: 'archives', title: '用户存档', hint: '保存、应用和分享整套视觉参数', items: [
         fxConsoleItem('user-archive-grid', '用户存档', '方案 快照 预设码 应用 回退')
@@ -170,6 +170,28 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-halopanelRefresh', '拍点刷新块数', '环形数据流 拍点 刷新 数据块'),
         fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认'),
         fxConsoleItem('halo-camera-reset', '重置视角', '环形数据流 视角 复位 拖拽 缩放 平移')
+      ] },
+      { key: 'blackhole', title: '银河黑洞', hint: '引力透镜把画面里的东西（含歌词）绕洞弯折；洞的位置、自旋与歌词坠入都可调，文字大小仍复用「歌词」标签里的字号', items: [
+        fxConsoleItem('fx-bhholeX', '黑洞水平位置', '银河黑洞 黑洞 水平 位置 取景 中心'),
+        fxConsoleItem('fx-bhholeY', '黑洞垂直位置', '银河黑洞 黑洞 垂直 位置 取景 中心'),
+        fxConsoleItem('fx-bhholeDepth', '黑洞距离', '银河黑洞 距离 深度 远近'),
+        fxConsoleItem('fx-bhmass', '视界大小', '银河黑洞 视界 半径 质量 大小'),
+        fxConsoleItem('fx-bhspin', '自旋', '银河黑洞 自旋 克尔 旋转 参考系拖曳'),
+        fxConsoleItem('fx-bhcharge', '电荷', '银河黑洞 电荷 雷斯纳 诺德斯特洛姆'),
+        fxConsoleItem('fx-bhdeflect', '偏折强度', '银河黑洞 引力透镜 偏折 弯曲 折射'),
+        fxConsoleItem('fx-bhshadowScale', '影子倍率', '银河黑洞 影子 阴影 黑 范围'),
+        fxConsoleItem('fx-bhswirl', '坐标系拖曳', '银河黑洞 拖曳 漩涡 扭曲 旋转方向'),
+        fxConsoleItem('fx-bhringGlow', '光子环亮度', '银河黑洞 光子环 光环 亮边'),
+        fxConsoleItem('fx-bhskyStars', '星空密度', '银河黑洞 星空 星星 背景'),
+        fxConsoleItem('fx-bhskyBand', '银河光带', '银河 光带 星云 背景'),
+        fxConsoleItem('fx-bhfovDeg', '视锥角度', '银河黑洞 视锥 视野 透视 近大远小 焦距'),
+        fxConsoleItem('fx-bhsideSpread', '歌词入场宽度', '银河黑洞 歌词 入场 左右 宽度 侧面'),
+        fxConsoleItem('fx-bhstartNear', '歌词起点距离', '银河黑洞 歌词 起点 距离 近'),
+        fxConsoleItem('fx-bhflyIn', '歌词入场时长', '银河黑洞 歌词 入场 时长 速度'),
+        fxConsoleItem('fx-bhswallow', '吸入时长', '银河黑洞 歌词 吸入 消失 时长'),
+        fxConsoleItem('fx-bhfallCurve', '落入指数', '银河黑洞 落入 指数 幂 加速 欻'),
+        fxConsoleItem('fx-bhpassScale', '后处理分辨率', '银河黑洞 后处理 分辨率 性能 清晰'),
+        fxConsoleItem({ selector: '.fx-blackhole-tuning .fx-actions' }, '恢复银河黑洞默认', '银河黑洞 重置 还原 默认')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
         fxConsoleItem('t-float', '浮空粒子层', '漂浮粒子'),

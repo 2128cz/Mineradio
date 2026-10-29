@@ -1166,6 +1166,30 @@
         <div class="fx-slider"><label>拍点刷新块数</label><input id="fx-halopanelRefresh" type="range" min="1" max="12" step="1" oninput="setHaloTuning('panelRefresh', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetHaloTuning()">恢复环形数据流默认</button><button class="fx-mini-btn" id="halo-camera-reset" onclick="resetHaloCamera()">重置视角</button></div>
       </div>
+      <!-- 银河黑洞 (preset 15) 自己的旋钮。文字大小不在这里: 它复用「歌词」里的歌词大小。
+           这些行由控制台搬到 动效 → 银河黑洞。 -->
+      <div class="fx-blackhole-tuning">
+        <div class="fx-slider"><label>黑洞水平位置</label><input id="fx-bhholeX" type="range" min="-0.9" max="0.9" step="0.01" oninput="setBlackHoleTuning('holeX', this.value)"><output></output></div>
+        <div class="fx-slider"><label>黑洞垂直位置</label><input id="fx-bhholeY" type="range" min="-0.7" max="0.7" step="0.01" oninput="setBlackHoleTuning('holeY', this.value)"><output></output></div>
+        <div class="fx-slider"><label>黑洞距离</label><input id="fx-bhholeDepth" type="range" min="1.8" max="9" step="0.1" oninput="setBlackHoleTuning('holeDepth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视界大小</label><input id="fx-bhmass" type="range" min="0.02" max="0.5" step="0.005" oninput="setBlackHoleTuning('mass', this.value)"><output></output></div>
+        <div class="fx-slider"><label>自旋</label><input id="fx-bhspin" type="range" min="-1" max="1" step="0.01" oninput="setBlackHoleTuning('spin', this.value)"><output></output></div>
+        <div class="fx-slider"><label>电荷</label><input id="fx-bhcharge" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('charge', this.value)"><output></output></div>
+        <div class="fx-slider"><label>偏折强度</label><input id="fx-bhdeflect" type="range" min="0" max="2.5" step="0.01" oninput="setBlackHoleTuning('deflect', this.value)"><output></output></div>
+        <div class="fx-slider"><label>影子倍率</label><input id="fx-bhshadowScale" type="range" min="1" max="2" step="0.01" oninput="setBlackHoleTuning('shadowScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>坐标系拖曳</label><input id="fx-bhswirl" type="range" min="0" max="2.5" step="0.01" oninput="setBlackHoleTuning('swirl', this.value)"><output></output></div>
+        <div class="fx-slider"><label>光子环亮度</label><input id="fx-bhringGlow" type="range" min="0" max="2" step="0.01" oninput="setBlackHoleTuning('ringGlow', this.value)"><output></output></div>
+        <div class="fx-slider"><label>星空密度</label><input id="fx-bhskyStars" type="range" min="0" max="1.5" step="0.01" oninput="setBlackHoleTuning('skyStars', this.value)"><output></output></div>
+        <div class="fx-slider"><label>银河光带</label><input id="fx-bhskyBand" type="range" min="0" max="1.5" step="0.01" oninput="setBlackHoleTuning('skyBand', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视锥角度</label><input id="fx-bhfovDeg" type="range" min="35" max="92" step="1" oninput="setBlackHoleTuning('fovDeg', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词入场宽度</label><input id="fx-bhsideSpread" type="range" min="2.5" max="14" step="0.1" oninput="setBlackHoleTuning('sideSpread', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词起点距离</label><input id="fx-bhstartNear" type="range" min="0.7" max="4" step="0.05" oninput="setBlackHoleTuning('startNear', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词入场时长</label><input id="fx-bhflyIn" type="range" min="0.15" max="2.5" step="0.05" oninput="setBlackHoleTuning('flyIn', this.value)"><output></output></div>
+        <div class="fx-slider"><label>吸入时长</label><input id="fx-bhswallow" type="range" min="0.15" max="2" step="0.05" oninput="setBlackHoleTuning('swallow', this.value)"><output></output></div>
+        <div class="fx-slider"><label>落入指数</label><input id="fx-bhfallCurve" type="range" min="0.25" max="1.6" step="0.01" oninput="setBlackHoleTuning('fallCurve', this.value)"><output></output></div>
+        <div class="fx-slider"><label>后处理分辨率</label><input id="fx-bhpassScale" type="range" min="0.5" max="1" step="0.05" oninput="setBlackHoleTuning('passScale', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetBlackHoleTuning()">恢复银河黑洞默认</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

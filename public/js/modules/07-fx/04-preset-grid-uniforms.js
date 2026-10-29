@@ -80,6 +80,7 @@ function setPreset(p, opts) {
   if (changed && window.MineradioSonicWorkshop) MineradioSonicWorkshop.onPresetChange(prev, p, { scene: scene, fx: fx });
   if (typeof applyPvPresetNow === 'function') applyPvPresetNow(prev, p);
   if (typeof applyHaloPresetNow === 'function') applyHaloPresetNow(prev, p);
+  if (typeof applyBlackHolePresetNow === 'function') applyBlackHolePresetNow(prev, p);
   uniforms.uPreset.value = p;
   refreshPresetGrid();
   if (typeof updateSonicSeriesControlVisibility === 'function') updateSonicSeriesControlVisibility();

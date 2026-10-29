@@ -2,8 +2,9 @@
 
 // Acceptance criterion for the takeover-mask refactor, pinned BEFORE the refactor shipped:
 // with no owner registered, every layer flag must equal the expressions that used to live
-// inline in 11-main-loop.js. If this passes, the refactor cannot change what any of the
-// 13 existing presets looks like.
+// inline in 11-main-loop.js. If this passes, the refactor cannot change what any of the shipped
+// presets looks like. The preset range is read from MAX_VISUAL_PRESET_INDEX rather than pinned
+// here, so a new preset is covered by this sweep the day it lands.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,6 +13,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const MODULE_FILE = path.join(__dirname, '..', 'public', 'js', 'modules', '02-visual', '16-visual-takeover.js');
+const CORE_FILE = path.join(__dirname, '..', 'public', 'js', 'modules', '00-state', '00-core-stores.js');
+const MAX_PRESET = Number((fs.readFileSync(CORE_FILE, 'utf8').match(/MAX_VISUAL_PRESET_INDEX = (\d+)/) || [])[1]);
+assert(Number.isInteger(MAX_PRESET) && MAX_PRESET >= 14, `MAX_VISUAL_PRESET_INDEX could not be read (found ${MAX_PRESET})`);
 
 function load(sandboxOverrides) {
   const sandbox = Object.assign({
@@ -64,7 +68,7 @@ function assertOwners(actual, expected, label) {
 test('no owner registered: mask equals the inline expressions for every preset and toggle', () => {
   const box = load();
   let compared = 0;
-  for (let preset = 0; preset <= 12; preset++) {
+  for (let preset = 0; preset <= MAX_PRESET; preset++) {
     [undefined, true, false].forEach((starRiverToggle) => {
       [true, false].forEach((bloomOn) => {
         [0.0, 0.5].forEach((bloomStrength) => {

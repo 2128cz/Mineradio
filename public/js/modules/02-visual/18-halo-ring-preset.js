@@ -29,7 +29,7 @@
 // from the line's own start time, and the turn begins rotLead seconds before the line is
 // sung, so the line lands on the read mark exactly when it starts.
 
-var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four places)
+var HALO_PRESET_INDEX = 14;        // shipped index: never renumber, archives point at it
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
