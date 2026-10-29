@@ -226,4 +226,101 @@ function visibleNear(centre, half) {
     `${midKick.toFixed(2)} in 1 s, back within 12%`);
 }
 
+// ---------------------------------------------------- follow: the sound, not the beam's own ramp
+// The knob is the beams' own easing. At no follow a beam breathes on a slow idle sine and
+// crawls to its length; at full follow it is the bin it sits on and nothing else moves it.
+function longestVisible() {
+  const on = wedges().filter((w) => w.vis);
+  assert(on.length > 3, 'the fixture must keep several clusters on screen');
+  return Math.max.apply(null, on.map((w) => w.wedge.len));
+}
+
+// Put every beam back to nothing, with a silent room, and then hand the room a full spectrum.
+// The same clusters are used every time, so the two follow settings race on one track.
+function burst(follow) {
+  tuning.beamFollow = follow;
+  s.beamKick = 0;
+  useSpectrum(spectrum(0));
+  step(1 / 30, 150);
+  for (const w of wedges()) {
+    w.wedge.av = 0;
+    w.wedge.len = 0.02;
+    w.wedge.kick = 0;
+  }
+  useSpectrum(spectrum(255));
+}
+
+// How many 1/30 s frames the longest beam takes to reach `fraction` of where it ends up.
+function framesToReach(follow, fraction) {
+  burst(follow);
+  step(1 / 30, 200);
+  const goal = longestVisible() * fraction;
+  burst(follow);
+  for (let n = 1; n <= 90; n++) {
+    step(1 / 30, 1);
+    if (longestVisible() >= goal) return n;
+  }
+  return Infinity;
+}
+
+const idleFrames = framesToReach(0, 0.9);
+const followFrames = framesToReach(1, 0.9);
+assert(followFrames <= 4,
+  `at full follow a beam must be at its bin within a tenth of a second, took ${followFrames} frames`);
+assert(idleFrames >= followFrames * 2,
+  `the old easing must be the slower one (${idleFrames} frames against ${followFrames})`);
+console.log(`  follow: the longest beam reached 90% of its bin in ${followFrames} frames at full follow, ` +
+  `${idleFrames} without`);
+
+// A beam at full follow falls as fast as it rose, which is what the user heard as the ring
+// lagging behind the song: a short bin must give a short beam, not a long one still fading.
+// Measured against the quiet room's own length, because a beam is never zero there.
+function fallFrames(follow) {
+  burst(follow);
+  step(1 / 30, 60);
+  const up = longestVisible();
+  useSpectrum(spectrum(0));
+  step(1 / 30, 300);
+  const floor = longestVisible();
+  const goal = floor + (up - floor) * 0.1;
+  burst(follow);
+  step(1 / 30, 60);
+  useSpectrum(spectrum(0));
+  for (let n = 1; n <= 300; n++) {
+    step(1 / 30, 1);
+    if (longestVisible() <= goal) return n;
+  }
+  return Infinity;
+}
+
+{
+  const followDown = fallFrames(1);
+  const idleDown = fallFrames(0);
+  assert(followDown < idleDown, `falling back must be quicker with follow too (${followDown} frames against ${idleDown})`);
+  assert(followDown <= 25, `a beam must be out of the way within 0.9 s of its bin going quiet, took ${followDown} frames`);
+  console.log(`  follow: the longest beam fell back to a tenth of its travel in ${followDown} frames at full follow, ` +
+    `${idleDown} without`);
+}
+
+// And the idle motion has to be gone, not merely quieter: a silent room must leave the beams
+// at one still length, whatever the clock says.
+for (const follow of [0, 1]) {
+  tuning.beamFollow = follow;
+  s.beamKick = 0;
+  useSpectrum(spectrum(0));
+  step(1 / 30, 240);
+  const still = new Map(wedges().filter((w) => w.vis).map((w) => [w.wedge, w.wedge.len]));
+  step(1 / 30, 240);
+  let drift = 0;
+  for (const [wedge, len] of still) drift = Math.max(drift, Math.abs(wedge.len - len));
+  if (follow) {
+    assert(drift < 1e-9,
+      `a beam that follows the sound must not breathe on its own in silence, drifted ${drift.toExponential(3)}`);
+  } else {
+    assert(drift > 1e-4, `the idle breathing is the no-follow picture, drifted ${drift.toExponential(3)}`);
+  }
+  console.log(`  silence at follow ${follow}: the longest beam moved ${drift.toExponential(2)} over 8 s`);
+}
+tuning.beamFollow = sandbox.HALO_TUNING_SCHEMA.beamFollow.def;
+
 console.log('[OK] The outer beams read their own spectrum bin, take their length from it, and grow on the beat.');

@@ -388,11 +388,22 @@ function checkHaloCullArms(haloText, fail) {
     if (updateFn && !/s\.beamKick = Math\.max\(0, \(s\.beamKick \|\| 0\) \* Math\.exp\(-dt \* 2\.6\)\)/.test(updateFn)) {
       fail('the beat envelope on the beams must fall back by itself');
     }
-    if (updateFn && !/wedge\.base \* \(0\.16 \+ 1\.3[05] \* wedge\.av\)/.test(updateFn)) {
+    if (updateFn && !/wedge\.base \* \(0\.16 \+ 1\.32 \* wedge\.av\)/.test(updateFn)) {
       fail("the level must multiply the cluster's own length, not be added to an idle length");
     }
-    if (updateFn && !/var cap = \(layer\.dyn === 'bounce' \? 1 : 1\.05\) \+ 0\.5 \* \(s\.beamKick/.test(updateFn)) {
+    if (updateFn && !/var cap = 1 \+ 0\.5 \* \(s\.beamKick/.test(updateFn)) {
       fail('the length ceiling must rise with the beat, or a loud passage cannot show one');
+    }
+    // One length model, not the old two: 'bounce' was the only snappy layer and everything
+    // else crawled, which read as the beams easing themselves instead of playing the song.
+    if (updateFn && /layer\.dyn === 'bounce'/.test(updateFn)) {
+      fail('every beam layer must take its length from one model; only the drawing may still differ');
+    }
+    if (updateFn && !/var rise = 5 \+ 22 \* follow;[\s\S]{0,40}var fall = 1\.3 \+ 5\.7 \* follow;/.test(updateFn)) {
+      fail("the beams' own easing must collapse as the follow knob goes up");
+    }
+    if (updateFn && !/var breath = \(1 - follow\) \* 0\.05/.test(updateFn)) {
+      fail('the idle breathing must vanish at full follow');
     }
     if (beatFn && !/s\.beamKick = Math\.min\(1\.2/.test(beatFn)) {
       fail("a beat must raise the beams' own envelope");

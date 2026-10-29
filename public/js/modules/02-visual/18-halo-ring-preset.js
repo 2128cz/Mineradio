@@ -65,6 +65,7 @@ var HALO_TUNING_SCHEMA = {
   hazeAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   streakAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   spectrumGain: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  beamFollow: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
   shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
   levelGain: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
@@ -1354,6 +1355,12 @@ function haloBeamSpectrum(angle) {
   return haloClamp((peak / 255) * 1.4, 0, 1);
 }
 
+// How far the beams take their length from the sound instead of from their own animation.
+// The element families below the drawing (the rays, the wide bars, the fans) all read this.
+function haloBeamFollow() {
+  return haloClamp(Number(haloParam('beamFollow')) || 0, 0, 1);
+}
+
 // ---------------------------------------------------------------- ring panels
 
 var HALO_RING_SC = 2.4;            // supersample factor of a panel bitmap
@@ -1849,6 +1856,16 @@ function haloWedgeVisible(wedge, layer) {
 
 function haloUpdateStrands(dt, env) {
   var s = haloState;
+  // How fast a beam reaches its length, per second. At no follow these are the old crawl
+  // (5 up, 1.3 down); at full follow a beam is up in a frame or two and back down in half a
+  // second, so the picture reads as the spectrum and not as a slow swell.
+  var follow = haloBeamFollow();
+  var rise = 5 + 22 * follow;
+  var fall = 1.3 + 5.7 * follow;
+  // The band's own level gets its own smoothing, always tighter than the length above it:
+  // a beam that jumped on one frame's bin value would flicker.
+  var avRise = 10 + 14 * follow;
+  var avFall = 2.6 + 5.4 * follow;
   // The beat's own envelope for the beams: every beat multiplies every beam's length, then
   // it falls back over a second or so without anything else driving it.
   s.beamKick = Math.max(0, (s.beamKick || 0) * Math.exp(-dt * 2.6));
@@ -1869,7 +1886,7 @@ function haloUpdateStrands(dt, env) {
       // The spectrum drives the outer beams: a wedge reads the band its own angle sits
       // on, and that band pushes the beam further out and brightens it.
       var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain'), 0, 1);
-      wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? 10 : 2.6) * dt);
+      wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? avRise : avFall) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
         continue;
@@ -1885,18 +1902,14 @@ function haloUpdateStrands(dt, env) {
       var beat = 1 + 0.85 * (s.beamKick || 0) + 0.5 * wedge.kick;
       // The ceiling rises with the beat too: a loud passage already pins most beams at their
       // full length, and a beat that could only multiply a clamped value would be invisible.
-      var cap = (layer.dyn === 'bounce' ? 1 : 1.05) + 0.5 * (s.beamKick || 0) + 0.2 * wedge.kick;
-      if (layer.dyn === 'bounce') {
-        var target = Math.min(cap, wedge.base * (0.16 + 1.35 * wedge.av) * beat + hit * 0.75);
-        wedge.kick *= Math.exp(-dt * 2.4);
-        wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? 15 : 2.2) * dt);
-      } else {
-        var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
-        var idle2 = 0.05 * (0.6 + 0.4 * n1);
-        var target2 = Math.min(cap, (idle2 + wedge.base * (0.16 + 1.30 * wedge.av) * beat * wedge.lenS) + hit * 0.7);
-        wedge.kick *= Math.exp(-dt * 1.8);
-        wedge.len += (target2 - wedge.len) * Math.min(1, (target2 > wedge.len ? 5 : 1.3) * dt);
-      }
+      var cap = 1 + 0.5 * (s.beamKick || 0) + 0.2 * wedge.kick;
+      // The idle breathing is what is left of the beam's own animation once it stopped
+      // following the sound, so at full follow a beam has no motion but the music's.
+      var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
+      var breath = (1 - follow) * 0.05 * (0.6 + 0.4 * n1);
+      var target = Math.min(cap, breath + wedge.base * (0.16 + 1.32 * wedge.av) * beat * wedge.lenS + hit * (0.7 + 0.05 * follow));
+      wedge.kick *= Math.exp(-dt * (1.8 + 0.6 * follow));
+      wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? rise : fall) * dt);
     }
   }
 }
@@ -1956,6 +1969,9 @@ function haloDrawStrands(ctx, layer, collect) {
   var r0 = s.RO + 3;
   var rot = s.decoRot * layer.rotK + layer.off;
   var edgeAlpha = [0.28, 0.62, 1];
+  // The lines inside a cluster shimmer a little out of phase; follow takes that away too, so
+  // a cluster's own lines do not argue with the bin they all read.
+  var wob = 0.08 * (1 - haloBeamFollow());
   ctx.lineCap = 'butt';
   for (var i = 0; i < layer.wedges.length; i++) {
     var wedge = layer.wedges[i];
@@ -1975,7 +1991,7 @@ function haloDrawStrands(ctx, layer, collect) {
       var edge = Math.sin(Math.PI * (k + 0.5) / wedge.n);
       var b = edge < 0.38 ? 0 : (edge < 0.72 ? 1 : 2);
       var pr = wedge.prof[k];
-      var l = L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (0.92 + 0.08 * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
+      var l = L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (1 - wob + wob * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
       var solid = l * (layer.solidK + 0.3 * pr * (1 - layer.solidK));
       paths[b].moveTo(s.cx + ca * r0, s.cy + sa * r0);
       paths[b].lineTo(s.cx + ca * (r0 + solid), s.cy + sa * (r0 + solid));
