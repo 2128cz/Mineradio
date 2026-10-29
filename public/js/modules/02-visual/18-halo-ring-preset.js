@@ -38,6 +38,10 @@ var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
 var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
 var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
 var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is playing
+// The level is a loudness, and a beat only needs a yes or a no from it: once the sound is
+// there, this is the part of the beat that survives. Below 1 the ring still answers a
+// quiet passage, it just does not answer a silent one.
+var HALO_GATE_KEEP = 0.55;
 var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
 var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
@@ -1887,7 +1891,7 @@ function haloStrandBeat(weight) {
   var s = haloState;
   // The beams stretch with the beat only as far as the music allows, the same rule the pop
   // and the shake follow.
-  var room = 0.2 + 0.8 * haloClamp(s.levelGate || 0, 0, 1);
+  var room = 0.2 + 0.8 * haloMotionGate();
   s.beamKick = Math.min(1.2, Math.max(s.beamKick || 0, (0.35 + (Number(weight) || 0) * 0.75) * room));
   var dir = Math.random() < 0.5 ? 1 : -1;
   var big = weight > 0.75;
@@ -3297,6 +3301,16 @@ function haloLevelGate() {
   return haloClamp((level - HALO_LEVEL_FLOOR) * gain, 0, 1);
 }
 
+// What the beat is actually multiplied by. haloLevelGate's own curve stays a measure of
+// the room: read straight, a track that sits at the usual eight-bin mean of 0.2 would take
+// half of every pop, and the ring's motion would follow the mix's loudness instead of the
+// drums. Silence is still exactly that.
+function haloMotionGate() {
+  var g = haloClamp(Number(haloState.levelGate) || 0, 0, 1);
+  if (g <= 0) return 0;
+  return HALO_GATE_KEEP + (1 - HALO_GATE_KEEP) * g;
+}
+
 function haloRenderFrame(canvas, now, dt) {
   var s = haloState;
   if (!s.ready) return false;
@@ -3312,8 +3326,9 @@ function haloRenderFrame(canvas, now, dt) {
   // is what says whether there is anything to react to.
   var gate = haloLevelGate();
   s.levelGate += (gate - (s.levelGate || 0)) * Math.min(1, dt * 10);
-  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * s.levelGate;
-  var shake = haloParam('shakePx') * s.ringPulse * s.levelGate;
+  var motion = haloMotionGate();
+  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * motion;
+  var shake = haloParam('shakePx') * s.ringPulse * motion;
   s.shakeX = Math.sin(s.time * 47.3) * shake;
   s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived), or the app's

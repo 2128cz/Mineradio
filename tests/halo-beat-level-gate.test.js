@@ -120,6 +120,34 @@ assert.strictEqual(sandbox.haloLevelGate(), 1, 'the knob at zero must open the g
 sandbox.haloTuning.levelGain = 2.6;
 sandbox.haloAudio.level = 0;
 
+// ---------------------------------------------------------------- the beat's own gate
+// haloLevelGate is a measure of the room. What the beat is multiplied by is not allowed to
+// read it straight: the app reports a normal track as an eight-bin mean of about 0.2, and
+// that took almost half of every pop off the ring, so the ring's motion followed the mix's
+// loudness instead of the drums.
+sandbox.haloAudio.level = 0.2;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+const motionAtTypical = sandbox.haloMotionGate();
+assert(motionAtTypical >= 0.7,
+  `a typical track must keep most of the beat, got ${motionAtTypical.toFixed(3)}`);
+assert(motionAtTypical < 1,
+  `and a louder passage must still be able to open it further, got ${motionAtTypical.toFixed(3)}`);
+sandbox.haloAudio.level = 0.6;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert(sandbox.haloMotionGate() > motionAtTypical,
+  'a louder passage must still be allowed to move the ring harder');
+sandbox.haloAudio.level = 0.02;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert.strictEqual(sandbox.haloMotionGate(), 0, 'a silent room keeps none of the beat');
+// The knob at zero turns the whole gate off, and that has to reach the beat too.
+sandbox.haloTuning.levelGain = 0;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert.strictEqual(sandbox.haloMotionGate(), 1,
+  'with the gate turned off the beat must have all of it back');
+sandbox.haloTuning.levelGain = 2.6;
+sandbox.haloAudio.level = 0;
+sandbox.haloState.levelGate = 0;
+
 function runFrames(count) {
   for (let i = 0; i < count; i++) {
     sandbox.haloRenderFrame(canvas, i * 16.7, 1 / 60);
