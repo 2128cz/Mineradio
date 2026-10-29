@@ -301,4 +301,96 @@ function louden(seconds) {
   console.log(`  beat: all ${before.length} layers stretched on the beat and fell back`);
 }
 
+// ------------------------------------ and the families do not move as one piece any more
+// One formula for all six layers was the thing that looked stiff: every beam took the same
+// step in the same time, and a beat multiplied them all by the same number. Each family keeps
+// its own speed and its own share of the beat now, and each cluster its own gain on its bin.
+{
+  s.levelGate = 1;
+  const firstVisible = (layer) => layer.wedges.filter((w) => w.vis)[0];
+
+  // How many frames a cluster needs to get 90% of the way to the length a full spectrum gives
+  // it. Same measurement for every layer, so the numbers are comparable across families.
+  function settleFrames(layer) {
+    const wedge = firstVisible(layer);
+    assert(wedge, `the ${layer.kind} layer needs a visible cluster`);
+    useSpectrum(spectrum(0));
+    step(1 / 30, 30);
+    const from = wedge.len;
+    useSpectrum(spectrum(255));
+    step(1 / 30, 90);
+    const to = wedge.len;
+    useSpectrum(spectrum(0));
+    step(1 / 30, 30);
+    useSpectrum(spectrum(255));
+    for (let i = 1; i <= 90; i++) {
+      step(1 / 30, 1);
+      if (wedge.len >= from + 0.9 * (to - from)) return i;
+    }
+    return 90;
+  }
+  const rayFrames = Math.min.apply(null, layersOf('ray').map(settleFrames));
+  const barFrames = Math.max.apply(null, layersOf('bar').map(settleFrames));
+  assert(barFrames * 1.4 < rayFrames,
+    `a bar must answer its bin much sooner than a ray (${barFrames} frames against ${rayFrames}); ` +
+    'one rise rate for both is the stiff look this replaced');
+
+  // The same beat, and the families take different amounts of it. Measured on a mid spectrum so
+  // no family is already pinned at its ceiling, and with the pulse wave left out: this is the
+  // beat's own multiplier, which belongs to the family.
+  useSpectrum(spectrum(90));
+  step(1 / 30, 120);
+  const share = {};
+  for (const kind of EXPECTED_KINDS) {
+    const wedge = firstVisible(layersOf(kind)[0]);
+    const before = wedge.len;
+    let peak = 0;
+    s.beamKick = 1;
+    for (let i = 0; i < 30; i++) {
+      step(1 / 30, 1);
+      peak = Math.max(peak, wedge.len);
+    }
+    share[kind] = peak / Math.max(1e-6, before);
+    s.beamKick = 0;
+    useSpectrum(spectrum(90));
+    step(1 / 30, 120);
+  }
+  assert(share.ray > share.bar * 1.08 && share.bar > share.fan * 1.05,
+    `a beat must lift the families by their own amounts, got ray ${share.ray.toFixed(3)}, ` +
+    `bar ${share.bar.toFixed(3)}, sector ${share.fan.toFixed(3)}`);
+
+  // A cluster's own gain is part of its level: the same bin must move it less when the gain
+  // is taken away. Otherwise every cluster on one band grows by the same amount.
+  const barLayer = layersOf('bar')[0];
+  const probe = firstVisible(barLayer);
+  const withGain = (() => {
+    useSpectrum(spectrum(0));
+    step(1 / 30, 30);
+    useSpectrum(spectrum(255));
+    step(1 / 30, 12);
+    return probe.len;
+  })();
+  const gain = probe.gain;
+  probe.gain = 0;
+  const noGain = (() => {
+    useSpectrum(spectrum(0));
+    step(1 / 30, 30);
+    useSpectrum(spectrum(255));
+    step(1 / 30, 12);
+    return probe.len;
+  })();
+  probe.gain = gain;
+  assert(withGain > noGain * 1.15,
+    `a cluster's own gain must reach its bin (${withGain.toFixed(3)} with the gain, ${noGain.toFixed(3)} without)`);
+  // And the gains must actually be spread out, or the clusters on one band still move alike.
+  const gains = barLayer.wedges.map((w) => w.gain);
+  const gainSpread = Math.max.apply(null, gains) - Math.min.apply(null, gains);
+  assert(gainSpread > 0.25,
+    `the clusters of one layer must not share one gain (spread ${gainSpread.toFixed(2)})`);
+
+  console.log(`  motion: a bar settles in ${barFrames} frames, a ray in ${rayFrames}; the same beat lifts ` +
+    `ray ${share.ray.toFixed(2)}x, bar ${share.bar.toFixed(2)}x, sector ${share.fan.toFixed(2)}x; ` +
+    `a cluster's gain is worth ${(withGain / Math.max(1e-6, noGain)).toFixed(2)}x`);
+}
+
 console.log('[OK] The outer ring is several element families and every one of them plays the song.');

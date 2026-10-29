@@ -1784,8 +1784,15 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
       f2: haloRand(0.8, 1.7),
       lum: bright ? haloRand(0.75, 1) : haloRand(0.16, 0.55),
       tint: Math.random() < 0.5 ? 1 : 0,
-      lwK: flat ? haloRand(0.85, 1.15) : (Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15)),
+      // Widths run wide: one cluster in five is fat enough to be a block of its own. The
+      // sector is the exception - its strokes have to stay closed up or the sector breaks
+      // into a comb.
+      lwK: family === 'fan' ? haloRand(0.9, 1.12)
+        : (Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15)),
       lenS: haloRand(0.6, 1.25),
+      // How hard this cluster follows the bin it stands on. Two clusters reading the same
+      // level must not grow by the same amount, or the ring moves as one piece.
+      gain: haloRand(0.78, 1.24),
       prof: haloMakeProfile(n),
       pf: [],
       pp: [],
@@ -1806,6 +1813,22 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
     solidK: flat ? 1 : solidK,
     brightK: family === 'bar' ? 1.3 : (family === 'fan' ? 1.15 : 1),
     kind: family,
+    // How the family answers the sound. The rays glide: their length climbs slowly and falls
+    // back slowly, and what motion they have at rest is their own breathing. The bars and the
+    // sector snap: a cluster reaches its new length within a frame or two and drops back
+    // quickly, which is what makes them read as blocks driven by the beat rather than as
+    // faster rays. One formula for all six layers made the ring move as a single piece.
+    dyn: family === 'ray' ? 'soft' : 'bounce',
+    // How much of a beat this family takes. A beat that multiplied every layer by the same
+    // amount scaled the whole outer ring as one object; a ray leaps, a bar lifts, the sector
+    // barely moves. The beat is still one event - only the response belongs to the family.
+    beatK: family === 'ray' ? 1 : (family === 'bar' ? 0.6 : 0.42),
+    // How far the family travels between a bin it cannot hear and a full one. The rays throw
+    // all the way out and all the way back; the bars keep a floor so they stay a block even in
+    // a quiet passage, and the sector moves least of all. One range for every family is the
+    // other half of why the outer ring used to look like one object.
+    dynMin: family === 'ray' ? 0.16 : (family === 'bar' ? 0.20 : 0.24),
+    dynK: family === 'ray' ? 1.32 : (family === 'bar' ? 1.14 : 1.0),
     // Which of the two camera groups the layer is painted in: the far side of the ring first,
     // then the near side. The blocky families sit on the far side so the rays read over them.
     depth: family === 'ray' ? (back ? 0.95 : 1) : 0.95,
@@ -1903,16 +1926,7 @@ function haloWedgeVisible(wedge, layer) {
 
 function haloUpdateStrands(dt, env) {
   var s = haloState;
-  // How fast a beam reaches its length, per second. At no follow these are the old crawl
-  // (5 up, 1.3 down); at full follow a beam is up in a frame or two and back down in half a
-  // second, so the picture reads as the spectrum and not as a slow swell.
   var follow = haloBeamFollow();
-  var rise = 5 + 22 * follow;
-  var fall = 1.3 + 5.7 * follow;
-  // The band's own level gets its own smoothing, always tighter than the length above it:
-  // a beam that jumped on one frame's bin value would flicker.
-  var avRise = 10 + 14 * follow;
-  var avFall = 2.6 + 5.4 * follow;
   // The beat's own envelope for the beams: every beat multiplies every beam's length, then
   // it falls back over a second or so without anything else driving it.
   s.beamKick = Math.max(0, (s.beamKick || 0) * Math.exp(-dt * 2.6));
@@ -1924,6 +1938,16 @@ function haloUpdateStrands(dt, env) {
   }
   for (var i = 0; i < haloStrandLayers.length; i++) {
     var layer = haloStrandLayers[i];
+    // Two speeds of motion, not one. A bar reaches its new length in a frame or two and lets go
+    // fast; a ray climbs and sags. One formula for all six layers made the ring move as a single
+    // piece, which is what read as stiff. The follow knob scales both, so at full follow even the
+    // rays answer quickly - but a bar still answers several times faster than a ray, and the
+    // level it answers to is smoothed less.
+    var bounce = layer.dyn === 'bounce';
+    var rise = bounce ? (9 + 18 * follow) : (4 + 13 * follow);
+    var fall = bounce ? (2.2 + 4 * follow) : (1.3 + 2.4 * follow);
+    var avRise = bounce ? (16 + 10 * follow) : (8 + 12 * follow);
+    var avFall = bounce ? (5 + 5 * follow) : (2.2 + 4.5 * follow);
     for (var w = 0; w < layer.wedges.length; w++) {
       var wedge = layer.wedges[w];
       var rot = s.decoRot * layer.rotK + layer.off;
@@ -1931,8 +1955,9 @@ function haloUpdateStrands(dt, env) {
       wedge.vis = haloWedgeVisible(wedge, layer);
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
       // The spectrum drives the outer beams: a wedge reads the band its own angle sits
-      // on, and that band pushes the beam further out and brightens it.
-      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain'), 0, 1);
+      // on, and that band pushes the beam further out and brightens it. The cluster's own
+      // gain is part of the level, so two clusters on the same band do not grow alike.
+      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain') * wedge.gain, 0, 1);
       wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? avRise : avFall) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
@@ -1946,16 +1971,25 @@ function haloUpdateStrands(dt, env) {
       }
       // The length is the level at this cluster's own bin times the cluster's own length, and
       // the beat multiplies it: a beat grows every beam and the envelope falls back by itself.
-      var beat = 1 + 0.85 * (s.beamKick || 0) + 0.5 * wedge.kick;
+      var beat = 1 + 0.85 * layer.beatK * (s.beamKick || 0) + 0.5 * layer.beatK * wedge.kick;
       // The ceiling rises with the beat too: a loud passage already pins most beams at their
       // full length, and a beat that could only multiply a clamped value would be invisible.
-      var cap = 1 + 0.5 * (s.beamKick || 0) + 0.2 * wedge.kick;
-      // The idle breathing is what is left of the beam's own animation once it stopped
-      // following the sound, so at full follow a beam has no motion but the music's.
+      var cap = (bounce ? 1 : 1.05) + layer.beatK * (0.5 * (s.beamKick || 0) + 0.2 * wedge.kick);
+      if (bounce) {
+        // A block: it takes its length from its bin and drops straight back. No breathing and
+        // no slow tail - that is the rays' character, and giving it to the bars is what made
+        // the families look like one thing.
+        var targetB = Math.min(cap, wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * 0.75);
+        wedge.kick *= Math.exp(-dt * (2.4 + 0.4 * follow));
+        wedge.len += (targetB - wedge.len) * Math.min(1, (targetB > wedge.len ? rise : fall) * dt);
+        continue;
+      }
+      // The idle breathing is what is left of the ray's own animation once it stopped
+      // following the sound, so at full follow a ray has no motion but the music's.
       var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
       var breath = (1 - follow) * 0.05 * (0.6 + 0.4 * n1);
-      var target = Math.min(cap, breath + wedge.base * (0.16 + 1.32 * wedge.av) * beat * wedge.lenS + hit * (0.7 + 0.05 * follow));
-      wedge.kick *= Math.exp(-dt * (1.8 + 0.6 * follow));
+      var target = Math.min(cap, breath + wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * (0.7 + 0.05 * follow));
+      wedge.kick *= Math.exp(-dt * 1.8);
       wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? rise : fall) * dt);
     }
   }

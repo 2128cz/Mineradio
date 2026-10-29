@@ -409,22 +409,34 @@ function checkHaloCullArms(haloText, fail) {
     if (updateFn && !/s\.beamKick = Math\.max\(0, \(s\.beamKick \|\| 0\) \* Math\.exp\(-dt \* 2\.6\)\)/.test(updateFn)) {
       fail('the beat envelope on the beams must fall back by itself');
     }
-    if (updateFn && !/wedge\.base \* \(0\.16 \+ 1\.32 \* wedge\.av\)/.test(updateFn)) {
+    if (updateFn && !/wedge\.base \* \(layer\.dynMin \+ layer\.dynK \* wedge\.av\)/.test(updateFn)) {
       fail("the level must multiply the cluster's own length, not be added to an idle length");
     }
-    if (updateFn && !/var cap = 1 \+ 0\.5 \* \(s\.beamKick/.test(updateFn)) {
+    if (updateFn && !/var cap = \(bounce \? 1 : 1\.05\) \+ layer\.beatK \* \(0\.5 \* \(s\.beamKick/.test(updateFn)) {
       fail('the length ceiling must rise with the beat, or a loud passage cannot show one');
     }
-    // One length model, not the old two: 'bounce' was the only snappy layer and everything
-    // else crawled, which read as the beams easing themselves instead of playing the song.
-    if (updateFn && /layer\.dyn === 'bounce'/.test(updateFn)) {
-      fail('every beam layer must take its length from one model; only the drawing may still differ');
+    if (updateFn && !/var beat = 1 \+ 0\.85 \* layer\.beatK \* \(s\.beamKick/.test(updateFn)) {
+      fail('a beat must reach every family by that family\'s own amount, not one scale for the whole ring');
     }
-    if (updateFn && !/var rise = 5 \+ 22 \* follow;[\s\S]{0,40}var fall = 1\.3 \+ 5\.7 \* follow;/.test(updateFn)) {
-      fail("the beams' own easing must collapse as the follow knob goes up");
+    // Two dynamics, and they must stay two: the families differ in speed, not only in shape.
+    // One formula for every layer made the whole ring move as a single piece.
+    if (updateFn && !/var bounce = layer\.dyn === 'bounce';/.test(updateFn)) {
+      fail("the rays and the blocky families must keep their own speeds: one model for all reads as stiff");
+    }
+    if (updateFn && !/var rise = bounce \? \(9 \+ 18 \* follow\) : \(4 \+ 13 \* follow\);/.test(updateFn)) {
+      fail("the beams' own easing must mostly collapse as the follow knob goes up, and the two families must stay apart");
+    }
+    if (updateFn && !/var fall = bounce \? \(2\.2 \+ 4 \* follow\) : \(1\.3 \+ 2\.4 \* follow\);/.test(updateFn)) {
+      fail('a bar must let go faster than a ray; that difference is the family');
+    }
+    if (updateFn && !/haloBeamSpectrum\(am\) \* haloParam\('spectrumGain'\) \* wedge\.gain/.test(updateFn)) {
+      fail("every cluster must have its own gain on its bin, or neighbours on one band grow alike");
     }
     if (updateFn && !/var breath = \(1 - follow\) \* 0\.05/.test(updateFn)) {
       fail('the idle breathing must vanish at full follow');
+    }
+    if (updateFn && !/var target = Math\.min\(cap, breath \+/.test(updateFn)) {
+      fail('the breathing belongs to the rays alone; giving it to the bars erased the family');
     }
     // The outer ring is several element families, all driven by the same spectrum. A layer
     // that loses its kind is a family that quietly went back to being a ray.
@@ -436,6 +448,12 @@ function checkHaloCullArms(haloText, fail) {
     }
     if (makeFn && !/var family = kind \|\| 'ray';/.test(makeFn)) {
       fail('a strand layer must say which element family it draws');
+    }
+    if (makeFn && !/gain: haloRand\(0\.78, 1\.24\)/.test(makeFn)) {
+      fail('every cluster needs its own gain on its bin, or neighbours on one band grow alike');
+    }
+    if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : \(family === 'bar' \? 0\.20 : 0\.24\)/.test(makeFn)) {
+      fail("the families must keep their own travel between silence and a full bin: one range reads as one object");
     }
     if (buildFn && !/, 'bar'\)/.test(buildFn)) {
       fail('the wide bars are one of the ring\'s element families; the layer that carried them is gone');
