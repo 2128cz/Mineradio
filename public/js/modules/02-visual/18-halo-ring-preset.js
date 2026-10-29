@@ -533,17 +533,20 @@ function haloResize() {
 function haloPanTotalX() { return haloState.basePanX + haloCam.panX; }
 function haloPanTotalY() { return haloState.basePanY + haloCam.panY; }
 
-// The linear factor of the transform: the user's zoom, the beat's scale pop and the
-// layer's own depth (a layer drawn further back is a touch smaller).
+// The linear factor of the transform: the user's zoom and the layer's own depth (a layer
+// drawn further back is a touch smaller). The beat is not in here - it pops the ring
+// against the rest of the picture, and the eye reads the difference between the two.
 function haloSceneZoom(depth) {
   var s = haloState;
   var back = depth == null ? 1 : (1 - (1 - depth) * 0.12);
-  return haloCam.zoom * s.pulse * back;
+  return haloCam.zoom * back;
 }
 
-function haloApplyCameraTransform(ctx, scale, depth) {
+// `pop` is how much larger the thing being drawn is than the rest of the picture. Only the
+// ring pass has one; the mesh, haze and beams are drawn at the camera's own scale.
+function haloApplyCameraTransform(ctx, scale, depth, pop) {
   var s = haloState;
-  var z = haloSceneZoom(depth);
+  var z = haloSceneZoom(depth) * (pop || 1);
   var ex = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
   var ey = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
   ctx.setTransform(scale * z, 0, 0, scale * z, scale * ex, scale * ey);
@@ -1775,9 +1778,9 @@ function haloBuildStrands() {
 // ray first crosses a viewport edge at `enter`. A test on the exit alone keeps the stretch
 // between the centre and that edge, which is drawn for nothing and, for a lyric line,
 // starts the text off screen.
-function haloVisibleSpan(angle) {
+function haloVisibleSpan(angle, pop) {
   var s = haloState;
-  var z = haloSceneZoom(1);
+  var z = haloSceneZoom(1) * (pop || 1);
   var ox = s.w / 2 - haloCam.zoom * haloPanTotalX() + s.shakeX;
   var oy = s.h / 2 - haloCam.zoom * haloPanTotalY() + s.shakeY;
   var ca = Math.cos(angle);
@@ -1804,9 +1807,11 @@ function haloVisibleSpan(angle) {
   return { enter: enter, exit: exit };
 }
 
-// Does the stretch [r0, r1] of the ray at `angle` reach the screen?
-function haloRayVisible(angle, r0, r1) {
-  var span = haloVisibleSpan(angle);
+// Does the stretch [r0, r1] of the ray at `angle` reach the screen? `pop` is the layer's
+// own scale against the camera, so the ring's beats do not make its outer decorations
+// blink out at the edge of the screen.
+function haloRayVisible(angle, r0, r1, pop) {
+  var span = haloVisibleSpan(angle, pop);
   return span.exit >= r0 && span.enter <= r1;
 }
 
@@ -2485,7 +2490,7 @@ function haloRingTicks(stepRad, r0, r1, fn) {
   var count = Math.ceil(HALO_TAU / stepRad);
   for (var n = 0; n < count; n++) {
     var a = n * stepRad + s.decoRot;
-    if (!haloRayVisible(a, r0, r1)) continue;
+    if (!haloRayVisible(a, r0, r1, s.pulse)) continue;
     fn(Math.cos(a), Math.sin(a), n, a);
   }
 }
@@ -2970,11 +2975,13 @@ function haloDrawLyricText(ctx) {
     if (!item) continue;
     var center = item.angle + s.ringRot;
     var current = i === haloLyric.current;
-    // The screen's own run along this ray. The ring's centre sits off screen, so a line
-    // that starts between the centre and the edge of the screen would be drawn with its
-    // first words already gone.
+    // The screen's own run along this ray, measured at the ring's rest scale: the layout
+    // and the edge fade belong to that, so a beat must not reflow the rows. The cull alone
+    // accounts for the pop, because a popped ring carries a row that the rest scale would
+    // have put past the edge.
     var span = haloVisibleSpan(center);
-    if (span.enter > textR || span.exit < textR) continue;
+    var drawnR = textR * (s.pulse || 1);
+    if (span.enter > drawnR || span.exit < drawnR) continue;
     var near = Math.abs(haloNormAngle(center - read));
     // How close this row is to being the one being sung, 0..1. It is continuous, so a row
     // grows into the read spot and shrinks out of it while the ring turns instead of
@@ -3176,6 +3183,9 @@ function haloDrawFrame(ctx, dt) {
   haloDrawFlyers(ctx, true);
   haloDrawFlares(ctx);
 
+  // The ring is the layer that owns the beat: it grows and shrinks against a picture that
+  // does not, which is what makes the pop readable at all.
+  haloApplyCameraTransform(ctx, scale, 1, s.pulse);
   haloDrawRing(ctx, dt);
   haloDrawLyricText(ctx);
 }

@@ -1351,6 +1351,18 @@ function runHaloPresetCheck() {
     fail(`the drum hit regression failed: ${rel(hitsTestFile)}`);
   }
   process.stdout.write(hitsTest.stdout || '');
+  // The pop belongs to the ring and not to the camera: the picture behind it must stay put.
+  const ringPopTestFile = path.join(appRoot, 'tests', 'halo-beat-ring-pop.test.js');
+  if (!fs.existsSync(ringPopTestFile)) {
+    fail('tests/halo-beat-ring-pop.test.js is missing; the pop would scale the whole scene again');
+  }
+  const ringPopTest = spawnSync(process.execPath, [ringPopTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (ringPopTest.status !== 0) {
+    process.stdout.write(ringPopTest.stdout || '');
+    process.stderr.write(ringPopTest.stderr || '');
+    fail(`the ring pop layering regression failed: ${rel(ringPopTestFile)}`);
+  }
+  process.stdout.write(ringPopTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {
