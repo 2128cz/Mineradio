@@ -817,13 +817,12 @@ function haloBeatHit(e) {
   // strength, not a constant for every grid point. The floor has to be low: the weights the
   // accent chain hands over run from about 0.08 to 0.85, and a floor of 0.45 squeezed that
   // whole range into a 1.5x difference, which is not a beat you can see getting stronger.
-  // The size of a beat comes from the drum that is sounding, when there is one: the map's
-  // weight is an opinion taken when the song was analysed, and the live envelope is the
-  // song itself. The stronger of the two wins, so a grid point the map invented still moves
-  // the ring and a real kick moves it further.
+  // The size is the beat's own weight and nothing else. The live kick envelope used to be
+  // allowed to outrank it, but that envelope is a curve that stays well above zero the whole
+  // time a song is loud, so every pop ended up at the loudest size the knob allows and the
+  // ring read as a picture painted from the volume instead of a beat the song chose. Whether
+  // there is music at all is the level gate's job, in haloRenderFrame, not the hit's.
   var weight = haloClamp(e.weight, 0, 1);
-  var kick = haloClamp(Number(haloAudio.kick) || 0, 0, 1);
-  if (kick > weight) weight = kick;
   haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * weight);
   // Which way this beat throws the picture. Both ends are kept away from zero so a beat
   // always has a throw to read, and the two axes are not tied to the same sign.

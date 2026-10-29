@@ -363,8 +363,11 @@ function checkHaloCullArms(haloText, fail) {
     if (hitFn && !/0\.15 \+ 0\.85 \* weight/.test(hitFn)) {
       fail("a hard hit must pop harder than a light one: the pulse comes from the hit's weight");
     }
-    if (hitFn && !/if \(kick > weight\) weight = kick;/.test(hitFn)) {
-      fail("a drum that is sounding now must be able to outrank the map's opinion of the beat");
+    if (hitFn && !/var weight = haloClamp\(e\.weight, 0, 1\);\s*\n\s*haloState\.ringPulse/.test(hitFn)) {
+      fail('the pop size must be the beat itself: a scheduled weight, not a number read that frame');
+    }
+    if (hitFn && /haloAudio\.kick/.test(hitFn)) {
+      fail('the live envelope must not set the size: that made every pop the loudest the knob allows');
     }
     if (hitFn && !/haloState\.shakeDirX = /.test(hitFn)) {
       fail('the hit, not the playhead, decides which way the picture is thrown');

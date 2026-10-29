@@ -178,32 +178,39 @@ function nearest(target, list) {
     `${pulseAt(0.25).toFixed(2)} against ${pulseAt(1.25).toFixed(2)}`);
 }
 
-// --------------------------------- a drum that is sounding now outranks the map's opinion
-// The weight is an opinion taken when the song was analysed. The live envelope is the song,
-// and the ring's size is supposed to follow the drums, not a stale judgement about them.
+// --------------------------------- the level is not allowed to become the beat's size
+// The live kick envelope is a curve that sits well above zero the whole time a song is loud.
+// Letting it outrank the weight the map hands over made every pop the loudest size the knob
+// allows - the ring stopped reading as a beat the song chose and started reading as a picture
+// painted from the volume. Whether there is music at all is the level gate's job (see
+// halo-beat-level-gate.test.js); the size belongs to the beat.
 {
   setMap();
   sandbox.haloAudio.kick = 0;
   sandbox.haloBeat.idx = 0;
+  sandbox.haloBeat.events.length = 0;
   const quiet = drive(3);
+  setMap();
   sandbox.haloAudio.kick = 0.95;
   sandbox.haloBeat.idx = 0;
+  sandbox.haloBeat.events.length = 0;
   const kicking = drive(3);
   sandbox.haloAudio.kick = 0;
   assert(quiet.length > 0 && kicking.length > 0, 'both passes must see the grid');
   assert.strictEqual(kicking.length, quiet.length,
-    'a live drum must not add beats to the grid or take any away');
+    'a loud passage must not add beats to the grid or take any away');
   for (let i = 0; i < kicking.length; i++) {
     assert(Math.abs(kicking[i].t - quiet[i].t) < 1 / 30,
-      `and the timing must not move either (${kicking[i].t.toFixed(3)}s against ${quiet[i].t.toFixed(3)}s)`);
+      `the timing must not move either (${kicking[i].t.toFixed(3)}s against ${quiet[i].t.toFixed(3)}s)`);
+    assert(Math.abs(kicking[i].w - quiet[i].w) < 1e-9,
+      `nor the weight the beat was scheduled with (${kicking[i].w.toFixed(3)} against ${quiet[i].w.toFixed(3)})`);
+    assert(Math.abs(kicking[i].pulse - quiet[i].pulse) < 1e-9,
+      `and a pop must stay the size the map gave it, whatever the envelope is doing ` +
+      `(${kicking[i].pulse.toFixed(3)} against ${quiet[i].pulse.toFixed(3)} at ${quiet[i].t.toFixed(2)}s)`);
   }
-  const loudestQuiet = Math.max(...quiet.map((f) => f.pulse));
-  const softestKicking = Math.min(...kicking.map((f) => f.pulse));
-  assert(softestKicking > loudestQuiet,
-    `a beat under a real kick must out-pop the hardest beat the map knows (${softestKicking.toFixed(2)} ` +
-    `against ${loudestQuiet.toFixed(2)})`);
-  console.log(`  live kick: the lightest pop under a drum is ${softestKicking.toFixed(2)}, ` +
-    `above the map's own hardest ${loudestQuiet.toFixed(2)}`);
+  const spread = Math.max(...quiet.map((f) => f.pulse)) - Math.min(...quiet.map((f) => f.pulse));
+  assert(spread > 0.15, `the beat's own weight still has to show as a difference in size (${spread.toFixed(3)})`);
+  console.log(`  live envelope: 0.95 kick changes no pop at all; the map's own spread is ${spread.toFixed(2)}`);
 }
 
 // ------------------------------------------- a map with no grid falls back to its own hits

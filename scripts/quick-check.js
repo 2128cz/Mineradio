@@ -1059,12 +1059,17 @@ function runHaloPresetCheck() {
   // The beat's whole job now: the ring pops out and shakes where it stands.
   for (const [pattern, why] of [
     [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.15 \+ 0\.85 \* weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
-    [/var kick = haloClamp\(Number\(haloAudio\.kick\)/, 'a beat must be able to take its size from the drum that is sounding now'],
     [/haloParam\('pulseScale'\)/, 'the scale pop must be a knob'],
     [/haloParam\('shakePx'\)/, 'the shake must be a knob'],
     [/s\.shakeX = s\.shakeDirX \* shake/, 'the shake must be the hit\'s throw, not a sine of the playhead'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
+  }
+  // The size of a pop belongs to the beat. Read from the live envelope it sat at the knob's
+  // ceiling all through a loud passage, and the ring looked painted onto the volume.
+  const hitBody = haloSliceFunction(haloText, 'haloBeatHit');
+  if (hitBody && /haloAudio\.kick/.test(hitBody)) {
+    fail('the live envelope must not decide how big a pop is; the level gate already says whether there is sound');
   }
   // The pop belongs to the ring's own pass. Folded into the scene zoom it scaled the
   // background with the ring, and a picture that got 2% bigger is not a visible beat.
