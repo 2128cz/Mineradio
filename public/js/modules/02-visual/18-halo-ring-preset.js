@@ -810,8 +810,10 @@ function haloBeatHit(e) {
   }
   // The beat's whole job now: the ring pops out and shakes where it stands. The camera
   // stays where the user left it. A hard hit pops harder than a light one - the map's own
-  // strength, not a constant for every grid point.
-  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.45 + 0.55 * haloClamp(e.weight, 0, 1));
+  // strength, not a constant for every grid point. The floor has to be low: the weights the
+  // accent chain hands over run from about 0.08 to 0.85, and a floor of 0.45 squeezed that
+  // whole range into a 1.5x difference, which is not a beat you can see getting stronger.
+  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * haloClamp(e.weight, 0, 1));
   haloStrandBeat(e.weight);
 }
 
