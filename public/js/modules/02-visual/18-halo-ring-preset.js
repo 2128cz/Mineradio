@@ -1815,7 +1815,7 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
     // wide, solid and drawn in one unbroken row, so at the rays' own brightness it stops being a
     // backdrop and becomes the subject of the frame: the ring turns into a wall of white blocks
     // with some thin lines left over.
-    brightK: family === 'bar' ? 0.5 : (family === 'fan' ? 0.42 : 1),
+    brightK: family === 'bar' ? 0.32 : (family === 'fan' ? 0.26 : 1),
     kind: family,
     // How the family answers the sound. The rays glide: their length climbs slowly and falls
     // back slowly, and what motion they have at rest is their own breathing. The bars and the
@@ -1827,11 +1827,11 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
     // amount scaled the whole outer ring as one object; a ray leaps, a bar lifts, the sector
     // barely moves. The beat is still one event - only the response belongs to the family.
     beatK: family === 'ray' ? 1 : (family === 'bar' ? 0.6 : 0.42),
-    // How far the family travels between a bin it cannot hear and a full one. The rays throw
-    // all the way out and all the way back; the bars keep a floor so they stay a block even in
-    // a quiet passage, and the sector moves least of all. One range for every family is the
-    // other half of why the outer ring used to look like one object.
-    dynMin: family === 'ray' ? 0.16 : (family === 'bar' ? 0.20 : 0.24),
+    // How far the family travels between a bin it cannot hear and a full one. The rays keep a
+    // short rest length, which is what their breathing and their slow tail live on. The bars
+    // and the sector keep none: their height is the spectrum and nothing else, so a silent
+    // passage takes them all the way down to nothing instead of leaving a wall standing there.
+    dynMin: family === 'ray' ? 0.16 : 0,
     dynK: family === 'ray' ? 1.32 : (family === 'bar' ? 1.14 : 1.0),
     // Which of the two camera groups the layer is painted in: the far side of the ring first,
     // then the near side. The blocky families sit on the far side so the rays read over them.
@@ -1985,7 +1985,10 @@ function haloUpdateStrands(dt, env) {
         // A block: it takes its length from its bin and drops straight back. No breathing and
         // no slow tail - that is the rays' character, and giving it to the bars is what made
         // the families look like one thing.
-        var targetB = Math.min(cap, wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * 0.75);
+        // Nothing gets in without the bin: nothing here has a floor, and even the beat wave is
+        // scaled by the level, so a wave that reaches a cluster standing in silence must not put
+        // the blocks back up - that is the wall that used to stand there between songs.
+        var targetB = Math.min(cap, wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * 0.75 * wedge.av);
         wedge.kick *= Math.exp(-dt * (2.4 + 0.4 * follow));
         wedge.len += (targetB - wedge.len) * Math.min(1, (targetB > wedge.len ? rise : fall) * dt);
         continue;
@@ -2100,13 +2103,24 @@ function haloDrawStrands(ctx, layer, collect) {
       }
       if ((k + ((s.time * 12) | 0)) % 4 === 0) collect.tip.push(ca, sa, l, da);
     }
-    ctx.strokeStyle = haloGradient['s' + wedge.tint] || haloGradient.s0;
+    // The blocks are grey haze, not white light: they take no tint at all, so the only colour
+    // on the ring is the rays' own. The rays keep the tinted gradients.
+    ctx.strokeStyle = flat ? 'rgba(206,210,220,1)' : (haloGradient['s' + wedge.tint] || haloGradient.s0);
     ctx.lineWidth = lwW;
     for (var b2 = 0; b2 < 3; b2++) {
       ctx.globalAlpha = alpha * edgeAlpha[b2];
       ctx.stroke(paths[b2]);
     }
-    if (wedge.lum > 0.85) {
+    if (flat) {
+      // One wide, faint stroke around the same row: the blocks sit in fog instead of being cut
+      // out of the black, which is what keeps them behind the rays even while they move. It is
+      // flagged so the stroke log can tell the fog from the block it wraps.
+      ctx.haloFog = true;
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.lineWidth = lwW * 2.2;
+      ctx.stroke(paths[2]);
+      ctx.haloFog = false;
+    } else if (wedge.lum > 0.85) {
       ctx.globalAlpha = Math.min(1, alpha * 0.06);
       ctx.lineWidth = lwW * 2.5;
       ctx.stroke(paths[2]);

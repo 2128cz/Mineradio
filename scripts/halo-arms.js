@@ -452,8 +452,11 @@ function checkHaloCullArms(haloText, fail) {
     if (makeFn && !/gain: haloRand\(0\.78, 1\.24\)/.test(makeFn)) {
       fail('every cluster needs its own gain on its bin, or neighbours on one band grow alike');
     }
-    if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : \(family === 'bar' \? 0\.20 : 0\.24\)/.test(makeFn)) {
-      fail("the families must keep their own travel between silence and a full bin: one range reads as one object");
+    if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : 0,/.test(makeFn)) {
+      fail('only the rays keep a resting length; a block must come all the way down in silence');
+    }
+    if (updateFn && !/\+ hit \* 0\.75 \* wedge\.av/.test(updateFn)) {
+      fail('a block\'s height must come from its bin alone: a beat wave in silence must not put it back up');
     }
     if (buildFn && !/, 'bar'\)/.test(buildFn)) {
       fail('the wide bars are one of the ring\'s element families; the layer that carried them is gone');
@@ -466,6 +469,12 @@ function checkHaloCullArms(haloText, fail) {
     }
     if (drawFn && !/if \(!collect \|\| flat\) continue;/.test(drawFn)) {
       fail('a bar or a sector is solid; only the rays carry a travelling tail');
+    }
+    if (drawFn && !/ctx\.strokeStyle = flat \? 'rgba\(206,210,220,1\)'/.test(drawFn)) {
+      fail("the blocks are grey haze; the ring's colour is the rays'");
+    }
+    if (drawFn && !/ctx\.haloFog = true;/.test(drawFn)) {
+      fail('the blocks need their faint wrapper, or they are cut out of the black instead of sitting in it');
     }
     if (drawFn && !/layer\.kind === 'fan'\s*\?/.test(drawFn)) {
       fail("a sector's width comes from the angular gap between its bars, or the bars do not merge");

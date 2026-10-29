@@ -32,7 +32,8 @@ const drawContext = {
   font: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '',
   globalAlpha: 1, lineWidth: 1, lineCap: '',
   save() {}, restore() {}, translate() {}, rotate() {}, scale() {}, setTransform() {},
-  beginPath() {}, closePath() {}, fill() {}, stroke(p) { strokes.push({ path: p, lineWidth: this.lineWidth, alpha: this.globalAlpha }); },
+  beginPath() {}, closePath() {}, fill() {},
+  stroke(p) { strokes.push({ path: p, lineWidth: this.lineWidth, alpha: this.globalAlpha, fog: !!this.haloFog }); },
   moveTo() {}, lineTo() {}, rect() {},
   arc() {}, clip() {}, quadraticCurveTo() {}, bezierCurveTo() {}, ellipse() {},
   fillText() {}, strokeText() {}, drawImage() {}, putImageData() {},
@@ -132,6 +133,8 @@ function drawnRadii(layer) {
   sandbox.haloDrawStrands(drawContext, layer, null);
   const out = [];
   for (const st of strokes) {
+    // The faint wrapper a block is drawn in is not the block.
+    if (st.fog) continue;
     const pts = st.path.pts;
     for (let i = 0; i + 1 < pts.length; i += 2) {
       const r = (p) => Math.hypot(p[0] - s.cx, p[1] - s.cy);
@@ -380,7 +383,7 @@ function louden(seconds) {
     return probe.len;
   })();
   probe.gain = gain;
-  assert(withGain > noGain * 1.15,
+  assert(withGain > 0.05 && noGain < withGain * 0.3,
     `a cluster's own gain must reach its bin (${withGain.toFixed(3)} with the gain, ${noGain.toFixed(3)} without)`);
   // And the gains must actually be spread out, or the clusters on one band still move alike.
   const gains = barLayer.wedges.map((w) => w.gain);
@@ -390,7 +393,44 @@ function louden(seconds) {
 
   console.log(`  motion: a bar settles in ${barFrames} frames, a ray in ${rayFrames}; the same beat lifts ` +
     `ray ${share.ray.toFixed(2)}x, bar ${share.bar.toFixed(2)}x, sector ${share.fan.toFixed(2)}x; ` +
-    `a cluster's gain is worth ${(withGain / Math.max(1e-6, noGain)).toFixed(2)}x`);
+    `a cluster's gain takes it from ${noGain.toFixed(3)} to ${withGain.toFixed(3)}`);
+}
+
+// --------------------------------- and the blocks go out when the room has nothing to hear
+// The rays keep a short resting length of their own; the blocks are their bin and nothing else,
+// so a quiet passage has to take them all the way down. A floor under them left a wall standing
+// in the silence, and the ring looked switched on regardless of the song.
+{
+  s.levelGate = 1;
+  louden(2);
+  const blocky = layersOf('bar').concat(layersOf('fan'));
+  for (const layer of blocky) {
+    assert(drawnRadii(layer).length > 0, `the ${layer.kind} family must stand up while the room is loud`);
+  }
+  useSpectrum(spectrum(0));
+  step(1 / 30, 120);
+  for (const layer of blocky) {
+    const lines = drawnRadii(layer);
+    assert.strictEqual(lines.length, 0,
+      `the ${layer.kind} family must come all the way down in silence, it still drew ${lines.length} strokes`);
+  }
+  // And a beat that lands in the silence must not put them back up: this is the wall the user
+  // saw, standing there between songs.
+  sandbox.haloStrandBeat(1);
+  step(1 / 30, 10);
+  for (const layer of blocky) {
+    assert.strictEqual(drawnRadii(layer).length, 0,
+      `a beat in a silent room must not raise the ${layer.kind} family again`);
+  }
+  for (const layer of layersOf('ray')) {
+    assert(drawnRadii(layer).length > 0, 'the rays keep their own resting length in silence');
+  }
+  useSpectrum(spectrum(200));
+  step(1 / 30, 20);
+  for (const layer of blocky) {
+    assert(drawnRadii(layer).length > 0, `the ${layer.kind} family must come back when the music does`);
+  }
+  console.log('  silence: the blocks go out with the sound and come back with it, the rays keep their rest');
 }
 
 // ------------------------------------------------ and the rays are the picture, the rest ground
@@ -411,9 +451,15 @@ function louden(seconds) {
   for (const kind of ['bar', 'fan']) {
     const list = alphas(kind);
     peaks[kind] = Math.max.apply(null, list);
-    assert(peaks[kind] < rayPeak * 0.45,
-      `the ${kind} family is the ground, not the picture: its brightest stroke must stay well ` +
-      `under the rays' (${peaks[kind].toFixed(2)} against ${rayPeak.toFixed(2)})`);
+    assert(peaks[kind] < rayPeak * 0.25,
+      `the ${kind} family is the ground, not the picture: its brightest stroke must stay at ` +
+      `most a quarter of the rays' (${peaks[kind].toFixed(2)} against ${rayPeak.toFixed(2)})`);
+    const fogged = layersOf(kind).some((layer) => {
+      strokes.length = 0;
+      sandbox.haloDrawStrands(drawContext, layer, null);
+      return strokes.some((st) => st.fog);
+    });
+    assert(fogged, `the ${kind} family must sit in its faint grey wrapper, or it is cut out of the black`);
     assert(median(list) < median(ray) * 0.6,
       `the typical ${kind} stroke must be dimmer than the typical ray ` +
       `(${median(list).toFixed(2)} against ${median(ray).toFixed(2)})`);
