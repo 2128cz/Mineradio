@@ -202,4 +202,45 @@ function nearest(target, list) {
   console.log(`  live onset under a map: still ${fired.length} pops, source "${sandbox.haloBeat.source}"`);
 }
 
+// ------------------------------------------- a floor under how often the ring may pop
+// The list is the analysis' business, the eye is the ring's. A map is allowed to hand over beat
+// points a fifth of a second apart, and two pops that close are one buzz: the pop needs a
+// quarter second to grow and start dying. Where they crowd, the harder one stays.
+{
+  const DENSE = [];
+  for (let i = 0; i < 15; i++) {
+    const strong = i % 2 === 1;
+    DENSE.push({ time: 0.2 + i * 0.2, strength: strong ? 0.9 : 0.4, impact: strong ? 0.9 : 0.4,
+      primary: true, camera: true, pulse: true });
+  }
+  setMap({ pulseBeats: DENSE, cameraBeats: DENSE, gridStep: 0.2 });
+  const fired = drive(3.0);
+  assert(fired.length > 0 && fired.length < DENSE.filter((b) => b.time <= 3).length,
+    `a crowded list must be thinned, got ${fired.length} pops`);
+  for (let i = 1; i < fired.length; i++) {
+    assert(fired[i].t - fired[i - 1].t >= sandbox.HALO_BEAT_MIN_GAP - 1 / 30,
+      `two pops ${((fired[i].t - fired[i - 1].t) * 1000).toFixed(0)}ms apart are one buzz`);
+  }
+  const weakest = Math.min(...fired.map((f) => f.w));
+  assert(weakest > 0.8,
+    `the beat that stays must be the harder one, not the first one (${weakest.toFixed(2)} of a 0.4/0.9 pair)`);
+  console.log(`  floor: 15 points 0.20s apart became ${fired.length} pops at ` +
+    `${fired.map((f) => f.t.toFixed(2)).join(', ')}`);
+}
+
+// ------------------------------ and the floor must not touch a song that is simply fast
+// 0.25s between beats is 240 BPM: faster than anyone can count, but it is the song's own beat,
+// so the ring keeps every one of them. Thinning a real tempo would be worse than a busy ring.
+{
+  const FAST = [];
+  for (let i = 0; i < 13; i++) {
+    FAST.push({ time: 0.2 + i * 0.25, strength: 0.6, impact: 0.6, primary: true, camera: true, pulse: true });
+  }
+  setMap({ pulseBeats: FAST, cameraBeats: FAST, gridStep: 0.25 });
+  const fired = drive(2.0);
+  assert.strictEqual(fired.length, FAST.filter((b) => b.time <= 2.0).length,
+    `a genuine 240 BPM beat must keep every pop, got ${fired.length}`);
+  console.log(`  fast song: ${fired.length} pops on a 0.25s beat, none dropped`);
+}
+
 console.log('  beat source: the ring pops on the analysis\' beat points, not on the grid it laid over the song');

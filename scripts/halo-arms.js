@@ -354,6 +354,16 @@ function checkHaloCullArms(haloText, fail) {
     if (eventsFn && !/haloBeatList\(currentBeatMap\.cameraBeats/.test(eventsFn)) {
       fail('a map without a thinned beat list still needs the grid as a fallback');
     }
+    if (eventsFn && !/return haloThrottleBeats\(/.test(eventsFn)) {
+      fail('a list of beats closer than the eye can separate must be thinned before it is scheduled');
+    }
+    const throttleFn = haloSliceFunction(haloText, 'haloThrottleBeats');
+    if (!throttleFn) {
+      fail('the pop-rate floor could not be read back');
+    }
+    if (throttleFn && !/if \(list\[i\]\.w > prev\.w\) out\[out\.length - 1\] = list\[i\];/.test(throttleFn)) {
+      fail('crowded beats must keep the harder one, not whichever came first');
+    }
     if (listFn && !/e\.camera === false/.test(listFn)) {
       fail('an entry the analysis did not judge drum-like is not a hit');
     }

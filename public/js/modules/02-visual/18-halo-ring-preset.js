@@ -36,6 +36,10 @@ var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the be
 var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
 var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
 var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
+// How often the ring may pop at all. A pop takes about a quarter of a second to grow and start
+// dying, so two closer than that are one buzz the eye cannot read as two beats - and a map is
+// allowed to lay a grid that fine under a fast song.
+var HALO_BEAT_MIN_GAP = 0.24;
 var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
 var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is playing
 // The level is a loudness, and a beat only needs a yes or a no from it: once the sound is
@@ -698,6 +702,20 @@ function haloAccentGridWithHits(list, hits) {
   return list;
 }
 
+// Two pops closer than the eye can separate are one buzz. Where the list has them, the harder
+// beat is the one that stays: the listener hears the accent, and the weaker one was only ever
+// filling the space between. The times themselves are never moved.
+function haloThrottleBeats(list) {
+  if (!list || list.length < 2) return list;
+  var out = [list[0]];
+  for (var i = 1; i < list.length; i++) {
+    var prev = out[out.length - 1];
+    if (list[i].t - prev.t >= HALO_BEAT_MIN_GAP) { out.push(list[i]); continue; }
+    if (list[i].w > prev.w) out[out.length - 1] = list[i];
+  }
+  return out;
+}
+
 function haloBeatMapEvents() {
   if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
   // The pulse rides the song's beat points: the list the analysis thinned for the visuals.
@@ -707,9 +725,9 @@ function haloBeatMapEvents() {
   // without a drum pops lighter); they never move the timing, which stays the grid's.
   var list = haloBeatList(currentBeatMap.pulseBeats, false) ||
     haloBeatList(currentBeatMap.cameraBeats, false);
-  if (list) return haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true));
-  return haloBeatList(currentBeatMap.hits, true) ||
-    haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false);
+  if (list) return haloThrottleBeats(haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true)));
+  return haloThrottleBeats(haloBeatList(currentBeatMap.hits, true) ||
+    haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false));
 }
 
 function haloRefreshBeatSource() {
