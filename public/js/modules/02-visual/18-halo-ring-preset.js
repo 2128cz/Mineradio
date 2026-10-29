@@ -813,8 +813,15 @@ function haloBeatHit(e) {
   // strength, not a constant for every grid point. The floor has to be low: the weights the
   // accent chain hands over run from about 0.08 to 0.85, and a floor of 0.45 squeezed that
   // whole range into a 1.5x difference, which is not a beat you can see getting stronger.
-  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * haloClamp(e.weight, 0, 1));
-  haloStrandBeat(e.weight);
+  // The size of a beat comes from the drum that is sounding, when there is one: the map's
+  // weight is an opinion taken when the song was analysed, and the live envelope is the
+  // song itself. The stronger of the two wins, so a grid point the map invented still moves
+  // the ring and a real kick moves it further.
+  var weight = haloClamp(e.weight, 0, 1);
+  var kick = haloClamp(Number(haloAudio.kick) || 0, 0, 1);
+  if (kick > weight) weight = kick;
+  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * weight);
+  haloStrandBeat(weight);
 }
 
 // ---------------------------------------------------------------- lyric dial
@@ -3534,9 +3541,14 @@ lyric: {
     },
     // What the ring hears: the music's own level and how much of the beat it allows. A
     // gate of 0 with a song playing is the analyser's fault, not the music's silence.
+    // The motion gate is the one the beat is actually multiplied by, and the kick is what
+    // sets a beat's size when the live drum is louder than the map's opinion of it.
     audio: {
       level: Math.round((haloAudio.level || 0) * 1000) / 1000,
-      gate: Math.round((haloState.levelGate || 0) * 1000) / 1000
+      gate: Math.round((haloState.levelGate || 0) * 1000) / 1000,
+      motionGate: Math.round(haloMotionGate() * 1000) / 1000,
+      kick: Math.round((haloAudio.kick || 0) * 1000) / 1000,
+      pulse: Math.round((haloState.ringPulse || 0) * 1000) / 1000
     },
     tuning: (function () {
       var out = {};

@@ -173,6 +173,37 @@ function nearest(target, list) {
     `a synthesised grid entry must not accent a beat (${pulseAt(2.75).toFixed(2)} against ${pulseAt(2.25).toFixed(2)})`);
   console.log(`  grid: ${fired.map((f) => f.t.toFixed(2) + 's/' + f.pulse.toFixed(2)).join(', ')} ` +
     `(with a drum ${pulseAt(0.25).toFixed(2)}, without ${pulseAt(1.25).toFixed(2)})`);
+  assert(pulseAt(0.25) / pulseAt(1.25) >= 1.7,
+    `a beat the analysis heard must be far apart from a metronome tick, got ` +
+    `${pulseAt(0.25).toFixed(2)} against ${pulseAt(1.25).toFixed(2)}`);
+}
+
+// --------------------------------- a drum that is sounding now outranks the map's opinion
+// The weight is an opinion taken when the song was analysed. The live envelope is the song,
+// and the ring's size is supposed to follow the drums, not a stale judgement about them.
+{
+  setMap();
+  sandbox.haloAudio.kick = 0;
+  sandbox.haloBeat.idx = 0;
+  const quiet = drive(3);
+  sandbox.haloAudio.kick = 0.95;
+  sandbox.haloBeat.idx = 0;
+  const kicking = drive(3);
+  sandbox.haloAudio.kick = 0;
+  assert(quiet.length > 0 && kicking.length > 0, 'both passes must see the grid');
+  assert.strictEqual(kicking.length, quiet.length,
+    'a live drum must not add beats to the grid or take any away');
+  for (let i = 0; i < kicking.length; i++) {
+    assert(Math.abs(kicking[i].t - quiet[i].t) < 1 / 30,
+      `and the timing must not move either (${kicking[i].t.toFixed(3)}s against ${quiet[i].t.toFixed(3)}s)`);
+  }
+  const loudestQuiet = Math.max(...quiet.map((f) => f.pulse));
+  const softestKicking = Math.min(...kicking.map((f) => f.pulse));
+  assert(softestKicking > loudestQuiet,
+    `a beat under a real kick must out-pop the hardest beat the map knows (${softestKicking.toFixed(2)} ` +
+    `against ${loudestQuiet.toFixed(2)})`);
+  console.log(`  live kick: the lightest pop under a drum is ${softestKicking.toFixed(2)}, ` +
+    `above the map's own hardest ${loudestQuiet.toFixed(2)}`);
 }
 
 // ------------------------------------------- a map with no grid falls back to its own hits
