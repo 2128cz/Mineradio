@@ -118,7 +118,7 @@ function step(dt, frames) {
   }
 }
 
-const EXPECTED_KINDS = ['ray', 'bar'];
+const EXPECTED_KINDS = ['ray', 'bar', 'fan'];
 function midAngle(layer, wedge) {
   return sandbox.haloNormAngle((wedge.i0 + wedge.n / 2) * layer.step + s.decoRot * layer.rotK + layer.off);
 }
@@ -208,6 +208,41 @@ function louden(seconds) {
     }
   }
   console.log('  tails: the rays pass their dashes on, the bars and the sector are drawn solid');
+}
+
+// -------------------------------------- a sector is bars that touch; a bar row is bars apart
+{
+  louden(3);
+  const coverage = (layer) => {
+    const cov = drawnRadii(layer).map((l) => l.lineWidth / (layer.step * (l.inner + (l.outer - l.inner) / 2)));
+    cov.sort((a, b) => a - b);
+    return cov[Math.floor(cov.length / 2)];
+  };
+  const barCov = coverage(layersOf('bar')[0]);
+  const fanCov = coverage(layersOf('fan')[0]);
+  assert(barCov < 0.5, `the bars must stand apart from each other (they cover ${barCov.toFixed(2)} of their gap)`);
+  assert(fanCov > 0.7, `the sector must close its bars into one shape (it covers ${fanCov.toFixed(2)} of its gap)`);
+  console.log(`  width: a bar row covers ${barCov.toFixed(2)} of the gap between its bars, the sector ${fanCov.toFixed(2)}`);
+}
+
+// ------------------------------------------------- and the sector is painted behind the rays
+// The two camera groups are chosen by the layer, not by the order the layers were built in,
+// so a new family cannot quietly end up on top of the picture.
+{
+  const drawn = [];
+  const realDraw = sandbox.haloDrawStrands;
+  sandbox.haloDrawStrands = (ctx, layer, collect) => { drawn.push(layer.kind + (collect ? '/tails' : '')); };
+  sandbox.haloDrawStrandGroup(drawContext, 0.95, null);
+  const back = drawn.join(',');
+  drawn.length = 0;
+  sandbox.haloDrawStrandGroup(drawContext, 1, { dash: [], tip: [] });
+  const front = drawn.join(',');
+  sandbox.haloDrawStrands = realDraw;
+  assert(back.includes('fan'), `the sector must be drawn in the far group (${back})`);
+  assert(!front.includes('fan') && !front.includes('bar'),
+    `the blocky families must not be painted again in front (${front})`);
+  assert(front.includes('ray'), `the near group must still carry the rays (${front})`);
+  console.log(`  order: behind = ${back}, in front = ${front}`);
 }
 
 // ------------------------------------------------------ every family moves with the sound

@@ -1741,10 +1741,12 @@ function haloMakeProfile(n) {
 //
 // `kind` is what a wedge reads as. 'ray' is the bundle of thin lines with a dashed tail and a
 // domed profile. 'bar' is a row of solid bars, all the same length, separated by their own
-// angular step. 'fan' pushes the bars together until the row is one solid sector.
-function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, kind) {
+// angular step. 'fan' pushes the bars together until the row is one solid sector, so its
+// stroke width comes from the step and the `lw` argument is not used.
+function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, kind, back) {
   var step = stepDeg * Math.PI / 180;
-  var flat = !!kind && kind !== 'ray';
+  var family = kind || 'ray';
+  var flat = family !== 'ray';
   var nb = Math.floor(HALO_TAU / step);
   var wedges = [];
   var count = Math.max(1, Math.round(nb * cover * haloParam('strandDensity') / ((nMin + nMax) / 2)));
@@ -1784,21 +1786,36 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
   return {
     step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK,
     solidK: flat ? 1 : solidK,
-    brightK: kind === 'bar' ? 1.3 : (kind === 'fan' ? 1.15 : 1),
-    kind: kind || 'ray',
+    brightK: family === 'bar' ? 1.3 : (family === 'fan' ? 1.15 : 1),
+    kind: family,
+    // Which of the two camera groups the layer is painted in: the far side of the ring first,
+    // then the near side. The blocky families sit on the far side so the rays read over them.
+    depth: family === 'ray' ? (back ? 0.95 : 1) : 0.95,
     wedges: wedges, off: Math.random() * HALO_TAU
   };
 }
 
 function haloBuildStrands() {
   haloStrandLayers = [
-    haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2),
-    haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28),
+    haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2, '', true),
+    haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28, '', true),
     haloMakeStrandLayer(0.12, 1.0, 1.0, 1.0, 1.0, 0.5, 0.75, 12, 60, 0.32),
     haloMakeStrandLayer(2.2, 1.0, 0.62, 6.0, 0.8, 1, 1.4, 2, 8, 0.3, 'bar'),
-    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32)
+    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32),
+    haloMakeStrandLayer(3.6, 1.0, 0.75, 1.0, 0.7, 1, 1.6, 4, 8, 0.45, 'fan')
   ];
   haloPulseList = [];
+}
+
+// The outer elements are drawn family by family, not in the order they were built: adding or
+// removing a layer must not quietly change what covers what.
+function haloDrawStrandGroup(ctx, depth, collect) {
+  for (var i = 0; i < haloStrandLayers.length; i++) {
+    var layer = haloStrandLayers[i];
+    if (layer.depth !== depth) continue;
+    // Only the rays have a tail to hand over; a bar and a sector are solid to their tip.
+    haloDrawStrands(ctx, layer, layer.kind === 'ray' ? collect : null);
+  }
 }
 
 // How far out the screen reaches along a given direction: the distance from the ring's
@@ -1997,7 +2014,9 @@ function haloDrawStrands(ctx, layer, collect) {
     var a0 = haloNormAngle(wedge.i0 * layer.step + rot);
     var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * layer.brightK * (1 + wedge.av * 0.8));
     if (alpha < 0.005) continue;
-    var lwW = layer.lw * wedge.lwK;
+    var lwW = layer.kind === 'fan'
+      ? layer.step * (r0 + L * 0.5) * 0.95 * wedge.lwK
+      : layer.lw * wedge.lwK;
     var paths = [new Path2D(), new Path2D(), new Path2D()];
     for (var k = 0; k < wedge.n; k++) {
       var a = a0 + (k + 0.5) * layer.step;
@@ -3220,15 +3239,12 @@ function haloDrawFrame(ctx, dt) {
 
   haloApplyCameraTransform(ctx, scale, 0.95);
   haloDrawHaze(ctx);
-  haloDrawStrands(ctx, haloStrandLayers[0], null);
-  haloDrawStrands(ctx, haloStrandLayers[1], null);
+  haloDrawStrandGroup(ctx, 0.95, null);
   haloDrawFlyers(ctx, false);
 
   haloApplyCameraTransform(ctx, scale, 1);
   var collect = { dash: [], tip: [] };
-  haloDrawStrands(ctx, haloStrandLayers[2], collect);
-  haloDrawStrands(ctx, haloStrandLayers[4], collect);
-  haloDrawStrands(ctx, haloStrandLayers[3], null);
+  haloDrawStrandGroup(ctx, 1, collect);
   haloDrawStrandTips(ctx, collect);
   haloDrawFlyers(ctx, true);
   haloDrawFlares(ctx);

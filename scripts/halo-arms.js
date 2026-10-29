@@ -413,17 +413,34 @@ function checkHaloCullArms(haloText, fail) {
     if (!makeFn || !buildFn || !drawFn) {
       fail('the strand layers could not be read back');
     }
-    if (makeFn && !/kind: kind \|\| 'ray'/.test(makeFn)) {
+    if (makeFn && !/var family = kind \|\| 'ray';/.test(makeFn)) {
       fail('a strand layer must say which element family it draws');
     }
     if (buildFn && !/, 'bar'\)/.test(buildFn)) {
       fail('the wide bars are one of the ring\'s element families; the layer that carried them is gone');
+    }
+    if (buildFn && !/, 'fan'\)/.test(buildFn)) {
+      fail('the bars assembled into a sector are one of the ring\'s element families');
     }
     if (drawFn && !/var flat = layer\.kind !== 'ray';/.test(drawFn)) {
       fail('the blocky families must be drawn at one length, not with the rays\' domed profile');
     }
     if (drawFn && !/if \(!collect \|\| flat\) continue;/.test(drawFn)) {
       fail('a bar or a sector is solid; only the rays carry a travelling tail');
+    }
+    if (drawFn && !/layer\.kind === 'fan'\s*\?/.test(drawFn)) {
+      fail("a sector's width comes from the angular gap between its bars, or the bars do not merge");
+    }
+    const groupFn = haloSliceFunction(haloText, 'haloDrawStrandGroup');
+    const frameFn = haloSliceFunction(haloText, 'haloDrawFrame');
+    if (!groupFn || !frameFn) {
+      fail('the strand drawing groups could not be read back');
+    }
+    if (frameFn && /haloDrawStrands\(ctx, haloStrandLayers\[/.test(frameFn)) {
+      fail('the outer families are drawn by kind, not by the order they were built in');
+    }
+    if (groupFn && !/layer\.kind === 'ray' \? collect : null/.test(groupFn)) {
+      fail('only the rays may hand over a travelling tail');
     }
     if (beatFn && !/s\.beamKick = Math\.min\(1\.2/.test(beatFn)) {
       fail("a beat must raise the beams' own envelope");
