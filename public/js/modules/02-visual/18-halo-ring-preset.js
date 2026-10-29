@@ -758,7 +758,7 @@ function haloScheduleBeats(t) {
     }
     return;
   }
-  if (haloAudio.kickOnset > 0 && t - haloBeat.lastOnsetAt > 0.12) {
+  if (haloAudio.kickOnset > 0 && t - haloBeat.lastOnsetAt >= HALO_BEAT_MIN_GAP) {
     haloBeat.lastOnsetAt = t;
     haloEnqueueBeat(t + 0.02, haloClamp(0.35 + 0.55 * haloAudio.kickOnset, 0, 1), true);
   }

@@ -364,6 +364,10 @@ function checkHaloCullArms(haloText, fail) {
     if (throttleFn && !/if \(list\[i\]\.w > prev\.w\) out\[out\.length - 1\] = list\[i\];/.test(throttleFn)) {
       fail('crowded beats must keep the harder one, not whichever came first');
     }
+    const scheduleFn = haloSliceFunction(haloText, 'haloScheduleBeats');
+    if (scheduleFn && !/t - haloBeat\.lastOnsetAt >= HALO_BEAT_MIN_GAP/.test(scheduleFn)) {
+      fail('the live onset detector needs the same floor: it is the one source that reads the level directly');
+    }
     if (listFn && !/e\.camera === false/.test(listFn)) {
       fail('an entry the analysis did not judge drum-like is not a hit');
     }

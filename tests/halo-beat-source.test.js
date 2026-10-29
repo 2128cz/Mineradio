@@ -243,4 +243,24 @@ function nearest(target, list) {
   console.log(`  fast song: ${fired.length} pops on a 0.25s beat, none dropped`);
 }
 
+// ------------------------------ the same floor holds when there is no map at all
+// With no beat map the ring pops on the realtime onset detector, which reads the low band as it
+// sounds - the one path where a busy detector really is a busy ring. It gets the same floor.
+{
+  setMap({ cameraBeats: [], pulseBeats: [], beats: [], kicks: [], hits: [] });
+  sandbox.haloAudio.kickOnset = 0.7;
+  const fired = drive(3.0);
+  sandbox.haloAudio.kickOnset = 0;
+  assert.strictEqual(sandbox.haloBeat.source, 'live', 'a map-less ring must fall back to the live detector');
+  assert(fired.length > 2, `the live detector still has to fire (${fired.length} pops)`);
+  for (let i = 1; i < fired.length; i++) {
+    assert(fired[i].t - fired[i - 1].t >= sandbox.HALO_BEAT_MIN_GAP - 2 / 60,
+      `two live pops ${((fired[i].t - fired[i - 1].t) * 1000).toFixed(0)}ms apart are one buzz`);
+  }
+  const rate = fired.length / 3;
+  assert(rate <= 4.6, `a held onset must not turn the ring into a follow-the-level flicker (${rate.toFixed(2)} pops/s)`);
+  console.log(`  live detector: a held onset gives ${fired.length} pops in 3s (${rate.toFixed(2)}/s), never closer than ` +
+    `${Math.min(...fired.slice(1).map((f, i) => f.t - fired[i].t)).toFixed(2)}s`);
+}
+
 console.log('  beat source: the ring pops on the analysis\' beat points, not on the grid it laid over the song');
