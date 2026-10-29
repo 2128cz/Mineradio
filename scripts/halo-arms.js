@@ -405,6 +405,26 @@ function checkHaloCullArms(haloText, fail) {
     if (updateFn && !/var breath = \(1 - follow\) \* 0\.05/.test(updateFn)) {
       fail('the idle breathing must vanish at full follow');
     }
+    // The outer ring is several element families, all driven by the same spectrum. A layer
+    // that loses its kind is a family that quietly went back to being a ray.
+    const makeFn = haloSliceFunction(haloText, 'haloMakeStrandLayer');
+    const buildFn = haloSliceFunction(haloText, 'haloBuildStrands');
+    const drawFn = haloSliceFunction(haloText, 'haloDrawStrands');
+    if (!makeFn || !buildFn || !drawFn) {
+      fail('the strand layers could not be read back');
+    }
+    if (makeFn && !/kind: kind \|\| 'ray'/.test(makeFn)) {
+      fail('a strand layer must say which element family it draws');
+    }
+    if (buildFn && !/, 'bar'\)/.test(buildFn)) {
+      fail('the wide bars are one of the ring\'s element families; the layer that carried them is gone');
+    }
+    if (drawFn && !/var flat = layer\.kind !== 'ray';/.test(drawFn)) {
+      fail('the blocky families must be drawn at one length, not with the rays\' domed profile');
+    }
+    if (drawFn && !/if \(!collect \|\| flat\) continue;/.test(drawFn)) {
+      fail('a bar or a sector is solid; only the rays carry a travelling tail');
+    }
     if (beatFn && !/s\.beamKick = Math\.min\(1\.2/.test(beatFn)) {
       fail("a beat must raise the beams' own envelope");
     }

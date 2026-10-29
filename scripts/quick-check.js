@@ -1348,6 +1348,18 @@ function runHaloPresetCheck() {
     fail(`the outer beam regression failed: ${rel(beamsTestFile)}`);
   }
   process.stdout.write(beamsTest.stdout || '');
+  // The outer ring is several element families (rays, bars, sectors), not one.
+  const familiesTestFile = path.join(appRoot, 'tests', 'halo-beam-families.test.js');
+  if (!fs.existsSync(familiesTestFile)) {
+    fail('tests/halo-beam-families.test.js is missing; the beam families would only be checked by eye');
+  }
+  const familiesTest = spawnSync(process.execPath, [familiesTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (familiesTest.status !== 0) {
+    process.stdout.write(familiesTest.stdout || '');
+    process.stderr.write(familiesTest.stderr || '');
+    fail(`the outer beam families regression failed: ${rel(familiesTestFile)}`);
+  }
+  process.stdout.write(familiesTest.stdout || '');
   // The ring's pop follows the map's detected drum hits, not the tempo grid.
   const hitsTestFile = path.join(appRoot, 'tests', 'halo-beat-hits.test.js');
   if (!fs.existsSync(hitsTestFile)) {

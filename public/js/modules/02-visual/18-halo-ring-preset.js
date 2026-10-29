@@ -1734,11 +1734,17 @@ function haloMakeProfile(n) {
   return prof;
 }
 
-// A layer of wedges. The original uses five layers with angular steps from 0.12 to 0.45
-// degrees and 4..90 strokes each, which is about 8000 strokes a frame; the density knob
-// scales the coverage so the same shape can be dialed back.
-function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, dyn) {
+// A layer of wedges: the blocks of strokes the outer ring is painted from. The original uses
+// five layers with angular steps from 0.12 to 0.45 degrees and 4..90 strokes each, which is
+// about 8000 strokes a frame; the density knob scales the coverage so the same shape can be
+// dialed back.
+//
+// `kind` is what a wedge reads as. 'ray' is the bundle of thin lines with a dashed tail and a
+// domed profile. 'bar' is a row of solid bars, all the same length, separated by their own
+// angular step. 'fan' pushes the bars together until the row is one solid sector.
+function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, kind) {
   var step = stepDeg * Math.PI / 180;
+  var flat = !!kind && kind !== 'ray';
   var nb = Math.floor(HALO_TAU / step);
   var wedges = [];
   var count = Math.max(1, Math.round(nb * cover * haloParam('strandDensity') / ((nMin + nMax) / 2)));
@@ -1758,7 +1764,7 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
       f2: haloRand(0.8, 1.7),
       lum: bright ? haloRand(0.75, 1) : haloRand(0.16, 0.55),
       tint: Math.random() < 0.5 ? 1 : 0,
-      lwK: Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15),
+      lwK: flat ? haloRand(0.85, 1.15) : (Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15)),
       lenS: haloRand(0.6, 1.25),
       prof: haloMakeProfile(n),
       pf: [],
@@ -1775,7 +1781,13 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
     }
     wedges.push(wedge);
   }
-  return { step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK, solidK: solidK, wedges: wedges, off: Math.random() * HALO_TAU, dyn: dyn || 'soft' };
+  return {
+    step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK,
+    solidK: flat ? 1 : solidK,
+    brightK: kind === 'bar' ? 1.3 : (kind === 'fan' ? 1.15 : 1),
+    kind: kind || 'ray',
+    wedges: wedges, off: Math.random() * HALO_TAU
+  };
 }
 
 function haloBuildStrands() {
@@ -1783,8 +1795,8 @@ function haloBuildStrands() {
     haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2),
     haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28),
     haloMakeStrandLayer(0.12, 1.0, 1.0, 1.0, 1.0, 0.5, 0.75, 12, 60, 0.32),
-    haloMakeStrandLayer(0.45, 1.0, 0.5, 1.8, 0.8, 0.6, 0.35, 4, 16, 0.3),
-    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32, 'bounce')
+    haloMakeStrandLayer(2.2, 1.0, 0.62, 6.0, 0.8, 1, 1.4, 2, 8, 0.3, 'bar'),
+    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32)
   ];
   haloPulseList = [];
 }
@@ -1972,6 +1984,10 @@ function haloDrawStrands(ctx, layer, collect) {
   // The lines inside a cluster shimmer a little out of phase; follow takes that away too, so
   // a cluster's own lines do not argue with the bin they all read.
   var wob = 0.08 * (1 - haloBeamFollow());
+  // The blocky families: every stroke in the cluster gets the same length and the same
+  // brightness, so the row reads as bars (or, with the step closed up, as one sector) rather
+  // than as a bundle of rays with a domed profile.
+  var flat = layer.kind !== 'ray';
   ctx.lineCap = 'butt';
   for (var i = 0; i < layer.wedges.length; i++) {
     var wedge = layer.wedges[i];
@@ -1979,8 +1995,7 @@ function haloDrawStrands(ctx, layer, collect) {
     var L = wedge.len * span * layer.lenK;
     if (L < 3) continue;
     var a0 = haloNormAngle(wedge.i0 * layer.step + rot);
-    var a1 = a0 + wedge.n * layer.step;
-    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * (layer.dyn === 'bounce' ? 1.3 : 1) * (1 + wedge.av * 0.8));
+    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * layer.brightK * (1 + wedge.av * 0.8));
     if (alpha < 0.005) continue;
     var lwW = layer.lw * wedge.lwK;
     var paths = [new Path2D(), new Path2D(), new Path2D()];
@@ -1989,13 +2004,13 @@ function haloDrawStrands(ctx, layer, collect) {
       var ca = Math.cos(a);
       var sa = Math.sin(a);
       var edge = Math.sin(Math.PI * (k + 0.5) / wedge.n);
-      var b = edge < 0.38 ? 0 : (edge < 0.72 ? 1 : 2);
-      var pr = wedge.prof[k];
-      var l = L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (1 - wob + wob * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
+      var pr = flat ? 1 : wedge.prof[k];
+      var l = flat ? L : L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (1 - wob + wob * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
+      var b = flat ? 2 : (edge < 0.38 ? 0 : (edge < 0.72 ? 1 : 2));
       var solid = l * (layer.solidK + 0.3 * pr * (1 - layer.solidK));
       paths[b].moveTo(s.cx + ca * r0, s.cy + sa * r0);
       paths[b].lineTo(s.cx + ca * (r0 + solid), s.cy + sa * (r0 + solid));
-      if (!collect) continue;
+      if (!collect || flat) continue;
       var tail = l - solid;
       var da = alpha * edgeAlpha[b];
       if (tail > 6) {
