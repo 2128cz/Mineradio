@@ -83,11 +83,17 @@ function checkHaloAudioArms(haloText, fail) {
   if (readAt < 0 || shakeAt < 0 || readAt > shakeAt) {
     fail('the level has to be read before the ring moves: the gate needs the level of this frame');
   }
-  if (!/var shake = haloParam\('shakePx'\) \* s\.ringPulse \* s\.levelGate;/.test(renderFrameFn)) {
-    fail('the shake must be scaled by the level gate, or the ring shakes in silence');
+  if (!/var shake = haloParam\('shakePx'\) \* s\.ringPulse \* motion;/.test(renderFrameFn)) {
+    fail('the shake must be scaled by the gate the sound allows, or the ring shakes in silence');
   }
-  if (!/s\.pulse = 1 \+ haloParam\('pulseScale'\) \* s\.ringPulse \* s\.levelGate;/.test(renderFrameFn)) {
-    fail('the ring\'s pop must be scaled by the level gate too');
+  if (!/s\.pulse = 1 \+ haloParam\('pulseScale'\) \* s\.ringPulse \* motion;/.test(renderFrameFn)) {
+    fail('the ring\'s pop must be scaled by the same gate');
+  }
+  // The gate answers whether there is sound at all. Read as a loudness, the eight-bin mean
+  // the app reports for a normal track (~0.2) took most of every pop off before it was drawn.
+  if (!/var motion = haloMotionGate\(\);/.test(renderFrameFn) ||
+      !/return HALO_GATE_KEEP \+ \(1 - HALO_GATE_KEEP\) \* g;/.test(haloText)) {
+    fail('the beat must be multiplied by a presence gate, not by the raw level');
   }
   if (!/haloAudio\.level/.test(levelGateFn)) {
     fail('the level gate must be built from the audio level');
@@ -156,7 +162,7 @@ function checkHaloCullArms(haloText, fail) {
     [spanFn, 'return { enter: enter, exit: exit };', 'haloVisibleSpan'],
     [rayVisibleFn, 'span.enter <= r1', 'haloRayVisible'],
     [wedgeVisibleFn, 'haloRayVisible(a1', 'haloWedgeVisible'],
-    [ticksFn, 'haloRayVisible(a, r0, r1)', 'haloRingTicks'],
+    [ticksFn, 'haloRayVisible(a, r0, r1, s.pulse)', 'haloRingTicks'],
   ]) {
     if (slice && !slice.includes(marker)) {
       fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
@@ -350,8 +356,14 @@ function checkHaloCullArms(haloText, fail) {
     if (listFn && !/e\.grid === true/.test(listFn)) {
       fail('a synthesised grid point is not a hit');
     }
-    if (hitFn && !/0\.45 \+ 0\.55 \* haloClamp\(e\.weight/.test(hitFn)) {
+    if (hitFn && !/0\.15 \+ 0\.85 \* weight/.test(hitFn)) {
       fail("a hard hit must pop harder than a light one: the pulse comes from the hit's weight");
+    }
+    if (hitFn && !/if \(kick > weight\) weight = kick;/.test(hitFn)) {
+      fail("a drum that is sounding now must be able to outrank the map's opinion of the beat");
+    }
+    if (hitFn && !/haloState\.shakeDirX = /.test(hitFn)) {
+      fail('the hit, not the playhead, decides which way the picture is thrown');
     }
   }
   // The outer beams: one spectrum bin per cluster (not one of eight bands), the level
@@ -415,8 +427,13 @@ function checkHaloCullArms(haloText, fail) {
     if (!/var span = haloVisibleSpan\(center\);/.test(drawLyricFn)) {
       fail('the draw time fit must measure the screen\'s run on the ray the line actually sits on');
     }
-    if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
+    if (!/if \(span\.enter > drawnR \|\| span\.exit < drawnR\) continue;/.test(drawLyricFn)) {
       fail('a line must be drawn only when its own start is on screen: both ends of the run decides');
+    }
+    // The measure stays at the ring's rest scale, so a beat cannot reflow the rows or fade
+    // them in and out; only the cull learns that the popped ring carries the line further.
+    if (!/var drawnR = textR \* \(s\.pulse \|\| 1\);/.test(drawLyricFn)) {
+      fail('the lyric layout must be measured at the ring\'s rest scale, never at the beat\'s');
     }
     // The dial is a window: the lines around the one being sung, not the whole song.
     if (!/var win = haloLyricWindow\(\);/.test(drawLyricFn)) {

@@ -1058,12 +1058,21 @@ function runHaloPresetCheck() {
   }
   // The beat's whole job now: the ring pops out and shakes where it stands.
   for (const [pattern, why] of [
-    [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.45 \+ 0\.55 \* haloClamp\(e\.weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
+    [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.15 \+ 0\.85 \* weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
+    [/var kick = haloClamp\(Number\(haloAudio\.kick\)/, 'a beat must be able to take its size from the drum that is sounding now'],
     [/haloParam\('pulseScale'\)/, 'the scale pop must be a knob'],
     [/haloParam\('shakePx'\)/, 'the shake must be a knob'],
-    [/s\.shakeX =/, 'the shake must reach the transform'],
+    [/s\.shakeX = s\.shakeDirX \* shake/, 'the shake must be the hit\'s throw, not a sine of the playhead'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
+  }
+  // The pop belongs to the ring's own pass. Folded into the scene zoom it scaled the
+  // background with the ring, and a picture that got 2% bigger is not a visible beat.
+  if (/haloCam\.zoom \* s\.pulse/.test(haloText)) {
+    fail('the beat must not scale the whole scene: only the ring\'s own pass may pop');
+  }
+  if (!/haloApplyCameraTransform\(ctx, scale, 1, s\.pulse\);[\s\S]{0,40}haloDrawRing\(/.test(haloText)) {
+    fail('the pop has to be on the transform the ring and its lyrics are drawn with');
   }
   // The gate rate and the module's own target must be the same number, or the layer is either
   // drawn more often than it budgets for or less often than it was measured at.
