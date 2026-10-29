@@ -1360,7 +1360,19 @@ function runHaloPresetCheck() {
     fail(`the outer beam families regression failed: ${rel(familiesTestFile)}`);
   }
   process.stdout.write(familiesTest.stdout || '');
-  // The ring's pop follows the map's detected drum hits, not the tempo grid.
+  // The ring's pop takes the analysis' own beat points, not the whole grid it laid over the song.
+  const sourceTestFile = path.join(appRoot, 'tests', 'halo-beat-source.test.js');
+  if (!fs.existsSync(sourceTestFile)) {
+    fail('tests/halo-beat-source.test.js is missing; the ring would pop on every grid slot again');
+  }
+  const sourceTest = spawnSync(process.execPath, [sourceTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (sourceTest.status !== 0) {
+    process.stdout.write(sourceTest.stdout || '');
+    process.stderr.write(sourceTest.stderr || '');
+    fail(`the beat point regression failed: ${rel(sourceTestFile)}`);
+  }
+  process.stdout.write(sourceTest.stdout || '');
+  // and the drum hits under those points decide how hard each one lands.
   const hitsTestFile = path.join(appRoot, 'tests', 'halo-beat-hits.test.js');
   if (!fs.existsSync(hitsTestFile)) {
     fail('tests/halo-beat-hits.test.js is missing; the ring would pop on the metronome again');

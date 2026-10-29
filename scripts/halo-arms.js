@@ -332,8 +332,9 @@ function checkHaloCullArms(haloText, fail) {
       fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
-  // The ring's pop keeps the song's tempo grid, and the detected hits only colour how hard a
-  // beat lands; the level gate decides how much of it the music allows.
+  // The ring's pop takes the beat points the analysis thinned for the visuals, and the
+  // detected hits only colour how hard a beat lands; the level gate decides how much of it
+  // the music allows.
   {
     const eventsFn = haloSliceFunction(haloText, 'haloBeatMapEvents');
     const listFn = haloSliceFunction(haloText, 'haloBeatList');
@@ -341,14 +342,17 @@ function checkHaloCullArms(haloText, fail) {
     if (!eventsFn || !listFn || !hitFn) {
       fail("the ring's beat events, their list and the hit handler could not be read back");
     }
-    if (eventsFn && !/var list = haloBeatList\(currentBeatMap\.cameraBeats \|\| currentBeatMap\.pulseBeats, false\);/.test(eventsFn)) {
-      fail('the pop must keep the tempo grid’s timing; the detected hits must not move it');
+    if (eventsFn && !/var list = haloBeatList\(currentBeatMap\.pulseBeats, false\)/.test(eventsFn)) {
+      fail("the pop must take the analysis' own beat points, not the whole grid it laid over the song");
+    }
+    if (eventsFn && /cameraBeats \|\| currentBeatMap\.pulseBeats/.test(eventsFn)) {
+      fail('the grid first is the dense metronome again: the beat points must be read before it');
     }
     if (eventsFn && !/haloAccentGridWithHits\(list, haloBeatList\(currentBeatMap\.hits, true\)\)/.test(eventsFn)) {
       fail('a grid beat with a detected drum under it must pop harder than one without');
     }
     if (eventsFn && !/haloBeatList\(currentBeatMap\.cameraBeats/.test(eventsFn)) {
-      fail('a map without hits still needs a fallback');
+      fail('a map without a thinned beat list still needs the grid as a fallback');
     }
     if (listFn && !/e\.camera === false/.test(listFn)) {
       fail('an entry the analysis did not judge drum-like is not a hit');

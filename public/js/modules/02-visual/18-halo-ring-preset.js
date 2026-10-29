@@ -700,14 +700,15 @@ function haloAccentGridWithHits(list, hits) {
 
 function haloBeatMapEvents() {
   if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
-  // The pulse rides the song's tempo grid: the detected hits change from song to song and
-  // from passage to passage, so following them moved the ring around; the grid is steady and
-  // the level gate is what makes it sit under the music. The hits are still used, but only
-  // to say whether a grid beat has a drum under it - a beat without one pops lighter.
-  var list = haloBeatList(currentBeatMap.cameraBeats || currentBeatMap.pulseBeats, false);
+  // The pulse rides the song's beat points: the list the analysis thinned for the visuals.
+  // cameraBeats is the whole grid it laid over the song - every slot of the bar, including
+  // the ones it wrote off as not a drum - and popping on all of them is a refresh the eye
+  // reads as a buzz. The hits still only say whether a beat point has a drum under it (one
+  // without a drum pops lighter); they never move the timing, which stays the grid's.
+  var list = haloBeatList(currentBeatMap.pulseBeats, false) ||
+    haloBeatList(currentBeatMap.cameraBeats, false);
   if (list) return haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true));
-  return haloBeatList(currentBeatMap.pulseBeats, false) ||
-    haloBeatList(currentBeatMap.hits, true) ||
+  return haloBeatList(currentBeatMap.hits, true) ||
     haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false);
 }
 
