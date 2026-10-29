@@ -393,4 +393,33 @@ function louden(seconds) {
     `a cluster's gain is worth ${(withGain / Math.max(1e-6, noGain)).toFixed(2)}x`);
 }
 
+// ------------------------------------------------ and the rays are the picture, the rest ground
+// The outer ring reads as bright thin lines over dimmer blocks. The blocks are wide and solid
+// and every one of their strokes is painted at full strength, so giving them the rays' own
+// brightness turns the backdrop into the subject: the frame becomes a wall of white bars.
+{
+  louden(3);
+  const alphas = (kind) => layersOf(kind).flatMap((layer) => drawnRadii(layer).map((l) => l.alpha));
+  const median = (values) => {
+    const sorted = values.slice().sort((a, b) => a - b);
+    return sorted[sorted.length >> 1];
+  };
+  const ray = alphas('ray');
+  const rayPeak = Math.max.apply(null, ray);
+  assert(rayPeak > 0.6, `the rays must still paint at full strength (peak ${rayPeak.toFixed(2)})`);
+  const peaks = {};
+  for (const kind of ['bar', 'fan']) {
+    const list = alphas(kind);
+    peaks[kind] = Math.max.apply(null, list);
+    assert(peaks[kind] < rayPeak * 0.45,
+      `the ${kind} family is the ground, not the picture: its brightest stroke must stay well ` +
+      `under the rays' (${peaks[kind].toFixed(2)} against ${rayPeak.toFixed(2)})`);
+    assert(median(list) < median(ray) * 0.6,
+      `the typical ${kind} stroke must be dimmer than the typical ray ` +
+      `(${median(list).toFixed(2)} against ${median(ray).toFixed(2)})`);
+  }
+  console.log(`  light: rays peak at ${rayPeak.toFixed(2)}, the bars at ${peaks.bar.toFixed(2)}, ` +
+    `the sector at ${peaks.fan.toFixed(2)}`);
+}
+
 console.log('[OK] The outer ring is several element families and every one of them plays the song.');

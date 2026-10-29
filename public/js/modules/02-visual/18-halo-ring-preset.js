@@ -1811,7 +1811,11 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
   return {
     step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK,
     solidK: flat ? 1 : solidK,
-    brightK: family === 'bar' ? 1.3 : (family === 'fan' ? 1.15 : 1),
+    // The rays are the picture and the blocks are what they are drawn on. A bar or a sector is
+    // wide, solid and drawn in one unbroken row, so at the rays' own brightness it stops being a
+    // backdrop and becomes the subject of the frame: the ring turns into a wall of white blocks
+    // with some thin lines left over.
+    brightK: family === 'bar' ? 0.5 : (family === 'fan' ? 0.42 : 1),
     kind: family,
     // How the family answers the sound. The rays glide: their length climbs slowly and falls
     // back slowly, and what motion they have at rest is their own breathing. The bars and the
@@ -1841,9 +1845,11 @@ function haloBuildStrands() {
     haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2, '', true),
     haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28, '', true),
     haloMakeStrandLayer(0.12, 1.0, 1.0, 1.0, 1.0, 0.5, 0.75, 12, 60, 0.32),
-    haloMakeStrandLayer(2.2, 1.0, 0.62, 6.0, 0.8, 1, 1.4, 2, 8, 0.3, 'bar'),
+    // The bars and the sector sit far back: the same gradient and the same mix of tinted and
+    // plain clusters, held under a fifth of the rays' light so the thin lines read over them.
+    haloMakeStrandLayer(2.2, 1.0, 0.34, 6.0, 0.8, 1, 1.4, 2, 8, 0.3, 'bar'),
     haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32),
-    haloMakeStrandLayer(3.6, 1.0, 0.75, 1.0, 0.7, 1, 1.6, 4, 8, 0.45, 'fan')
+    haloMakeStrandLayer(3.6, 1.0, 0.32, 1.0, 0.7, 1, 1.6, 4, 8, 0.45, 'fan')
   ];
   haloPulseList = [];
 }
