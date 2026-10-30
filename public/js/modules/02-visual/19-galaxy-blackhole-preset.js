@@ -122,6 +122,51 @@ function bhFallDistance(d0, progress, curve) {
   return (Number(d0) || 0) * Math.pow(Math.max(0, 1 - u), k);
 }
 
+// The lens' radial measure for one pixel: the perpendicular distance from the hole to the eye ray
+// that passes through that pixel - the impact parameter - expressed as a Kerr-Schild radius, so
+// the spin flattens the silhouette along the spin axis instead of leaving a circle.
+//
+// This is not the KS radius of the point on the screen plane. That one is always at least the
+// plane's own distance from the hole (6.4 in the default units), which is larger than the horizon
+// radius (1.16), so no pixel could ever be inside the shadow and the bend came out as a faint
+// smear. Found with the live silhouette instrument, not in the unit test: the algebra was right
+// and the geometry handed to it was wrong.
+function bhImpactRadius(qx, qy, planeZ, spinA) {
+  var denom = Math.sqrt(qx * qx + qy * qy + planeZ * planeZ);
+  var along = planeZ / Math.max(1e-4, denom);
+  return bhKerrSchildRadius(qx * along, qy * along, 0, spinA);
+}
+
+// Predicted shadow silhouette. Directions are unit vectors in the shader's own q space (x in
+// half-widths, y in half-heights), so an isotropic kernel stays isotropic here and an oblate one
+// shows up as equatorial > polar. s is the boundary in the kernel's normalized units; du/dv are
+// the same boundary in viewport uv, which is what a pixel measurement can be compared against.
+function bhSilhouette(stepAngles) {
+  var radii = bhHorizonRadii(bhParam('spin'), bhParam('charge'));
+  var uScale = bhClamp(bhParam('mass'), 0.005, 0.9) / BH_MASS_UNIT;
+  var planeZ = bhPlaneZ((typeof camera !== 'undefined' && camera) ? camera.fov : 58) / uScale;
+  var aspect = (typeof camera !== 'undefined' && camera && camera.aspect) ? camera.aspect : 1.78;
+  var cap = radii.rp * bhClamp(bhParam('shadowScale'), 1, 2);
+  var rays = [];
+  var count = Math.max(1, Math.round(Number(stepAngles) || 8));
+  for (var i = 0; i < count; i++) {
+    var ang = i * Math.PI * 2 / count;
+    var cx = Math.cos(ang), cy = Math.sin(ang);
+    var lo = 0, hi = planeZ * 0.999;
+    if (bhImpactRadius(cx * hi, cy * hi, planeZ, radii.a) < cap) {
+      rays.push({ s: hi, du: hi * uScale * cx / aspect, dv: hi * uScale * cy, angle: ang });
+      continue;
+    }
+    for (var it = 0; it < 48; it++) {
+      var mid = (lo + hi) * 0.5;
+      if (bhImpactRadius(cx * mid, cy * mid, planeZ, radii.a) < cap) lo = mid; else hi = mid;
+    }
+    var s = (lo + hi) * 0.5;
+    rays.push({ s: s, du: s * uScale * cx / aspect, dv: s * uScale * cy, angle: ang });
+  }
+  return { cap: cap, radii: radii, planeZ: planeZ, aspect: aspect, uScale: uScale, rays: rays };
+}
+
 // ---------------------------------------------------------------- the hole on screen
 //
 // The hole is a world point (so the lyric rows can fly to it) and its projection (so the lens
@@ -294,16 +339,22 @@ void main() {
   float cap = rp * uShadowScale;
 
   float pz = uPlaneZ / max(uScale, 1e-4);
-  float rPlane = ksRadius(nq.x, nq.y, pz, a);
+  // The impact parameter: the perpendicular distance from the hole to the eye ray through this
+  // pixel, as a Kerr-Schild radius so the silhouette is flattened along the spin axis. This is
+  // deliberately not ksRadius of the point on the screen plane - that measure never falls inside
+  // the horizon at any pixel, and the shadow would silently never be drawn.
+  float denom = sqrt(nq.x * nq.x + nq.y * nq.y + pz * pz);
+  vec3 impactPoint = vec3(nq.x, nq.y, 0.0) * (pz / max(denom, 1e-4));
+  float rPlane = ksRadius(impactPoint.x, impactPoint.y, 0.0, a);
 
-  // Bend ~ rp*r / impact parameter (the 1/b of weak lensing), floored at the shadow's rim so
-  // nothing samples from inside the horizon.
-  float impact = max(rPlane, cap * 0.92);
+  // Bend ~ rp*r / b (the 1/b of weak lensing), floored at the shadow's rim so nothing samples
+  // from inside the horizon.
+  float b = max(rPlane, cap * 0.92);
   vec2 dir = nq / max(length(nq), 1e-5);
-  vec2 src = nq + dir * (uDeflect * horizon * rp * rp / impact);
+  vec2 src = nq + dir * (uDeflect * horizon * rp * rp / b);
 
-  // Frame dragging: the azimuthal half of the Lense-Thuring term, ~ a*rp/r.
-  float drag = uSwirl * a * rp / impact * horizon;
+  // Frame dragging: the azimuthal half of the Lense-Thuring term, ~ a*rp/b.
+  float drag = uSwirl * a * rp / b * horizon;
   float cs = cos(drag), sn = sin(drag);
   src = vec2(src.x * cs - src.y * sn, src.x * sn + src.y * cs);
 
@@ -514,6 +565,26 @@ function blackHoleApplyCamera(dt) {
   return true;
 }
 
+// A shader that will not compile is the one failure of this preset that cannot be caught offline,
+// and three does not throw for it: it writes a console.error and skips or garbles the draw. The
+// first quad draw of the pass is therefore wrapped so the message is captured, reported in
+// blackHoleStatus().error, and the frame handed back to the plain renderer.
+function bhCaptureShaderErrors(action) {
+  var captured = [];
+  var original = console.error;
+  if (typeof original !== 'function') { action(); return captured; }
+  console.error = function () {
+    captured.push(String((arguments && arguments[0]) || '').slice(0, 300));
+    return original.apply(console, arguments);
+  };
+  try {
+    action();
+  } finally {
+    console.error = original;
+  }
+  return captured.filter(function (line) { return /Shader Error|WebGLProgram|WebGL: /.test(line); });
+}
+
 // Returns false when the caller must render the plain way: no pass yet, or the hole has ended up
 // behind the eye (the user can drag the camera past it), where the projection is undefined.
 function renderBlackHoleFrame() {
@@ -527,11 +598,19 @@ function renderBlackHoleFrame() {
   bhAlignPassSize();
   bhSyncLens(frame);
   var started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  var firstDraw = blackHoleState.draws === 0;
+  var shaderErrors = [];
   try {
     renderer.setRenderTarget(blackHoleState.rt);
     renderer.render(scene, camera);
     renderer.setRenderTarget(null);
-    renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
+    if (firstDraw) {
+      shaderErrors = bhCaptureShaderErrors(function () {
+        renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
+      });
+    } else {
+      renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
+    }
   } catch (error) {
     blackHoleState.error = String((error && error.message) || error);
     renderer.setRenderTarget(null);
@@ -540,9 +619,14 @@ function renderBlackHoleFrame() {
   }
   var ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   blackHoleState.lastCostMs = ended - started;
-  // The shader cannot be compiled anywhere but on a GPU, so the first frames are also the compile
-  // test: three logs a broken program and simply skips the draw, which would leave the screen
-  // showing the previous frame forever. Detect it once and hand the frame back to the plain path.
+  if (shaderErrors.length) {
+    blackHoleState.error = 'shader did not compile: ' + shaderErrors[0];
+    bhDisposePass();
+    blackHoleState.fallbacks++;
+    return false;
+  }
+  // Older and newer three builds differ on whether the program object is reachable from the
+  // material; check it when it is there and rely on the console capture when it is not.
   var program = blackHoleState.material && blackHoleState.material.program;
   if (program && program.diagnostics && program.diagnostics.runnable === false) {
     blackHoleState.error = 'shader did not compile: ' + String(program.diagnostics.programLog || '').slice(0, 200);

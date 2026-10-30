@@ -169,6 +169,48 @@ function load(overrides) {
   console.log('plunge: d0=' + d0 + ' speed ' + speedEarly.toFixed(2) + ' -> ' + speedLate.toFixed(2) + ' at the end');
 }
 
+// -------------------------------------- the shadow has to be reachable on the screen it bends
+//
+// The first version of the lens took the Kerr-Schild radius of the point ON the screen plane.
+// That measure is never smaller than the plane's own distance to the hole (6.44 at the defaults),
+// so no pixel could fall inside the horizon (1.16): no shadow, almost no bend - and every kernel
+// test above still passed, because the algebra was right and the geometry handed to it was wrong.
+// These assertions are about the composed geometry, and they are what the live pixel instrument
+// later agreed with.
+{
+  const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
+  const sandbox = load({ camera: camera, fx: { preset: 15 } });
+  const shadow = sandbox.bhSilhouette(8);
+  const cap = shadow.cap;
+  const a = shadow.radii.a;
+
+  assert(shadow.rays.every(function (ray) { return ray.s > 0 && isFinite(ray.s); }),
+    'the shadow boundary must exist in every direction: ' + JSON.stringify(shadow.rays.map(function (r) { return r.s; })));
+  assert(shadow.rays.every(function (ray) { return ray.s < shadow.planeZ * 0.9; }),
+    'and well inside the frustum, not at infinity: planeZ=' + shadow.planeZ);
+  assert(shadow.rays.every(function (ray) { return Math.abs(ray.du) < 0.9 && Math.abs(ray.dv) < 0.9; }),
+    'and the uv boundary must be on the screen: ' + JSON.stringify(shadow.rays));
+
+  const equatorial = shadow.rays[0].s;   // along the spin axis' perpendicular
+  const polar = shadow.rays[2].s;        // along the spin axis
+  assert(equatorial > polar * 1.01, `a spinning hole must be wider across its axis than along it (${equatorial} vs ${polar})`);
+  const expectedRatio = Math.sqrt(cap * cap + a * a) / cap;
+  assert(Math.abs(equatorial / polar - expectedRatio) < expectedRatio * 0.04,
+    `the flattening must be the closed form sqrt(cap^2+a^2)/cap (${equatorial / polar} vs ${expectedRatio})`);
+
+  const flat = load({ camera: camera, fx: { preset: 15 } });
+  flat.blackHoleTuning = { spin: 0, charge: 0, mass: sandbox.bhParam('mass'), shadowScale: sandbox.bhParam('shadowScale') };
+  const round = flat.bhSilhouette(8);
+  const spread = Math.max.apply(null, round.rays.map(function (r) { return r.s; }))
+    - Math.min.apply(null, round.rays.map(function (r) { return r.s; }));
+  assert(spread < 1e-4, `spin 0 must give a perfect circle, spread ${spread}`);
+  console.log('silhouette: cap=' + cap.toFixed(3) + ' a=' + a.toFixed(3) + ' planeZ=' + shadow.planeZ.toFixed(2)
+    + ', s equatorial ' + equatorial.toFixed(3) + ' vs polar ' + polar.toFixed(3)
+    + ' (ratio ' + (equatorial / polar).toFixed(4) + ', closed form ' + expectedRatio.toFixed(4) + ')'
+    + ', uv radius across ' + shadow.rays[0].du.toFixed(3) + ' / along ' + shadow.rays[2].dv.toFixed(3)
+    + ', spin 0 spread ' + spread.toExponential(1));
+}
+
 // ------------------------------------------------------------------ the pass is a pass
 {
   const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
@@ -232,6 +274,34 @@ function load(overrides) {
   assert(compileFallback === false, 'a shader that cannot compile must fall back to the plain render');
   assert(sandbox.blackHoleState.rt === null, 'the failed pass must be disposed instead of retried forever');
   assert(/shader did not compile/.test(sandbox.blackHoleStatus().error), 'the failure must be readable: ' + sandbox.blackHoleStatus().error);
+
+  // The other way a shader can fail: three does not throw, it writes a console.error and moves
+  // on. A sandbox console catches that, so a program that will not link is still a fallback.
+  {
+    const record2 = { draws: [], rtSizes: [], disposed: [], setTarget: [] };
+    const noisy = [];
+    let emit = function () {};
+    const box = load({
+      THREE: makeThree(record2),
+      console: { log: function () {}, error: function (line) { noisy.push(String(line)); }, warn: function () {} },
+      camera: makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9),
+      scene: scene,
+      fx: { preset: 15 },
+      renderer: {
+        drawingSize: { x: 1600, y: 900 },
+        getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+        setRenderTarget() {},
+        // three reports a failed link through console.error rather than by throwing, so the fake
+        // renderer has to raise it the same way, inside the page context.
+        render(targetScene) { if (targetScene !== scene) emit(); }
+      }
+    });
+    emit = function () { box.console.error('THREE.WebGLProgram: Shader Error 0 - VALIDATE_STATUS false'); };
+    assert(box.renderBlackHoleFrame() === false, 'a console-reported shader error must fall back');
+    assert(/shader did not compile/.test(box.blackHoleStatus().error), 'and say so in the status: ' + box.blackHoleStatus().error);
+    assert(box.blackHoleState.rt === null, 'and release the pass it cannot use');
+    assert(box.blackHoleStatus().draws === 0, 'a frame that did not survive the shader is not a draw');
+  }
 
   // Not the selected preset: the pass must not even build.
   sandbox.fx.preset = 14;
@@ -389,13 +459,22 @@ function load(overrides) {
   assert(/float rp = 0\.5 \+ root/.test(shader) && /float a = 0\.5 \* uSpin/.test(shader) && /float q2 = 0\.25 \* uCharge/.test(shader),
     'the horizon algebra must keep the reference unit conventions');
   assert(/sqrt\(pow\(0\.5 \+ sqrt\(max\(0\.0, 0\.25 - q2\)\), 2\.0\) \+ a \* a\)/.test(shader), 'the outer static limit must be the reference formula');
-  assert(/uDeflect \* horizon \* rp \* rp \/ impact/.test(shader), 'the bend must be the ~1/b law in rp');
-  assert(/uSwirl \* a \* rp \/ impact/.test(shader), 'frame dragging must be the azimuthal a*rp/r term');
+  assert(/uDeflect \* horizon \* rp \* rp \/ b\)/.test(shader), 'the bend must be the ~1/b law in rp');
+  assert(/uSwirl \* a \* rp \/ b \* horizon/.test(shader), 'frame dragging must be the azimuthal a*rp/b term');
   assert(/color \*= 1\.0 - swallowed/.test(shader), 'the horizon must swallow what falls in');
   assert(/ringColor \/ \(1\.0 \+ ringColor\)/.test(shader), "the reference's Reinhardt rolloff must be used on the ring");
   // Text does reach the shader: it comes in through the sampled target, so a pass that read the
   // screen instead would silently stop bending the lyrics.
   assert(/texture2D\(uSrc, srcUv\)/.test(shader), 'the scene must be sampled (and bent) through the target');
+  // The measure the silhouette is written in must be the impact parameter, and it must be the
+  // same measure bhImpactRadius solves with - the two copies drifting apart is how the shadow
+  // disappeared in the first place, and no numeric test of the JS side can see it.
+  assert(/vec3 impactPoint = vec3\(nq\.x, nq\.y, 0\.0\) \* \(pz \/ max\(denom, 1e-4\)\);/.test(shader),
+    'the shader must build the impact point the way bhImpactRadius does');
+  assert(/float rPlane = ksRadius\(impactPoint\.x, impactPoint\.y, 0\.0, a\);/.test(shader),
+    'the silhouette must be a level set of the KS radius of the impact point');
+  assert(!/ksRadius\(nq\.x, nq\.y, pz, a\)/.test(shader),
+    'the KS radius of the point on the screen plane can never fall inside the horizon; it must not come back');
   console.log('shader: Kerr-Schild radius, rp/ergo algebra, 1/b bend, drag term, shadow and rolloff present');
 }
 
