@@ -403,13 +403,23 @@ function checkHaloCullArms(haloText, fail) {
     if (beamFn && !/haloNormAngle\(angle - haloReadAngle\(\)\)/.test(beamFn)) {
       fail('a cluster must read the bin its own angle points at');
     }
+    // The sweep is the whole circle. Half a circle left the back of the ring pinned at the two
+    // ends of the sweep, and that stretch read as one flat row of beams whatever the song did.
+    if (!/var HALO_BAND_SPREAD = Math\.PI \* 2;/.test(haloText)) {
+      fail('the spectrum sweep must run all the way around the ring, or part of it cannot answer');
+    }
+    // Face value, like the song page's spectrum. A gain on the read put every bin above 0.71 at
+    // the ceiling, so a loud passage was one flat wall of full-length beams.
+    if (beamFn && !/return haloClamp\(peak \/ 255, 0, 1\);/.test(beamFn)) {
+      fail('a bin must be read at face value; a gain on the read flattens the loud half of a song');
+    }
     if (updateFn && !/haloBeamSpectrum\(am\)/.test(updateFn)) {
       fail('every beam must read the spectrum at its own angle');
     }
     if (updateFn && !/s\.beamKick = Math\.max\(0, \(s\.beamKick \|\| 0\) \* Math\.exp\(-dt \* 2\.6\)\)/.test(updateFn)) {
       fail('the beat envelope on the beams must fall back by itself');
     }
-    if (updateFn && !/wedge\.base \* \(layer\.dynMin \+ layer\.dynK \* wedge\.av\)/.test(updateFn)) {
+    if (updateFn && !/baseEff \* \(layer\.dynMin \+ layer\.dynK \* wedge\.av\)/.test(updateFn)) {
       fail("the level must multiply the cluster's own length, not be added to an idle length");
     }
     if (updateFn && !/var cap = \(bounce \? 1 : 1\.05\) \+ layer\.beatK \* \(0\.5 \* \(s\.beamKick/.test(updateFn)) {
@@ -423,14 +433,38 @@ function checkHaloCullArms(haloText, fail) {
     if (updateFn && !/var bounce = layer\.dyn === 'bounce';/.test(updateFn)) {
       fail("the rays and the blocky families must keep their own speeds: one model for all reads as stiff");
     }
-    if (updateFn && !/var rise = bounce \? \(9 \+ 18 \* follow\) : \(4 \+ 13 \* follow\);/.test(updateFn)) {
+    if (updateFn && !/var rise = \(bounce \? \(9 \+ 18 \* follow\) : \(4 \+ 13 \* follow\)\) \* snap;/.test(updateFn)) {
       fail("the beams' own easing must mostly collapse as the follow knob goes up, and the two families must stay apart");
     }
-    if (updateFn && !/var fall = bounce \? \(2\.2 \+ 4 \* follow\) : \(1\.3 \+ 2\.4 \* follow\);/.test(updateFn)) {
+    if (updateFn && !/var fall = \(bounce \? \(2\.2 \+ 4 \* follow\) : \(1\.3 \+ 2\.4 \* follow\)\) \* snap;/.test(updateFn)) {
       fail('a bar must let go faster than a ray; that difference is the family');
     }
-    if (updateFn && !/haloBeamSpectrum\(am\) \* haloParam\('spectrumGain'\) \* wedge\.gain/.test(updateFn)) {
+    if (updateFn && !/haloBeamSpectrum\(am\) \* haloParam\('spectrumGain'\) \* gainEff/.test(updateFn)) {
       fail("every cluster must have its own gain on its bin, or neighbours on one band grow alike");
+    }
+    // At the top of the follow knob the ring is the spectrum and nothing else: the clusters'
+    // own randomness and the beat's travelling wave have to fade out, and the easing has to
+    // collapse, or the silhouette is each cluster's luck sliding in over a third of a second.
+    if (updateFn && !/var align = Math\.pow\(follow, 12\);/.test(updateFn)) {
+      fail('the follow knob must straighten the ring out at its top, and leave it alone below');
+    }
+    if (updateFn && !/var shapeK = 1 - align;/.test(updateFn)) {
+      fail('the straightening has to fade the per-cluster randomness out');
+    }
+    if (updateFn && !/var snap = 1 \+ 9 \* align;/.test(updateFn)) {
+      fail('the easing must collapse at full follow, or the spectrum lags its song');
+    }
+    if (updateFn && !/var baseEff = 1 \+ \(wedge\.base - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the cluster base length must be faded to one value, or the silhouette is not the spectrum');
+    }
+    if (updateFn && !/var lenEff = 1 \+ \(wedge\.lenS - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the cluster length scale must be faded to one value at full follow');
+    }
+    if (updateFn && !/var gainEff = 1 \+ \(wedge\.gain - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the per-cluster gain must be faded to one value at full follow');
+    }
+    if (updateFn && !/hit \* \(0\.7 \+ 0\.05 \* follow\) \* shapeK/.test(updateFn)) {
+      fail('the beat wave must leave the rays alone at full follow, or it smears the spectrum');
     }
     if (updateFn && !/var breath = \(1 - follow\) \* 0\.05/.test(updateFn)) {
       fail('the idle breathing must vanish at full follow');
@@ -455,7 +489,7 @@ function checkHaloCullArms(haloText, fail) {
     if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : 0,/.test(makeFn)) {
       fail('only the rays keep a resting length; a block must come all the way down in silence');
     }
-    if (updateFn && !/\+ hit \* 0\.75 \* wedge\.av/.test(updateFn)) {
+    if (updateFn && !/\+ hit \* 0\.75 \* wedge\.av \* shapeK/.test(updateFn)) {
       fail('a block\'s height must come from its bin alone: a beat wave in silence must not put it back up');
     }
     if (buildFn && !/, 'bar'\)/.test(buildFn)) {

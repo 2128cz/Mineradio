@@ -46,7 +46,11 @@ var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is pla
 // there, this is the part of the beat that survives. Below 1 the ring still answers a
 // quiet passage, it just does not answer a silent one.
 var HALO_GATE_KEEP = 0.55;
-var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
+// Radians of arc the 40 Hz-12 kHz sweep spans. The whole circle, so every point on the ring
+// stands on its own frequency and no stretch of it is a clamped plateau; half a circle left
+// the back of the ring pinned at 40 Hz and 12 kHz, and a visible arc that fell on either end
+// was one flat row of beams.
+var HALO_BAND_SPREAD = Math.PI * 2;
 var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
 var HALO_LYRIC_CONTEXT_SCALE = 0.72; // the rows around the sung one, relative to its size
@@ -1370,7 +1374,10 @@ function haloBeamSpectrum(angle) {
   var hi = Math.min(bins.length - 1, bin + 1);
   var peak = 0;
   for (var i = lo; i <= hi; i++) peak = Math.max(peak, bins[i] || 0);
-  return haloClamp((peak / 255) * 1.4, 0, 1);
+  // Read at face value, the way the app's own spectrum panel reads a bin. The old 1.4 was
+  // there to keep a quiet bin from leaving a beam empty, but it put every bin above 0.71 at
+  // the ceiling, so the loud half of a song was one flat wall of full-length beams.
+  return haloClamp(peak / 255, 0, 1);
 }
 
 // How far the beams take their length from the sound instead of from their own animation.
@@ -1933,6 +1940,15 @@ function haloWedgeVisible(wedge, layer) {
 function haloUpdateStrands(dt, env) {
   var s = haloState;
   var follow = haloBeamFollow();
+  // Straightening. The follow knob is also "how much of the ring is the spectrum": at the top
+  // of its travel every cluster drops the randomness that makes it its own beam - its base
+  // length, its length scale, its gain on the bin - the beat's travelling wave is left out and
+  // the easing collapses. What is left on the ring is the bin under each cluster and nothing
+  // else, which is what a spectrum looks like. Below the top the ring keeps its own character,
+  // because the twelfth power keeps this at almost nothing through the usable range.
+  var align = Math.pow(follow, 12);
+  var shapeK = 1 - align;
+  var snap = 1 + 9 * align;
   // The beat's own envelope for the beams: every beat multiplies every beam's length, then
   // it falls back over a second or so without anything else driving it.
   s.beamKick = Math.max(0, (s.beamKick || 0) * Math.exp(-dt * 2.6));
@@ -1950,10 +1966,14 @@ function haloUpdateStrands(dt, env) {
     // rays answer quickly - but a bar still answers several times faster than a ray, and the
     // level it answers to is smoothed less.
     var bounce = layer.dyn === 'bounce';
-    var rise = bounce ? (9 + 18 * follow) : (4 + 13 * follow);
-    var fall = bounce ? (2.2 + 4 * follow) : (1.3 + 2.4 * follow);
-    var avRise = bounce ? (16 + 10 * follow) : (8 + 12 * follow);
-    var avFall = bounce ? (5 + 5 * follow) : (2.2 + 4.5 * follow);
+    // `snap` is the straightening's other half: at the top of the follow knob the easing is ten
+    // times faster, so a bin that changes is on screen by the next frame instead of sliding in
+    // over a third of a second - a spectrum that lags its song is the "smooth" the knob was
+    // supposed to fix.
+    var rise = (bounce ? (9 + 18 * follow) : (4 + 13 * follow)) * snap;
+    var fall = (bounce ? (2.2 + 4 * follow) : (1.3 + 2.4 * follow)) * snap;
+    var avRise = (bounce ? (16 + 10 * follow) : (8 + 12 * follow)) * snap;
+    var avFall = (bounce ? (5 + 5 * follow) : (2.2 + 4.5 * follow)) * snap;
     for (var w = 0; w < layer.wedges.length; w++) {
       var wedge = layer.wedges[w];
       var rot = s.decoRot * layer.rotK + layer.off;
@@ -1962,8 +1982,10 @@ function haloUpdateStrands(dt, env) {
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
       // The spectrum drives the outer beams: a wedge reads the band its own angle sits
       // on, and that band pushes the beam further out and brightens it. The cluster's own
-      // gain is part of the level, so two clusters on the same band do not grow alike.
-      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain') * wedge.gain, 0, 1);
+      // gain is part of the level, so two clusters on the same band do not grow alike - until
+      // the knob is at the top, where every cluster has to read its bin at face value.
+      var gainEff = 1 + (wedge.gain - 1) * shapeK;
+      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain') * gainEff, 0, 1);
       wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? avRise : avFall) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
@@ -1981,6 +2003,11 @@ function haloUpdateStrands(dt, env) {
       // The ceiling rises with the beat too: a loud passage already pins most beams at their
       // full length, and a beat that could only multiply a clamped value would be invisible.
       var cap = (bounce ? 1 : 1.05) + layer.beatK * (0.5 * (s.beamKick || 0) + 0.2 * wedge.kick);
+      // The cluster's own base length and length scale are the last of the randomness to go:
+      // they differ by nearly three to one across a layer, so while they are in, the ring's
+      // silhouette is each cluster's luck rather than the spectrum under it.
+      var baseEff = 1 + (wedge.base - 1) * shapeK;
+      var lenEff = 1 + (wedge.lenS - 1) * shapeK;
       if (bounce) {
         // A block: it takes its length from its bin and drops straight back. No breathing and
         // no slow tail - that is the rays' character, and giving it to the bars is what made
@@ -1988,7 +2015,7 @@ function haloUpdateStrands(dt, env) {
         // Nothing gets in without the bin: nothing here has a floor, and even the beat wave is
         // scaled by the level, so a wave that reaches a cluster standing in silence must not put
         // the blocks back up - that is the wall that used to stand there between songs.
-        var targetB = Math.min(cap, wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * 0.75 * wedge.av);
+        var targetB = Math.min(cap, baseEff * (layer.dynMin + layer.dynK * wedge.av) * beat * lenEff + hit * 0.75 * wedge.av * shapeK);
         wedge.kick *= Math.exp(-dt * (2.4 + 0.4 * follow));
         wedge.len += (targetB - wedge.len) * Math.min(1, (targetB > wedge.len ? rise : fall) * dt);
         continue;
@@ -1997,7 +2024,7 @@ function haloUpdateStrands(dt, env) {
       // following the sound, so at full follow a ray has no motion but the music's.
       var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
       var breath = (1 - follow) * 0.05 * (0.6 + 0.4 * n1);
-      var target = Math.min(cap, breath + wedge.base * (layer.dynMin + layer.dynK * wedge.av) * beat * wedge.lenS + hit * (0.7 + 0.05 * follow));
+      var target = Math.min(cap, breath + baseEff * (layer.dynMin + layer.dynK * wedge.av) * beat * lenEff + hit * (0.7 + 0.05 * follow) * shapeK);
       wedge.kick *= Math.exp(-dt * 1.8);
       wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? rise : fall) * dt);
     }

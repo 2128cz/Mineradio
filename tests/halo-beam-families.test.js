@@ -267,7 +267,7 @@ function louden(seconds) {
       assert(loud && best > 0.5,
         `the fixture needs two ${kind} clusters half a radian apart on the ring ` +
         `(best ${best.toFixed(2)} of ${on.length} in the sweep)`);
-      const hz = 40 * Math.pow(300, midAngle(layer, loud) / Math.PI + 0.5);
+      const hz = 40 * Math.pow(300, midAngle(layer, loud) / sandbox.HALO_BAND_SPREAD + 0.5);
       const bins = spectrum(0);
       const bin = Math.round(hz / NYQUIST * BINS);
       for (let i = -2; i <= 2; i++) bins[bin + i] = 255;
