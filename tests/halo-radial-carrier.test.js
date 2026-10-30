@@ -71,12 +71,16 @@ const drawContext = makeRecordingContext();
 const canvas = { width: 1920, height: 1080, style: {}, getContext: () => drawContext };
 
 // Each line starts with a glyph of its own, so the test can tell which disc a painted
-// glyph belongs to while two of them are on the wheel at once.
+// glyph belongs to while two of them are on the wheel at once. The translation is carried on
+// the line, which is where the app's attachLyricTranslations (a time match) puts it.
 const mark = (i) => String.fromCharCode(0x4e00 + i);
 const lines = [];
-for (let i = 0; i < 12; i++) lines.push({ t: i * 4, text: mark(i) + '月色落进窗台的那一夜' });
 const translations = [];
-for (let i = 0; i < 12; i++) translations.push({ text: 'the moon on the sill that night ' + i });
+for (let i = 0; i < 12; i++) {
+  const text = 'the moon on the sill that night ' + i;
+  translations.push({ text });
+  lines.push({ t: i * 4, text: mark(i) + '月色落进窗台的那一夜', translation: text });
+}
 
 const sandbox = {
   console, Math, JSON, Date, Array, Object, String, Number, Boolean, Error, isFinite, isNaN,

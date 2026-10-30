@@ -42,7 +42,7 @@ const HALO_PARTS = [
   { name: 'comets', fn: 'haloDrawComets', kills: 'the comet bundles that sweep in on a beat' },
   { name: 'emits', fn: 'haloDrawEmits', kills: 'the shots fired by a click' },
   { name: 'flyers', fn: 'haloDrawFlyers', kills: 'the fly-out streaks' },
-  { name: 'strands', fn: 'haloDrawStrands', kills: 'the five strand layers (the spectrum beams)' },
+  { name: 'strands', fn: 'haloDrawStrands', kills: 'the strand layers: rays, bars and the sector' },
   { name: 'web', fn: 'haloDrawWeb', kills: 'the baked inner web' },
   { name: 'ring', fn: 'haloDrawRing', kills: 'the ring band and its ticks' },
   { name: 'lyric', fn: 'haloDrawLyricText', kills: 'the lyric text' },

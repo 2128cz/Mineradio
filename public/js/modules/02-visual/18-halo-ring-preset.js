@@ -33,12 +33,29 @@ var HALO_PRESET_INDEX = 14;        // shipped index: never renumber, archives po
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
-var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
-var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
-var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
+// The beams still have to land on the beat, so the flight time is also how early they are
+// sent. They used to cross in 80-250 ms - about five frames - and a passage with two beats a
+// second put several of those streaks on the ring at once, which read as a flicker rather
+// than as light running in. A slower flight is a longer flight, so the look-ahead has to
+// cover it.
+var HALO_TRAVEL_FAST = 0.55;       // beam flight time (lands on the beat)
+var HALO_TRAVEL_SLOW = 0.9;        // converging bundle flight time
+var HALO_BEAT_LOOKAHEAD = 1.2;     // how far ahead the beat map is read
+// How often the ring may pop at all. A pop takes about a quarter of a second to grow and start
+// dying, so two closer than that are one buzz the eye cannot read as two beats - and a map is
+// allowed to lay a grid that fine under a fast song.
+var HALO_BEAT_MIN_GAP = 0.24;
 var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
 var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is playing
-var HALO_BAND_SPREAD = Math.PI;      // radians of arc the eight spectrum bands span
+// The level is a loudness, and a beat only needs a yes or a no from it: once the sound is
+// there, this is the part of the beat that survives. Below 1 the ring still answers a
+// quiet passage, it just does not answer a silent one.
+var HALO_GATE_KEEP = 0.55;
+// Radians of arc the 40 Hz-12 kHz sweep spans. The whole circle, so every point on the ring
+// stands on its own frequency and no stretch of it is a clamped plateau; half a circle left
+// the back of the ring pinned at 40 Hz and 12 kHz, and a visible arc that fell on either end
+// was one flat row of beams.
+var HALO_BAND_SPREAD = Math.PI * 2;
 var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
 var HALO_LYRIC_CONTEXT_SCALE = 0.72; // the rows around the sung one, relative to its size
@@ -61,6 +78,7 @@ var HALO_TUNING_SCHEMA = {
   hazeAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   streakAmount: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   spectrumGain: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  beamFollow: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
   shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
   levelGain: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
@@ -147,6 +165,8 @@ var haloState = {
   levelGate: 0,      // how much of the beat the sound allows, 0 in silence
   shakeX: 0,
   shakeY: 0,
+  shakeDirX: 1,      // which way the last beat threw the picture, both ends away from zero
+  shakeDirY: 0.5,
   beamKick: 0,       // the beat's envelope on the outer beams, 0..1.2, falling on its own
   basePanX: 0,       // the framing knobs' own pan, in world units
   basePanY: 0
@@ -189,7 +209,8 @@ var haloLyric = {
   radial: { item: -1, prev: -1, phase: 1, startAt: 0, dur: 0.55 },
   builtFontPx: 0,     // the font the measured widths belong to
   builtStep: 0,       // the row pitch the angles were laid out with; it follows the ring's size
-  songKey: ''
+  listKey: '',        // the lines only; the 自动 tier resets on this
+  songKey: ''         // the lines and their translations; the rows are rebuilt on this
 };
 
 var haloBeat = {
@@ -533,17 +554,20 @@ function haloResize() {
 function haloPanTotalX() { return haloState.basePanX + haloCam.panX; }
 function haloPanTotalY() { return haloState.basePanY + haloCam.panY; }
 
-// The linear factor of the transform: the user's zoom, the beat's scale pop and the
-// layer's own depth (a layer drawn further back is a touch smaller).
+// The linear factor of the transform: the user's zoom and the layer's own depth (a layer
+// drawn further back is a touch smaller). The beat is not in here - it pops the ring
+// against the rest of the picture, and the eye reads the difference between the two.
 function haloSceneZoom(depth) {
   var s = haloState;
   var back = depth == null ? 1 : (1 - (1 - depth) * 0.12);
-  return haloCam.zoom * s.pulse * back;
+  return haloCam.zoom * back;
 }
 
-function haloApplyCameraTransform(ctx, scale, depth) {
+// `pop` is how much larger the thing being drawn is than the rest of the picture. Only the
+// ring pass has one; the mesh, haze and beams are drawn at the camera's own scale.
+function haloApplyCameraTransform(ctx, scale, depth, pop) {
   var s = haloState;
-  var z = haloSceneZoom(depth);
+  var z = haloSceneZoom(depth) * (pop || 1);
   var ex = -z * s.cx - haloCam.zoom * haloPanTotalX() + s.w / 2 + s.shakeX;
   var ey = -z * s.cy - haloCam.zoom * haloPanTotalY() + s.h / 2 + s.shakeY;
   ctx.setTransform(scale * z, 0, 0, scale * z, scale * ex, scale * ey);
@@ -688,17 +712,32 @@ function haloAccentGridWithHits(list, hits) {
   return list;
 }
 
+// Two pops closer than the eye can separate are one buzz. Where the list has them, the harder
+// beat is the one that stays: the listener hears the accent, and the weaker one was only ever
+// filling the space between. The times themselves are never moved.
+function haloThrottleBeats(list) {
+  if (!list || list.length < 2) return list;
+  var out = [list[0]];
+  for (var i = 1; i < list.length; i++) {
+    var prev = out[out.length - 1];
+    if (list[i].t - prev.t >= HALO_BEAT_MIN_GAP) { out.push(list[i]); continue; }
+    if (list[i].w > prev.w) out[out.length - 1] = list[i];
+  }
+  return out;
+}
+
 function haloBeatMapEvents() {
   if (typeof currentBeatMap === 'undefined' || !currentBeatMap) return null;
-  // The pulse rides the song's tempo grid: the detected hits change from song to song and
-  // from passage to passage, so following them moved the ring around; the grid is steady and
-  // the level gate is what makes it sit under the music. The hits are still used, but only
-  // to say whether a grid beat has a drum under it - a beat without one pops lighter.
-  var list = haloBeatList(currentBeatMap.cameraBeats || currentBeatMap.pulseBeats, false);
-  if (list) return haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true));
-  return haloBeatList(currentBeatMap.pulseBeats, false) ||
-    haloBeatList(currentBeatMap.hits, true) ||
-    haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false);
+  // The pulse rides the song's beat points: the list the analysis thinned for the visuals.
+  // cameraBeats is the whole grid it laid over the song - every slot of the bar, including
+  // the ones it wrote off as not a drum - and popping on all of them is a refresh the eye
+  // reads as a buzz. The hits still only say whether a beat point has a drum under it (one
+  // without a drum pops lighter); they never move the timing, which stays the grid's.
+  var list = haloBeatList(currentBeatMap.pulseBeats, false) ||
+    haloBeatList(currentBeatMap.cameraBeats, false);
+  if (list) return haloThrottleBeats(haloAccentGridWithHits(list, haloBeatList(currentBeatMap.hits, true)));
+  return haloThrottleBeats(haloBeatList(currentBeatMap.hits, true) ||
+    haloBeatList(currentBeatMap.beats || currentBeatMap.kicks, false));
 }
 
 function haloRefreshBeatSource() {
@@ -729,7 +768,7 @@ function haloScheduleBeats(t) {
     }
     return;
   }
-  if (haloAudio.kickOnset > 0 && t - haloBeat.lastOnsetAt > 0.12) {
+  if (haloAudio.kickOnset > 0 && t - haloBeat.lastOnsetAt >= HALO_BEAT_MIN_GAP) {
     haloBeat.lastOnsetAt = t;
     haloEnqueueBeat(t + 0.02, haloClamp(0.35 + 0.55 * haloAudio.kickOnset, 0, 1), true);
   }
@@ -740,7 +779,7 @@ function haloEnqueueBeat(hitAt, weight, late) {
     hitAt: hitAt,
     weight: weight,
     late: !!late,
-    travel: late ? HALO_TRAVEL_FAST : (weight > 0.62 ? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST),
+    travel: weight > 0.62 ? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST,
     prepared: false,
     launched: false,
     hit: false,
@@ -783,11 +822,21 @@ function haloBeatPrepare(e) {
 }
 
 function haloBeatLaunch(e) {
-  var s = haloState;
-  var count = e.weight > 0.62 ? 3 : 2;
-  for (var i = 0; i < count; i++) {
+  // A live onset is heard after it happened, so there is no time to send a light that lands
+  // on the beat; a rushed streak is exactly the flicker that could not be read. That beat is
+  // carried by the pop and the panel flashing under it.
+  if (e.late) return;
+  // A slow flight lasts about as long as two beats, so a dense passage would queue up more
+  // streaks than anyone can follow. Two bundles in flight is the most the ring shows at once;
+  // the beat itself is still carried by the ring's pop and the panel that updates under it.
+  var flying = 0;
+  for (var i = 0; i < haloCometList.length; i++) if (!haloCometList[i].hit) flying++;
+  // One beam per beat, two on a hard one - and a beat that cannot fit is skipped, not sent
+  // late to race across the ring.
+  var count = Math.max(0, Math.min(e.weight > 0.62 ? 2 : 1, 2 - flying));
+  for (var k = 0; k < count; k++) {
     var ang = haloRand(0, HALO_TAU);
-    haloSpawnComet(ang, e.travel, e.weight);
+    haloSpawnComet(ang, e.travel, e.weight, e.hitAt);
   }
 }
 
@@ -799,13 +848,28 @@ function haloBeatHit(e) {
       slot.c = slot.next;
       slot.next = null;
     }
-    slot.flash = 0.85;
+    // The panel that just took the new bitmap holds its glow long enough to be read: with the
+    // beams now crossing the ring slowly, this flash - not the streak - is what says "this
+    // block updated on that beat".
+    slot.flash = 1;
   }
   // The beat's whole job now: the ring pops out and shakes where it stands. The camera
   // stays where the user left it. A hard hit pops harder than a light one - the map's own
-  // strength, not a constant for every grid point.
-  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.45 + 0.55 * haloClamp(e.weight, 0, 1));
-  haloStrandBeat(e.weight);
+  // strength, not a constant for every grid point. The floor has to be low: the weights the
+  // accent chain hands over run from about 0.08 to 0.85, and a floor of 0.45 squeezed that
+  // whole range into a 1.5x difference, which is not a beat you can see getting stronger.
+  // The size is the beat's own weight and nothing else. The live kick envelope used to be
+  // allowed to outrank it, but that envelope is a curve that stays well above zero the whole
+  // time a song is loud, so every pop ended up at the loudest size the knob allows and the
+  // ring read as a picture painted from the volume instead of a beat the song chose. Whether
+  // there is music at all is the level gate's job, in haloRenderFrame, not the hit's.
+  var weight = haloClamp(e.weight, 0, 1);
+  haloState.ringPulse = Math.max(haloState.ringPulse || 0, 0.15 + 0.85 * weight);
+  // Which way this beat throws the picture. Both ends are kept away from zero so a beat
+  // always has a throw to read, and the two axes are not tied to the same sign.
+  haloState.shakeDirX = haloRand(0.55, 1) * (Math.random() < 0.5 ? -1 : 1);
+  haloState.shakeDirY = haloRand(0.35, 0.85) * (Math.random() < 0.5 ? -1 : 1);
+  haloStrandBeat(weight);
 }
 
 // ---------------------------------------------------------------- lyric dial
@@ -816,18 +880,51 @@ function haloCurrentSong() {
   return null;
 }
 
-function haloLyricSignature() {
-  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
-  var song = haloCurrentSong();
-  var key = '';
-  if (typeof lyricTimingSongKey === 'function') key = lyricTimingSongKey(song);
+function haloLyricHash(text) {
   var h = 2166136261;
-  var text = key + '|' + lines.length + '|' + (lines.length ? lines[0].text : '');
   for (var i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 1676997213) >>> 0;
   }
-  return (h >>> 0).toString(36) + ':' + lines.length;
+  return (h >>> 0).toString(36);
+}
+
+// The lines themselves. The 自动 draw tier is decided from this, so a translation that
+// arrives a moment after the lines must not look like a new song to it.
+function haloLyricListKey() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var song = haloCurrentSong();
+  var key = '';
+  if (typeof lyricTimingSongKey === 'function') key = lyricTimingSongKey(song);
+  return haloLyricHash(key + '|' + lines.length + '|' + (lines.length ? lines[0].text : '')) + ':' + lines.length;
+}
+
+// The dial is synced on this key, which includes the translations: they are matched to the
+// lines by the app's own lyric pipeline and can arrive after the lines (the NetEase fallback
+// does). A translation-only change is written into the existing rows (haloSyncLyrics); only a
+// new song or a new size rebuilds the dial. A row drawn before its translation landed would
+// otherwise keep that hole for the whole song.
+function haloLyricSignature() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var count = 0;
+  var text = '';
+  for (var i = 0; i < lines.length; i++) {
+    var translated = haloLyricTranslationOf(lines[i]);
+    if (!translated) continue;
+    count++;
+    text += translated + '|';
+  }
+  return haloLyricListKey() + '|' + count + '|' + haloLyricHash(text);
+}
+
+// A line's translation is the one the app attached to it (attachLyricTranslations, by time).
+// Pairing lyricsTranslationLines[i] with lyricsLines[i] is not the same thing: a song whose
+// translation list is shorter than the original has holes in it, and every translation after
+// the first hole shifts onto the wrong line.
+function haloLyricTranslationOf(line) {
+  if (!line) return '';
+  if (typeof normalizeLyricTranslationText === 'function') return normalizeLyricTranslationText(line.translation);
+  return String(line.translation || '').trim();
 }
 
 // The text size follows the app's own lyric size knob, so the two never disagree.
@@ -846,9 +943,8 @@ function haloReadAngle() { return haloParam('readAngle') * Math.PI / 180; }
 function haloBuildLyricRing() {
   // A different list of lines is new evidence for 自动, the same way a new plan is for the PV
   // layer: the decision belongs to one song's content and does not carry into the next.
-  var prevKey = haloLyric.songKey;
+  var prevKey = haloLyric.listKey;
   var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
-  var translations = (typeof lyricsTranslationLines !== 'undefined' && Array.isArray(lyricsTranslationLines)) ? lyricsTranslationLines : [];
   var offset = 0;
   if (typeof getActiveLyricTimingOffsetSeconds === 'function') offset = getActiveLyricTimingOffsetSeconds();
   haloLyric.items = [];
@@ -879,9 +975,9 @@ function haloBuildLyricRing() {
       widthFontPx: 0,
       angle: acc,
       startAt: Math.max(0, (Number(line.t) || 0) + offset),
-      sub: ''
+      lineIndex: i,
+      sub: haloLyricTranslationOf(line)
     };
-    if (translations[i] && translations[i].text) item.sub = String(translations[i].text).trim();
     haloLyric.items.push(item);
     acc += step;
   }
@@ -890,9 +986,30 @@ function haloBuildLyricRing() {
   // laid out again - otherwise the rows keep the old pitch and the sung row stops standing
   // out by the same amount.
   haloLyric.builtStep = haloLyricStep();
+  haloLyric.listKey = haloLyricListKey();
   haloLyric.songKey = haloLyricSignature();
-  if (prevKey !== haloLyric.songKey) haloAutoReset('a new lyric list');
+  if (prevKey !== haloLyric.listKey) haloAutoReset('a new lyric list');
   return haloLyric.items.length;
+}
+
+// Rows are laid out by the lines alone; a translation that lands late only changes what each
+// row reads. It is refreshed in place, not rebuilt: a rebuild would put the dial back on the
+// read mark and snap the turn in the middle of the song.
+function haloSyncLyrics() {
+  var font = haloLyricFontPx();
+  var step = haloLyricStep();
+  var sig = haloLyricSignature();
+  if (sig === haloLyric.songKey && font === haloLyric.builtFontPx && step === haloLyric.builtStep) return;
+  if (haloLyricListKey() === haloLyric.listKey && font === haloLyric.builtFontPx &&
+      step === haloLyric.builtStep && haloLyric.items.length) {
+    var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+    for (var i = 0; i < haloLyric.items.length; i++) {
+      haloLyric.items[i].sub = haloLyricTranslationOf(lines[haloLyric.items[i].lineIndex]);
+    }
+    haloLyric.songKey = sig;
+    return;
+  }
+  haloBuildLyricRing();
 }
 
 // The row height of the dial as the angle it takes on the ring: one line plus the gap.
@@ -1329,7 +1446,16 @@ function haloBeamSpectrum(angle) {
   var hi = Math.min(bins.length - 1, bin + 1);
   var peak = 0;
   for (var i = lo; i <= hi; i++) peak = Math.max(peak, bins[i] || 0);
-  return haloClamp((peak / 255) * 1.4, 0, 1);
+  // Read at face value, the way the app's own spectrum panel reads a bin. The old 1.4 was
+  // there to keep a quiet bin from leaving a beam empty, but it put every bin above 0.71 at
+  // the ceiling, so the loud half of a song was one flat wall of full-length beams.
+  return haloClamp(peak / 255, 0, 1);
+}
+
+// How far the beams take their length from the sound instead of from their own animation.
+// The element families below the drawing (the rays, the wide bars, the fans) all read this.
+function haloBeamFollow() {
+  return haloClamp(Number(haloParam('beamFollow')) || 0, 0, 1);
 }
 
 // ---------------------------------------------------------------- ring panels
@@ -1705,11 +1831,19 @@ function haloMakeProfile(n) {
   return prof;
 }
 
-// A layer of wedges. The original uses five layers with angular steps from 0.12 to 0.45
-// degrees and 4..90 strokes each, which is about 8000 strokes a frame; the density knob
-// scales the coverage so the same shape can be dialed back.
-function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, dyn) {
+// A layer of wedges: the blocks of strokes the outer ring is painted from. The original uses
+// five layers with angular steps from 0.12 to 0.45 degrees and 4..90 strokes each, which is
+// about 8000 strokes a frame; the density knob scales the coverage so the same shape can be
+// dialed back.
+//
+// `kind` is what a wedge reads as. 'ray' is the bundle of thin lines with a dashed tail and a
+// domed profile. 'bar' is a row of solid bars, all the same length, separated by their own
+// angular step. 'fan' pushes the bars together until the row is one solid sector, so its
+// stroke width comes from the step and the `lw` argument is not used.
+function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin, nMax, brightP, kind, back) {
   var step = stepDeg * Math.PI / 180;
+  var family = kind || 'ray';
+  var flat = family !== 'ray';
   var nb = Math.floor(HALO_TAU / step);
   var wedges = [];
   var count = Math.max(1, Math.round(nb * cover * haloParam('strandDensity') / ((nMin + nMax) / 2)));
@@ -1729,8 +1863,15 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
       f2: haloRand(0.8, 1.7),
       lum: bright ? haloRand(0.75, 1) : haloRand(0.16, 0.55),
       tint: Math.random() < 0.5 ? 1 : 0,
-      lwK: Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15),
+      // Widths run wide: one cluster in five is fat enough to be a block of its own. The
+      // sector is the exception - its strokes have to stay closed up or the sector breaks
+      // into a comb.
+      lwK: family === 'fan' ? haloRand(0.9, 1.12)
+        : (Math.random() < 0.2 ? haloRand(1.35, 2.1) : haloRand(0.6, 1.15)),
       lenS: haloRand(0.6, 1.25),
+      // How hard this cluster follows the bin it stands on. Two clusters reading the same
+      // level must not grow by the same amount, or the ring moves as one piece.
+      gain: haloRand(0.78, 1.24),
       prof: haloMakeProfile(n),
       pf: [],
       pp: [],
@@ -1746,18 +1887,61 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
     }
     wedges.push(wedge);
   }
-  return { step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK, solidK: solidK, wedges: wedges, off: Math.random() * HALO_TAU, dyn: dyn || 'soft' };
+  return {
+    step: step, rotK: rotK, lumK: lumK, lw: lw, lenK: lenK,
+    solidK: flat ? 1 : solidK,
+    // The rays are the picture and the blocks are what they are drawn on. A bar or a sector is
+    // wide, solid and drawn in one unbroken row, so at the rays' own brightness it stops being a
+    // backdrop and becomes the subject of the frame: the ring turns into a wall of white blocks
+    // with some thin lines left over.
+    brightK: family === 'bar' ? 0.32 : (family === 'fan' ? 0.26 : 1),
+    kind: family,
+    // How the family answers the sound. The rays glide: their length climbs slowly and falls
+    // back slowly, and what motion they have at rest is their own breathing. The bars and the
+    // sector snap: a cluster reaches its new length within a frame or two and drops back
+    // quickly, which is what makes them read as blocks driven by the beat rather than as
+    // faster rays. One formula for all six layers made the ring move as a single piece.
+    dyn: family === 'ray' ? 'soft' : 'bounce',
+    // How much of a beat this family takes. A beat that multiplied every layer by the same
+    // amount scaled the whole outer ring as one object; a ray leaps, a bar lifts, the sector
+    // barely moves. The beat is still one event - only the response belongs to the family.
+    beatK: family === 'ray' ? 1 : (family === 'bar' ? 0.6 : 0.42),
+    // How far the family travels between a bin it cannot hear and a full one. The rays keep a
+    // short rest length, which is what their breathing and their slow tail live on. The bars
+    // and the sector keep none: their height is the spectrum and nothing else, so a silent
+    // passage takes them all the way down to nothing instead of leaving a wall standing there.
+    dynMin: family === 'ray' ? 0.16 : 0,
+    dynK: family === 'ray' ? 1.32 : (family === 'bar' ? 1.14 : 1.0),
+    // Which of the two camera groups the layer is painted in: the far side of the ring first,
+    // then the near side. The blocky families sit on the far side so the rays read over them.
+    depth: family === 'ray' ? (back ? 0.95 : 1) : 0.95,
+    wedges: wedges, off: Math.random() * HALO_TAU
+  };
 }
 
 function haloBuildStrands() {
   haloStrandLayers = [
-    haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2),
-    haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28),
+    haloMakeStrandLayer(0.22, 0.45, 0.30, 0.55, 1.15, 0.9, 1.1, 20, 90, 0.2, '', true),
+    haloMakeStrandLayer(0.16, 0.75, 0.58, 0.8, 1.05, 0.7, 0.9, 14, 70, 0.28, '', true),
     haloMakeStrandLayer(0.12, 1.0, 1.0, 1.0, 1.0, 0.5, 0.75, 12, 60, 0.32),
-    haloMakeStrandLayer(0.45, 1.0, 0.5, 1.8, 0.8, 0.6, 0.35, 4, 16, 0.3),
-    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32, 'bounce')
+    // The bars and the sector sit far back: the same gradient and the same mix of tinted and
+    // plain clusters, held under a fifth of the rays' light so the thin lines read over them.
+    haloMakeStrandLayer(2.2, 1.0, 0.34, 6.0, 0.8, 1, 1.4, 2, 8, 0.3, 'bar'),
+    haloMakeStrandLayer(0.12, 1.0, 0.85, 1.0, 1.0, 0.5, 0.55, 14, 70, 0.32),
+    haloMakeStrandLayer(3.6, 1.0, 0.32, 1.0, 0.7, 1, 1.6, 4, 8, 0.45, 'fan')
   ];
   haloPulseList = [];
+}
+
+// The outer elements are drawn family by family, not in the order they were built: adding or
+// removing a layer must not quietly change what covers what.
+function haloDrawStrandGroup(ctx, depth, collect) {
+  for (var i = 0; i < haloStrandLayers.length; i++) {
+    var layer = haloStrandLayers[i];
+    if (layer.depth !== depth) continue;
+    // Only the rays have a tail to hand over; a bar and a sector are solid to their tip.
+    haloDrawStrands(ctx, layer, layer.kind === 'ray' ? collect : null);
+  }
 }
 
 // How far out the screen reaches along a given direction: the distance from the ring's
@@ -1775,9 +1959,9 @@ function haloBuildStrands() {
 // ray first crosses a viewport edge at `enter`. A test on the exit alone keeps the stretch
 // between the centre and that edge, which is drawn for nothing and, for a lyric line,
 // starts the text off screen.
-function haloVisibleSpan(angle) {
+function haloVisibleSpan(angle, pop) {
   var s = haloState;
-  var z = haloSceneZoom(1);
+  var z = haloSceneZoom(1) * (pop || 1);
   var ox = s.w / 2 - haloCam.zoom * haloPanTotalX() + s.shakeX;
   var oy = s.h / 2 - haloCam.zoom * haloPanTotalY() + s.shakeY;
   var ca = Math.cos(angle);
@@ -1804,9 +1988,11 @@ function haloVisibleSpan(angle) {
   return { enter: enter, exit: exit };
 }
 
-// Does the stretch [r0, r1] of the ray at `angle` reach the screen?
-function haloRayVisible(angle, r0, r1) {
-  var span = haloVisibleSpan(angle);
+// Does the stretch [r0, r1] of the ray at `angle` reach the screen? `pop` is the layer's
+// own scale against the camera, so the ring's beats do not make its outer decorations
+// blink out at the edge of the screen.
+function haloRayVisible(angle, r0, r1, pop) {
+  var span = haloVisibleSpan(angle, pop);
   return span.exit >= r0 && span.enter <= r1;
 }
 
@@ -1825,6 +2011,16 @@ function haloWedgeVisible(wedge, layer) {
 
 function haloUpdateStrands(dt, env) {
   var s = haloState;
+  var follow = haloBeamFollow();
+  // Straightening. The follow knob is also "how much of the ring is the spectrum": at the top
+  // of its travel every cluster drops the randomness that makes it its own beam - its base
+  // length, its length scale, its gain on the bin - the beat's travelling wave is left out and
+  // the easing collapses. What is left on the ring is the bin under each cluster and nothing
+  // else, which is what a spectrum looks like. Below the top the ring keeps its own character,
+  // because the twelfth power keeps this at almost nothing through the usable range.
+  var align = Math.pow(follow, 12);
+  var shapeK = 1 - align;
+  var snap = 1 + 9 * align;
   // The beat's own envelope for the beams: every beat multiplies every beam's length, then
   // it falls back over a second or so without anything else driving it.
   s.beamKick = Math.max(0, (s.beamKick || 0) * Math.exp(-dt * 2.6));
@@ -1836,6 +2032,20 @@ function haloUpdateStrands(dt, env) {
   }
   for (var i = 0; i < haloStrandLayers.length; i++) {
     var layer = haloStrandLayers[i];
+    // Two speeds of motion, not one. A bar reaches its new length in a frame or two and lets go
+    // fast; a ray climbs and sags. One formula for all six layers made the ring move as a single
+    // piece, which is what read as stiff. The follow knob scales both, so at full follow even the
+    // rays answer quickly - but a bar still answers several times faster than a ray, and the
+    // level it answers to is smoothed less.
+    var bounce = layer.dyn === 'bounce';
+    // `snap` is the straightening's other half: at the top of the follow knob the easing is ten
+    // times faster, so a bin that changes is on screen by the next frame instead of sliding in
+    // over a third of a second - a spectrum that lags its song is the "smooth" the knob was
+    // supposed to fix.
+    var rise = (bounce ? (9 + 18 * follow) : (4 + 13 * follow)) * snap;
+    var fall = (bounce ? (2.2 + 4 * follow) : (1.3 + 2.4 * follow)) * snap;
+    var avRise = (bounce ? (16 + 10 * follow) : (8 + 12 * follow)) * snap;
+    var avFall = (bounce ? (5 + 5 * follow) : (2.2 + 4.5 * follow)) * snap;
     for (var w = 0; w < layer.wedges.length; w++) {
       var wedge = layer.wedges[w];
       var rot = s.decoRot * layer.rotK + layer.off;
@@ -1843,9 +2053,12 @@ function haloUpdateStrands(dt, env) {
       wedge.vis = haloWedgeVisible(wedge, layer);
       wedge.flow += dt * wedge.dsp * (0.45 + 2.2 * env);
       // The spectrum drives the outer beams: a wedge reads the band its own angle sits
-      // on, and that band pushes the beam further out and brightens it.
-      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain'), 0, 1);
-      wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? 10 : 2.6) * dt);
+      // on, and that band pushes the beam further out and brightens it. The cluster's own
+      // gain is part of the level, so two clusters on the same band do not grow alike - until
+      // the knob is at the top, where every cluster has to read its bin at face value.
+      var gainEff = 1 + (wedge.gain - 1) * shapeK;
+      var av = haloClamp(haloBeamSpectrum(am) * haloParam('spectrumGain') * gainEff, 0, 1);
+      wedge.av += (av - wedge.av) * Math.min(1, (av > wedge.av ? avRise : avFall) * dt);
       if (!wedge.vis) {
         wedge.len *= 0.98;
         continue;
@@ -1858,21 +2071,34 @@ function haloUpdateStrands(dt, env) {
       }
       // The length is the level at this cluster's own bin times the cluster's own length, and
       // the beat multiplies it: a beat grows every beam and the envelope falls back by itself.
-      var beat = 1 + 0.85 * (s.beamKick || 0) + 0.5 * wedge.kick;
+      var beat = 1 + 0.85 * layer.beatK * (s.beamKick || 0) + 0.5 * layer.beatK * wedge.kick;
       // The ceiling rises with the beat too: a loud passage already pins most beams at their
       // full length, and a beat that could only multiply a clamped value would be invisible.
-      var cap = (layer.dyn === 'bounce' ? 1 : 1.05) + 0.5 * (s.beamKick || 0) + 0.2 * wedge.kick;
-      if (layer.dyn === 'bounce') {
-        var target = Math.min(cap, wedge.base * (0.16 + 1.35 * wedge.av) * beat + hit * 0.75);
-        wedge.kick *= Math.exp(-dt * 2.4);
-        wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? 15 : 2.2) * dt);
-      } else {
-        var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
-        var idle2 = 0.05 * (0.6 + 0.4 * n1);
-        var target2 = Math.min(cap, (idle2 + wedge.base * (0.16 + 1.30 * wedge.av) * beat * wedge.lenS) + hit * 0.7);
-        wedge.kick *= Math.exp(-dt * 1.8);
-        wedge.len += (target2 - wedge.len) * Math.min(1, (target2 > wedge.len ? 5 : 1.3) * dt);
+      var cap = (bounce ? 1 : 1.05) + layer.beatK * (0.5 * (s.beamKick || 0) + 0.2 * wedge.kick);
+      // The cluster's own base length and length scale are the last of the randomness to go:
+      // they differ by nearly three to one across a layer, so while they are in, the ring's
+      // silhouette is each cluster's luck rather than the spectrum under it.
+      var baseEff = 1 + (wedge.base - 1) * shapeK;
+      var lenEff = 1 + (wedge.lenS - 1) * shapeK;
+      if (bounce) {
+        // A block: it takes its length from its bin and drops straight back. No breathing and
+        // no slow tail - that is the rays' character, and giving it to the bars is what made
+        // the families look like one thing.
+        // Nothing gets in without the bin: nothing here has a floor, and even the beat wave is
+        // scaled by the level, so a wave that reaches a cluster standing in silence must not put
+        // the blocks back up - that is the wall that used to stand there between songs.
+        var targetB = Math.min(cap, baseEff * (layer.dynMin + layer.dynK * wedge.av) * beat * lenEff + hit * 0.75 * wedge.av * shapeK);
+        wedge.kick *= Math.exp(-dt * (2.4 + 0.4 * follow));
+        wedge.len += (targetB - wedge.len) * Math.min(1, (targetB > wedge.len ? rise : fall) * dt);
+        continue;
       }
+      // The idle breathing is what is left of the ray's own animation once it stopped
+      // following the sound, so at full follow a ray has no motion but the music's.
+      var n1 = 0.5 + 0.5 * Math.sin(s.time * wedge.f1 + wedge.ph);
+      var breath = (1 - follow) * 0.05 * (0.6 + 0.4 * n1);
+      var target = Math.min(cap, breath + baseEff * (layer.dynMin + layer.dynK * wedge.av) * beat * lenEff + hit * (0.7 + 0.05 * follow) * shapeK);
+      wedge.kick *= Math.exp(-dt * 1.8);
+      wedge.len += (target - wedge.len) * Math.min(1, (target > wedge.len ? rise : fall) * dt);
     }
   }
 }
@@ -1882,7 +2108,7 @@ function haloStrandBeat(weight) {
   var s = haloState;
   // The beams stretch with the beat only as far as the music allows, the same rule the pop
   // and the shake follow.
-  var room = 0.2 + 0.8 * haloClamp(s.levelGate || 0, 0, 1);
+  var room = 0.2 + 0.8 * haloMotionGate();
   s.beamKick = Math.min(1.2, Math.max(s.beamKick || 0, (0.35 + (Number(weight) || 0) * 0.75) * room));
   var dir = Math.random() < 0.5 ? 1 : -1;
   var big = weight > 0.75;
@@ -1932,6 +2158,13 @@ function haloDrawStrands(ctx, layer, collect) {
   var r0 = s.RO + 3;
   var rot = s.decoRot * layer.rotK + layer.off;
   var edgeAlpha = [0.28, 0.62, 1];
+  // The lines inside a cluster shimmer a little out of phase; follow takes that away too, so
+  // a cluster's own lines do not argue with the bin they all read.
+  var wob = 0.08 * (1 - haloBeamFollow());
+  // The blocky families: every stroke in the cluster gets the same length and the same
+  // brightness, so the row reads as bars (or, with the step closed up, as one sector) rather
+  // than as a bundle of rays with a domed profile.
+  var flat = layer.kind !== 'ray';
   ctx.lineCap = 'butt';
   for (var i = 0; i < layer.wedges.length; i++) {
     var wedge = layer.wedges[i];
@@ -1939,23 +2172,24 @@ function haloDrawStrands(ctx, layer, collect) {
     var L = wedge.len * span * layer.lenK;
     if (L < 3) continue;
     var a0 = haloNormAngle(wedge.i0 * layer.step + rot);
-    var a1 = a0 + wedge.n * layer.step;
-    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * (layer.dyn === 'bounce' ? 1.3 : 1) * (1 + wedge.av * 0.8));
+    var alpha = Math.min(1, wedge.lum * layer.lumK * (0.3 + 0.7 * Math.min(1, wedge.len * 1.8)) * layer.brightK * (1 + wedge.av * 0.8));
     if (alpha < 0.005) continue;
-    var lwW = layer.lw * wedge.lwK;
+    var lwW = layer.kind === 'fan'
+      ? layer.step * (r0 + L * 0.5) * 0.95 * wedge.lwK
+      : layer.lw * wedge.lwK;
     var paths = [new Path2D(), new Path2D(), new Path2D()];
     for (var k = 0; k < wedge.n; k++) {
       var a = a0 + (k + 0.5) * layer.step;
       var ca = Math.cos(a);
       var sa = Math.sin(a);
       var edge = Math.sin(Math.PI * (k + 0.5) / wedge.n);
-      var b = edge < 0.38 ? 0 : (edge < 0.72 ? 1 : 2);
-      var pr = wedge.prof[k];
-      var l = L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (0.92 + 0.08 * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
+      var pr = flat ? 1 : wedge.prof[k];
+      var l = flat ? L : L * pr * (0.5 + 0.5 * Math.sqrt(edge)) * (1 - wob + wob * Math.sin(s.time * wedge.pf[k] + wedge.pp[k]));
+      var b = flat ? 2 : (edge < 0.38 ? 0 : (edge < 0.72 ? 1 : 2));
       var solid = l * (layer.solidK + 0.3 * pr * (1 - layer.solidK));
       paths[b].moveTo(s.cx + ca * r0, s.cy + sa * r0);
       paths[b].lineTo(s.cx + ca * (r0 + solid), s.cy + sa * (r0 + solid));
-      if (!collect) continue;
+      if (!collect || flat) continue;
       var tail = l - solid;
       var da = alpha * edgeAlpha[b];
       if (tail > 6) {
@@ -1968,13 +2202,24 @@ function haloDrawStrands(ctx, layer, collect) {
       }
       if ((k + ((s.time * 12) | 0)) % 4 === 0) collect.tip.push(ca, sa, l, da);
     }
-    ctx.strokeStyle = haloGradient['s' + wedge.tint] || haloGradient.s0;
+    // The blocks are grey haze, not white light: they take no tint at all, so the only colour
+    // on the ring is the rays' own. The rays keep the tinted gradients.
+    ctx.strokeStyle = flat ? 'rgba(206,210,220,1)' : (haloGradient['s' + wedge.tint] || haloGradient.s0);
     ctx.lineWidth = lwW;
     for (var b2 = 0; b2 < 3; b2++) {
       ctx.globalAlpha = alpha * edgeAlpha[b2];
       ctx.stroke(paths[b2]);
     }
-    if (wedge.lum > 0.85) {
+    if (flat) {
+      // One wide, faint stroke around the same row: the blocks sit in fog instead of being cut
+      // out of the black, which is what keeps them behind the rays even while they move. It is
+      // flagged so the stroke log can tell the fog from the block it wraps.
+      ctx.haloFog = true;
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.lineWidth = lwW * 2.2;
+      ctx.stroke(paths[2]);
+      ctx.haloFog = false;
+    } else if (wedge.lum > 0.85) {
       ctx.globalAlpha = Math.min(1, alpha * 0.06);
       ctx.lineWidth = lwW * 2.5;
       ctx.stroke(paths[2]);
@@ -2069,7 +2314,7 @@ function haloFlashSlotAt(angle) {
     var d = Math.abs(haloNormAngle(slot.a + haloState.decoRot - angle));
     if (d < bd) { bd = d; best = slot; }
   }
-  if (best && bd < 0.12) best.flash = Math.max(best.flash, 0.8);
+  if (best && bd < 0.12) best.flash = Math.max(best.flash, 1);
   return best;
 }
 
@@ -2455,7 +2700,7 @@ function haloDrawRing(ctx, dt) {
   ctx.fill('evenodd');
   for (var i = 0; i < haloSlotList.length; i++) {
     var slot = haloSlotList[i];
-    if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 2.2);
+    if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 1.25);
     if (!slot.c) continue;
     if (!haloSlotVisible(slot)) continue;
     var A = slot.a + s.decoRot;
@@ -2485,7 +2730,7 @@ function haloRingTicks(stepRad, r0, r1, fn) {
   var count = Math.ceil(HALO_TAU / stepRad);
   for (var n = 0; n < count; n++) {
     var a = n * stepRad + s.decoRot;
-    if (!haloRayVisible(a, r0, r1)) continue;
+    if (!haloRayVisible(a, r0, r1, s.pulse)) continue;
     fn(Math.cos(a), Math.sin(a), n, a);
   }
 }
@@ -2970,11 +3215,13 @@ function haloDrawLyricText(ctx) {
     if (!item) continue;
     var center = item.angle + s.ringRot;
     var current = i === haloLyric.current;
-    // The screen's own run along this ray. The ring's centre sits off screen, so a line
-    // that starts between the centre and the edge of the screen would be drawn with its
-    // first words already gone.
+    // The screen's own run along this ray, measured at the ring's rest scale: the layout
+    // and the edge fade belong to that, so a beat must not reflow the rows. The cull alone
+    // accounts for the pop, because a popped ring carries a row that the rest scale would
+    // have put past the edge.
     var span = haloVisibleSpan(center);
-    if (span.enter > textR || span.exit < textR) continue;
+    var drawnR = textR * (s.pulse || 1);
+    if (span.enter > drawnR || span.exit < drawnR) continue;
     var near = Math.abs(haloNormAngle(center - read));
     // How close this row is to being the one being sung, 0..1. It is continuous, so a row
     // grows into the read spot and shrinks out of it while the ring turns instead of
@@ -3163,19 +3410,19 @@ function haloDrawFrame(ctx, dt) {
 
   haloApplyCameraTransform(ctx, scale, 0.95);
   haloDrawHaze(ctx);
-  haloDrawStrands(ctx, haloStrandLayers[0], null);
-  haloDrawStrands(ctx, haloStrandLayers[1], null);
+  haloDrawStrandGroup(ctx, 0.95, null);
   haloDrawFlyers(ctx, false);
 
   haloApplyCameraTransform(ctx, scale, 1);
   var collect = { dash: [], tip: [] };
-  haloDrawStrands(ctx, haloStrandLayers[2], collect);
-  haloDrawStrands(ctx, haloStrandLayers[4], collect);
-  haloDrawStrands(ctx, haloStrandLayers[3], null);
+  haloDrawStrandGroup(ctx, 1, collect);
   haloDrawStrandTips(ctx, collect);
   haloDrawFlyers(ctx, true);
   haloDrawFlares(ctx);
 
+  // The ring is the layer that owns the beat: it grows and shrinks against a picture that
+  // does not, which is what makes the pop readable at all.
+  haloApplyCameraTransform(ctx, scale, 1, s.pulse);
   haloDrawRing(ctx, dt);
   haloDrawLyricText(ctx);
 }
@@ -3287,6 +3534,16 @@ function haloLevelGate() {
   return haloClamp((level - HALO_LEVEL_FLOOR) * gain, 0, 1);
 }
 
+// What the beat is actually multiplied by. haloLevelGate's own curve stays a measure of
+// the room: read straight, a track that sits at the usual eight-bin mean of 0.2 would take
+// half of every pop, and the ring's motion would follow the mix's loudness instead of the
+// drums. Silence is still exactly that.
+function haloMotionGate() {
+  var g = haloClamp(Number(haloState.levelGate) || 0, 0, 1);
+  if (g <= 0) return 0;
+  return HALO_GATE_KEEP + (1 - HALO_GATE_KEEP) * g;
+}
+
 function haloRenderFrame(canvas, now, dt) {
   var s = haloState;
   if (!s.ready) return false;
@@ -3302,17 +3559,19 @@ function haloRenderFrame(canvas, now, dt) {
   // is what says whether there is anything to react to.
   var gate = haloLevelGate();
   s.levelGate += (gate - (s.levelGate || 0)) * Math.min(1, dt * 10);
-  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * s.levelGate;
-  var shake = haloParam('shakePx') * s.ringPulse * s.levelGate;
-  s.shakeX = Math.sin(s.time * 47.3) * shake;
-  s.shakeY = Math.cos(s.time * 39.1) * shake * 0.6;
+  var motion = haloMotionGate();
+  s.pulse = 1 + haloParam('pulseScale') * s.ringPulse * motion;
+  var shake = haloParam('shakePx') * s.ringPulse * motion;
+  // The throw is the beat's own: the picture is displaced along the direction the hit chose
+  // and slides back as that beat's envelope dies. It used to be a sine of the playhead - a
+  // buzz at a phase with nothing to do with the drum, so a beat that happened to land on a
+  // node of that sine was a beat nobody could see, and the whole ring jittered between hits.
+  s.shakeX = s.shakeDirX * shake;
+  s.shakeY = s.shakeDirY * shake * 0.6;
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
   // lyric size knob may have moved: the measured widths belong to the font they were
   // taken with.
-  if (haloLyricSignature() !== haloLyric.songKey || haloLyricFontPx() !== haloLyric.builtFontPx ||
-      haloLyricStep() !== haloLyric.builtStep) {
-    haloBuildLyricRing();
-  }
+  haloSyncLyrics();
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
   // The things painted on the ring follow the ring, not the lyric list's bookkeeping.
@@ -3413,6 +3672,8 @@ function haloReleaseHaloLayer() {
   haloState.levelGate = 0;
   haloState.shakeX = 0;
   haloState.shakeY = 0;
+  haloState.shakeDirX = 1;
+  haloState.shakeDirY = 0.5;
   // A released layer is not evidence for 自动: the next song starts from the full picture.
   haloAutoReset();
   // The clock starts again with the layer: the gap between the last frame of the old layer
@@ -3442,6 +3703,7 @@ function haloReleaseHaloLayer() {
   haloLyric.pending = -1;
   haloLyric.tween = null;
   haloLyric.songKey = '';
+  haloLyric.listKey = '';
   haloPresetState.released += 1;
 }
 
@@ -3507,9 +3769,14 @@ lyric: {
     },
     // What the ring hears: the music's own level and how much of the beat it allows. A
     // gate of 0 with a song playing is the analyser's fault, not the music's silence.
+    // The motion gate is the one the beat is actually multiplied by, and the kick is what
+    // sets a beat's size when the live drum is louder than the map's opinion of it.
     audio: {
       level: Math.round((haloAudio.level || 0) * 1000) / 1000,
-      gate: Math.round((haloState.levelGate || 0) * 1000) / 1000
+      gate: Math.round((haloState.levelGate || 0) * 1000) / 1000,
+      motionGate: Math.round(haloMotionGate() * 1000) / 1000,
+      kick: Math.round((haloAudio.kick || 0) * 1000) / 1000,
+      pulse: Math.round((haloState.ringPulse || 0) * 1000) / 1000
     },
     tuning: (function () {
       var out = {};

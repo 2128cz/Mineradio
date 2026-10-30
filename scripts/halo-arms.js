@@ -83,11 +83,17 @@ function checkHaloAudioArms(haloText, fail) {
   if (readAt < 0 || shakeAt < 0 || readAt > shakeAt) {
     fail('the level has to be read before the ring moves: the gate needs the level of this frame');
   }
-  if (!/var shake = haloParam\('shakePx'\) \* s\.ringPulse \* s\.levelGate;/.test(renderFrameFn)) {
-    fail('the shake must be scaled by the level gate, or the ring shakes in silence');
+  if (!/var shake = haloParam\('shakePx'\) \* s\.ringPulse \* motion;/.test(renderFrameFn)) {
+    fail('the shake must be scaled by the gate the sound allows, or the ring shakes in silence');
   }
-  if (!/s\.pulse = 1 \+ haloParam\('pulseScale'\) \* s\.ringPulse \* s\.levelGate;/.test(renderFrameFn)) {
-    fail('the ring\'s pop must be scaled by the level gate too');
+  if (!/s\.pulse = 1 \+ haloParam\('pulseScale'\) \* s\.ringPulse \* motion;/.test(renderFrameFn)) {
+    fail('the ring\'s pop must be scaled by the same gate');
+  }
+  // The gate answers whether there is sound at all. Read as a loudness, the eight-bin mean
+  // the app reports for a normal track (~0.2) took most of every pop off before it was drawn.
+  if (!/var motion = haloMotionGate\(\);/.test(renderFrameFn) ||
+      !/return HALO_GATE_KEEP \+ \(1 - HALO_GATE_KEEP\) \* g;/.test(haloText)) {
+    fail('the beat must be multiplied by a presence gate, not by the raw level');
   }
   if (!/haloAudio\.level/.test(levelGateFn)) {
     fail('the level gate must be built from the audio level');
@@ -156,7 +162,7 @@ function checkHaloCullArms(haloText, fail) {
     [spanFn, 'return { enter: enter, exit: exit };', 'haloVisibleSpan'],
     [rayVisibleFn, 'span.enter <= r1', 'haloRayVisible'],
     [wedgeVisibleFn, 'haloRayVisible(a1', 'haloWedgeVisible'],
-    [ticksFn, 'haloRayVisible(a, r0, r1)', 'haloRingTicks'],
+    [ticksFn, 'haloRayVisible(a, r0, r1, s.pulse)', 'haloRingTicks'],
   ]) {
     if (slice && !slice.includes(marker)) {
       fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
@@ -287,6 +293,50 @@ function checkHaloCullArms(haloText, fail) {
     if (/\bscale:/.test(buildLyricFn)) {
       fail('the per-line scale must not be baked at build time: that is what made the lyrics shrink');
     }
+    // Each row takes the translation the app attached to that line by time. Pairing the two
+    // lists by index is not the same thing: a song that leaves one line untranslated shifts
+    // every translation after it onto the wrong original.
+    if (!/sub: haloLyricTranslationOf\(line\)/.test(buildLyricFn)) {
+      fail('a lyric row must take the translation the app matched to its own line, not one found by index');
+    }
+    if (/lyricsTranslationLines/.test(buildLyricFn)) {
+      fail('the ring must not pair the translation list with the lyric list by index');
+    }
+  }
+  // The translation helper has to read the line's own field, and the rebuild key has to see
+  // the translations: a translation that arrives after the lines (the NetEase fallback does)
+  // would otherwise never reach the row drawn before it landed.
+  {
+    const sigFn = haloSliceFunction(haloText, 'haloLyricSignature');
+    const trFn = haloSliceFunction(haloText, 'haloLyricTranslationOf');
+    if (!sigFn || !trFn) {
+      fail('the lyric signature and its translation lookup could not be read back');
+    }
+    if (trFn && !/normalizeLyricTranslationText\(line\.translation\)/.test(trFn)) {
+      fail("a line's translation must be the field the app's lyric pipeline filled by time");
+    }
+    if (sigFn && !/haloLyricTranslationOf\(lines\[i\]\)/.test(sigFn)) {
+      fail('the rebuild key must include the translations, or a late one never draws');
+    }
+    if (sigFn && !/text \+= translated \+ '\|';/.test(sigFn)) {
+      fail('the rebuild key must hash the translations themselves, not just how many there are');
+    }
+    if (sigFn && /lyricsTranslationLines/.test(sigFn)) {
+      fail('the rebuild key must not read the translation list by index either');
+    }
+    // The frame must go through haloSyncLyrics: rebuilding the dial for a translation that
+    // lands mid-song would put it back on the read mark and snap the turn.
+    const renderFn = haloSliceFunction(haloText, 'haloRenderFrame');
+    const syncFn = haloSliceFunction(haloText, 'haloSyncLyrics');
+    if (!renderFn || !syncFn) {
+      fail('the render frame and the lyric sync could not be read back');
+    }
+    if (renderFn && /haloLyricSignature\(\) !== haloLyric\.songKey/.test(renderFn)) {
+      fail('a translation arriving mid-song must not rebuild the dial and snap the turn');
+    }
+    if (syncFn && !/haloLyric\.items\[i\]\.sub = haloLyricTranslationOf\(lines\[haloLyric\.items\[i\]\.lineIndex\]\);/.test(syncFn)) {
+      fail('a late translation must be written into the existing rows, not into a new dial');
+    }
   }
   // The window and its mask must be one number: the knob that says how many lines read
   // also says how wide the clipped arc is. At the shipped 0 the knob is a cap and the list
@@ -326,8 +376,9 @@ function checkHaloCullArms(haloText, fail) {
       fail('the masked arc must stop at the circle: the window ends meet at the point opposite the read mark');
     }
   }
-  // The ring's pop keeps the song's tempo grid, and the detected hits only colour how hard a
-  // beat lands; the level gate decides how much of it the music allows.
+  // The ring's pop takes the beat points the analysis thinned for the visuals, and the
+  // detected hits only colour how hard a beat lands; the level gate decides how much of it
+  // the music allows.
   {
     const eventsFn = haloSliceFunction(haloText, 'haloBeatMapEvents');
     const listFn = haloSliceFunction(haloText, 'haloBeatList');
@@ -335,14 +386,31 @@ function checkHaloCullArms(haloText, fail) {
     if (!eventsFn || !listFn || !hitFn) {
       fail("the ring's beat events, their list and the hit handler could not be read back");
     }
-    if (eventsFn && !/var list = haloBeatList\(currentBeatMap\.cameraBeats \|\| currentBeatMap\.pulseBeats, false\);/.test(eventsFn)) {
-      fail('the pop must keep the tempo grid’s timing; the detected hits must not move it');
+    if (eventsFn && !/var list = haloBeatList\(currentBeatMap\.pulseBeats, false\)/.test(eventsFn)) {
+      fail("the pop must take the analysis' own beat points, not the whole grid it laid over the song");
+    }
+    if (eventsFn && /cameraBeats \|\| currentBeatMap\.pulseBeats/.test(eventsFn)) {
+      fail('the grid first is the dense metronome again: the beat points must be read before it');
     }
     if (eventsFn && !/haloAccentGridWithHits\(list, haloBeatList\(currentBeatMap\.hits, true\)\)/.test(eventsFn)) {
       fail('a grid beat with a detected drum under it must pop harder than one without');
     }
     if (eventsFn && !/haloBeatList\(currentBeatMap\.cameraBeats/.test(eventsFn)) {
-      fail('a map without hits still needs a fallback');
+      fail('a map without a thinned beat list still needs the grid as a fallback');
+    }
+    if (eventsFn && !/return haloThrottleBeats\(/.test(eventsFn)) {
+      fail('a list of beats closer than the eye can separate must be thinned before it is scheduled');
+    }
+    const throttleFn = haloSliceFunction(haloText, 'haloThrottleBeats');
+    if (!throttleFn) {
+      fail('the pop-rate floor could not be read back');
+    }
+    if (throttleFn && !/if \(list\[i\]\.w > prev\.w\) out\[out\.length - 1\] = list\[i\];/.test(throttleFn)) {
+      fail('crowded beats must keep the harder one, not whichever came first');
+    }
+    const scheduleFn = haloSliceFunction(haloText, 'haloScheduleBeats');
+    if (scheduleFn && !/t - haloBeat\.lastOnsetAt >= HALO_BEAT_MIN_GAP/.test(scheduleFn)) {
+      fail('the live onset detector needs the same floor: it is the one source that reads the level directly');
     }
     if (listFn && !/e\.camera === false/.test(listFn)) {
       fail('an entry the analysis did not judge drum-like is not a hit');
@@ -350,8 +418,52 @@ function checkHaloCullArms(haloText, fail) {
     if (listFn && !/e\.grid === true/.test(listFn)) {
       fail('a synthesised grid point is not a hit');
     }
-    if (hitFn && !/0\.45 \+ 0\.55 \* haloClamp\(e\.weight/.test(hitFn)) {
+    if (hitFn && !/0\.15 \+ 0\.85 \* weight/.test(hitFn)) {
       fail("a hard hit must pop harder than a light one: the pulse comes from the hit's weight");
+    }
+    if (hitFn && !/var weight = haloClamp\(e\.weight, 0, 1\);\s*\n\s*haloState\.ringPulse/.test(hitFn)) {
+      fail('the pop size must be the beat itself: a scheduled weight, not a number read that frame');
+    }
+    if (hitFn && /haloAudio\.kick/.test(hitFn)) {
+      fail('the live envelope must not set the size: that made every pop the loudest the knob allows');
+    }
+    if (hitFn && !/haloState\.shakeDirX = /.test(hitFn)) {
+      fail('the hit, not the playhead, decides which way the picture is thrown');
+    }
+    // The updated panel carries the beat now: the streak is the slow herald, the flash is the
+    // landing.
+    if (hitFn && !/slot\.flash = 1;/.test(hitFn)) {
+      fail('the panel swapped in on a hit must light up, or the beat lands with nothing to see');
+    }
+    // The light is slow and the ring shows at most two at a time. A short flight on a dense
+    // grid was a blur of streaks, each one gone before the eye could follow it.
+    const launchFn = haloSliceFunction(haloText, 'haloBeatLaunch');
+    const enqueueFn = haloSliceFunction(haloText, 'haloEnqueueBeat');
+    if (!launchFn || !enqueueFn) {
+      fail('the beat launch and its queue could not be read back');
+    }
+    if (launchFn && !/var count = Math\.max\(0, Math\.min\(e\.weight > 0\.62 \? 2 : 1, 2 - flying\)\);/.test(launchFn)) {
+      fail('one beam per beat, two on a hard one, and never past the two already flying');
+    }
+    // A live onset is heard after it happened; its beam could not reach the ring on the beat,
+    // so it must not be sent at all - the panel flash carries that beat.
+    if (launchFn && !/if \(e\.late\) return;/.test(launchFn)) {
+      fail('a live onset must not send a light that cannot land on its beat');
+    }
+    if (enqueueFn && !/travel: weight > 0\.62 \? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST,/.test(enqueueFn)) {
+      fail('the flight time must come from the two travel constants, chosen by the beat\'s weight');
+    }
+    // A flight longer than the look-ahead is a flight that gets squeezed on the way in: the
+    // slow bundle has to be scheduled before it is due to leave.
+    {
+      const look = /var HALO_BEAT_LOOKAHEAD = ([\d.]+)/.exec(haloText);
+      const slow = /var HALO_TRAVEL_SLOW = ([\d.]+)/.exec(haloText);
+      if (!look || !slow) {
+        fail('the look-ahead and the slow flight time could not be read, so their relation is unchecked');
+      }
+      if (look && slow && Number(look[1]) < Number(slow[1]) + 0.1) {
+        fail('the beat look-ahead must outlast the slowest flight, or the light is sent late and races');
+      }
     }
   }
   // The outer beams: one spectrum bin per cluster (not one of eight bands), the level
@@ -370,17 +482,126 @@ function checkHaloCullArms(haloText, fail) {
     if (beamFn && !/haloNormAngle\(angle - haloReadAngle\(\)\)/.test(beamFn)) {
       fail('a cluster must read the bin its own angle points at');
     }
+    // The sweep is the whole circle. Half a circle left the back of the ring pinned at the two
+    // ends of the sweep, and that stretch read as one flat row of beams whatever the song did.
+    if (!/var HALO_BAND_SPREAD = Math\.PI \* 2;/.test(haloText)) {
+      fail('the spectrum sweep must run all the way around the ring, or part of it cannot answer');
+    }
+    // Face value, like the song page's spectrum. A gain on the read put every bin above 0.71 at
+    // the ceiling, so a loud passage was one flat wall of full-length beams.
+    if (beamFn && !/return haloClamp\(peak \/ 255, 0, 1\);/.test(beamFn)) {
+      fail('a bin must be read at face value; a gain on the read flattens the loud half of a song');
+    }
     if (updateFn && !/haloBeamSpectrum\(am\)/.test(updateFn)) {
       fail('every beam must read the spectrum at its own angle');
     }
     if (updateFn && !/s\.beamKick = Math\.max\(0, \(s\.beamKick \|\| 0\) \* Math\.exp\(-dt \* 2\.6\)\)/.test(updateFn)) {
       fail('the beat envelope on the beams must fall back by itself');
     }
-    if (updateFn && !/wedge\.base \* \(0\.16 \+ 1\.3[05] \* wedge\.av\)/.test(updateFn)) {
+    if (updateFn && !/baseEff \* \(layer\.dynMin \+ layer\.dynK \* wedge\.av\)/.test(updateFn)) {
       fail("the level must multiply the cluster's own length, not be added to an idle length");
     }
-    if (updateFn && !/var cap = \(layer\.dyn === 'bounce' \? 1 : 1\.05\) \+ 0\.5 \* \(s\.beamKick/.test(updateFn)) {
+    if (updateFn && !/var cap = \(bounce \? 1 : 1\.05\) \+ layer\.beatK \* \(0\.5 \* \(s\.beamKick/.test(updateFn)) {
       fail('the length ceiling must rise with the beat, or a loud passage cannot show one');
+    }
+    if (updateFn && !/var beat = 1 \+ 0\.85 \* layer\.beatK \* \(s\.beamKick/.test(updateFn)) {
+      fail('a beat must reach every family by that family\'s own amount, not one scale for the whole ring');
+    }
+    // Two dynamics, and they must stay two: the families differ in speed, not only in shape.
+    // One formula for every layer made the whole ring move as a single piece.
+    if (updateFn && !/var bounce = layer\.dyn === 'bounce';/.test(updateFn)) {
+      fail("the rays and the blocky families must keep their own speeds: one model for all reads as stiff");
+    }
+    if (updateFn && !/var rise = \(bounce \? \(9 \+ 18 \* follow\) : \(4 \+ 13 \* follow\)\) \* snap;/.test(updateFn)) {
+      fail("the beams' own easing must mostly collapse as the follow knob goes up, and the two families must stay apart");
+    }
+    if (updateFn && !/var fall = \(bounce \? \(2\.2 \+ 4 \* follow\) : \(1\.3 \+ 2\.4 \* follow\)\) \* snap;/.test(updateFn)) {
+      fail('a bar must let go faster than a ray; that difference is the family');
+    }
+    if (updateFn && !/haloBeamSpectrum\(am\) \* haloParam\('spectrumGain'\) \* gainEff/.test(updateFn)) {
+      fail("every cluster must have its own gain on its bin, or neighbours on one band grow alike");
+    }
+    // At the top of the follow knob the ring is the spectrum and nothing else: the clusters'
+    // own randomness and the beat's travelling wave have to fade out, and the easing has to
+    // collapse, or the silhouette is each cluster's luck sliding in over a third of a second.
+    if (updateFn && !/var align = Math\.pow\(follow, 12\);/.test(updateFn)) {
+      fail('the follow knob must straighten the ring out at its top, and leave it alone below');
+    }
+    if (updateFn && !/var shapeK = 1 - align;/.test(updateFn)) {
+      fail('the straightening has to fade the per-cluster randomness out');
+    }
+    if (updateFn && !/var snap = 1 \+ 9 \* align;/.test(updateFn)) {
+      fail('the easing must collapse at full follow, or the spectrum lags its song');
+    }
+    if (updateFn && !/var baseEff = 1 \+ \(wedge\.base - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the cluster base length must be faded to one value, or the silhouette is not the spectrum');
+    }
+    if (updateFn && !/var lenEff = 1 \+ \(wedge\.lenS - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the cluster length scale must be faded to one value at full follow');
+    }
+    if (updateFn && !/var gainEff = 1 \+ \(wedge\.gain - 1\) \* shapeK;/.test(updateFn)) {
+      fail('the per-cluster gain must be faded to one value at full follow');
+    }
+    if (updateFn && !/hit \* \(0\.7 \+ 0\.05 \* follow\) \* shapeK/.test(updateFn)) {
+      fail('the beat wave must leave the rays alone at full follow, or it smears the spectrum');
+    }
+    if (updateFn && !/var breath = \(1 - follow\) \* 0\.05/.test(updateFn)) {
+      fail('the idle breathing must vanish at full follow');
+    }
+    if (updateFn && !/var target = Math\.min\(cap, breath \+/.test(updateFn)) {
+      fail('the breathing belongs to the rays alone; giving it to the bars erased the family');
+    }
+    // The outer ring is several element families, all driven by the same spectrum. A layer
+    // that loses its kind is a family that quietly went back to being a ray.
+    const makeFn = haloSliceFunction(haloText, 'haloMakeStrandLayer');
+    const buildFn = haloSliceFunction(haloText, 'haloBuildStrands');
+    const drawFn = haloSliceFunction(haloText, 'haloDrawStrands');
+    if (!makeFn || !buildFn || !drawFn) {
+      fail('the strand layers could not be read back');
+    }
+    if (makeFn && !/var family = kind \|\| 'ray';/.test(makeFn)) {
+      fail('a strand layer must say which element family it draws');
+    }
+    if (makeFn && !/gain: haloRand\(0\.78, 1\.24\)/.test(makeFn)) {
+      fail('every cluster needs its own gain on its bin, or neighbours on one band grow alike');
+    }
+    if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : 0,/.test(makeFn)) {
+      fail('only the rays keep a resting length; a block must come all the way down in silence');
+    }
+    if (updateFn && !/\+ hit \* 0\.75 \* wedge\.av \* shapeK/.test(updateFn)) {
+      fail('a block\'s height must come from its bin alone: a beat wave in silence must not put it back up');
+    }
+    if (buildFn && !/, 'bar'\)/.test(buildFn)) {
+      fail('the wide bars are one of the ring\'s element families; the layer that carried them is gone');
+    }
+    if (buildFn && !/, 'fan'\)/.test(buildFn)) {
+      fail('the bars assembled into a sector are one of the ring\'s element families');
+    }
+    if (drawFn && !/var flat = layer\.kind !== 'ray';/.test(drawFn)) {
+      fail('the blocky families must be drawn at one length, not with the rays\' domed profile');
+    }
+    if (drawFn && !/if \(!collect \|\| flat\) continue;/.test(drawFn)) {
+      fail('a bar or a sector is solid; only the rays carry a travelling tail');
+    }
+    if (drawFn && !/ctx\.strokeStyle = flat \? 'rgba\(206,210,220,1\)'/.test(drawFn)) {
+      fail("the blocks are grey haze; the ring's colour is the rays'");
+    }
+    if (drawFn && !/ctx\.haloFog = true;/.test(drawFn)) {
+      fail('the blocks need their faint wrapper, or they are cut out of the black instead of sitting in it');
+    }
+    if (drawFn && !/layer\.kind === 'fan'\s*\?/.test(drawFn)) {
+      fail("a sector's width comes from the angular gap between its bars, or the bars do not merge");
+    }
+    const groupFn = haloSliceFunction(haloText, 'haloDrawStrandGroup');
+    const frameFn = haloSliceFunction(haloText, 'haloDrawFrame');
+    if (!groupFn || !frameFn) {
+      fail('the strand drawing groups could not be read back');
+    }
+    if (frameFn && /haloDrawStrands\(ctx, haloStrandLayers\[/.test(frameFn)) {
+      fail('the outer families are drawn by kind, not by the order they were built in');
+    }
+    if (groupFn && !/layer\.kind === 'ray' \? collect : null/.test(groupFn)) {
+      fail('only the rays may hand over a travelling tail');
     }
     if (beatFn && !/s\.beamKick = Math\.min\(1\.2/.test(beatFn)) {
       fail("a beat must raise the beams' own envelope");
@@ -395,8 +616,9 @@ function checkHaloCullArms(haloText, fail) {
     const motionFn = haloSliceFunction(haloText, 'haloLyricMotion');
     const contextFn = haloSliceFunction(haloText, 'haloLyricContextSettings');
     const frameFn = haloSliceFunction(haloText, 'haloRenderFrame');
-    if (!motionFn || !contextFn || !frameFn) {
-      fail('the lyric motion, its context settings and the frame check could not be read back');
+    const syncFn = haloSliceFunction(haloText, 'haloSyncLyrics');
+    if (!motionFn || !contextFn || !frameFn || !syncFn) {
+      fail('the lyric motion, its context settings, the frame check and the row sync could not be read back');
     }
     if (motionFn && !/lyricMotionProfile\(\)/.test(motionFn)) {
       fail("the rows must enter and leave with the app's own lyric motion profile");
@@ -407,7 +629,10 @@ function checkHaloCullArms(haloText, fail) {
     if (contextFn && !/lyricEdgeFade/.test(contextFn)) {
       fail("where the screen's edge takes a row away must be the console's 边缘渐隐 setting");
     }
-    if (frameFn && !/haloLyricStep\(\) !== haloLyric\.builtStep/.test(frameFn)) {
+    if (frameFn && !/haloSyncLyrics\(\);/.test(frameFn)) {
+      fail('the lyric rows must be synced every frame: a new song, a late translation and a resized ring all need it');
+    }
+    if (syncFn && !/step === haloLyric\.builtStep/.test(syncFn)) {
       fail('a resized ring must lay its rows out again: the pitch is a pixel height over the radius');
     }
   }
@@ -415,8 +640,13 @@ function checkHaloCullArms(haloText, fail) {
     if (!/var span = haloVisibleSpan\(center\);/.test(drawLyricFn)) {
       fail('the draw time fit must measure the screen\'s run on the ray the line actually sits on');
     }
-    if (!/if \(span\.enter > textR \|\| span\.exit < textR\) continue;/.test(drawLyricFn)) {
+    if (!/if \(span\.enter > drawnR \|\| span\.exit < drawnR\) continue;/.test(drawLyricFn)) {
       fail('a line must be drawn only when its own start is on screen: both ends of the run decides');
+    }
+    // The measure stays at the ring's rest scale, so a beat cannot reflow the rows or fade
+    // them in and out; only the cull learns that the popped ring carries the line further.
+    if (!/var drawnR = textR \* \(s\.pulse \|\| 1\);/.test(drawLyricFn)) {
+      fail('the lyric layout must be measured at the ring\'s rest scale, never at the beat\'s');
     }
     // The dial is a window: the lines around the one being sung, not the whole song.
     if (!/var win = haloLyricWindow\(\);/.test(drawLyricFn)) {
@@ -485,7 +715,7 @@ function checkHaloCullArms(haloText, fail) {
   }
   // The measured widths belong to the font they were taken with, so a font size change has
   // to rebuild the ring.
-  if (!/haloLyricFontPx\(\) !== haloLyric\.builtFontPx/.test(haloText)) {
+  if (!/font === haloLyric\.builtFontPx/.test(haloText)) {
     fail('the lyric ring must be rebuilt when the app\'s lyric size knob moves');
   }
 }

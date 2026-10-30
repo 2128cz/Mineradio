@@ -1126,12 +1126,26 @@ function runHaloPresetCheck() {
   }
   // The beat's whole job now: the ring pops out and shakes where it stands.
   for (const [pattern, why] of [
-    [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.45 \+ 0\.55 \* haloClamp\(e\.weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
+    [/haloState\.ringPulse = Math\.max\(haloState\.ringPulse \|\| 0, 0\.15 \+ 0\.85 \* weight/, 'the beat must set the ring\'s pulse envelope from the hit\'s own strength'],
     [/haloParam\('pulseScale'\)/, 'the scale pop must be a knob'],
     [/haloParam\('shakePx'\)/, 'the shake must be a knob'],
-    [/s\.shakeX =/, 'the shake must reach the transform'],
+    [/s\.shakeX = s\.shakeDirX \* shake/, 'the shake must be the hit\'s throw, not a sine of the playhead'],
   ]) {
     if (!pattern.test(haloText)) fail(why);
+  }
+  // The size of a pop belongs to the beat. Read from the live envelope it sat at the knob's
+  // ceiling all through a loud passage, and the ring looked painted onto the volume.
+  const hitBody = haloSliceFunction(haloText, 'haloBeatHit');
+  if (hitBody && /haloAudio\.kick/.test(hitBody)) {
+    fail('the live envelope must not decide how big a pop is; the level gate already says whether there is sound');
+  }
+  // The pop belongs to the ring's own pass. Folded into the scene zoom it scaled the
+  // background with the ring, and a picture that got 2% bigger is not a visible beat.
+  if (/haloCam\.zoom \* s\.pulse/.test(haloText)) {
+    fail('the beat must not scale the whole scene: only the ring\'s own pass may pop');
+  }
+  if (!/haloApplyCameraTransform\(ctx, scale, 1, s\.pulse\);[\s\S]{0,40}haloDrawRing\(/.test(haloText)) {
+    fail('the pop has to be on the transform the ring and its lyrics are drawn with');
   }
   // The gate rate and the module's own target must be the same number, or the layer is either
   // drawn more often than it budgets for or less often than it was measured at.
@@ -1349,6 +1363,20 @@ function runHaloPresetCheck() {
     fail(`the ring turn and the lyric fit regression failed: ${rel(lyricTestFile)}`);
   }
   process.stdout.write(lyricTest.stdout || '');
+  // The ring pairs every line with the translation the app attached to that line by time -
+  // not with the translation that happens to sit at the same index, which slips the whole
+  // column whenever a song leaves a translation out.
+  const trTestFile = path.join(appRoot, 'tests', 'halo-lyric-translations.test.js');
+  if (!fs.existsSync(trTestFile)) {
+    fail('tests/halo-lyric-translations.test.js is missing; the ring would pair translations by index again');
+  }
+  const trTest = spawnSync(process.execPath, [trTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (trTest.status !== 0) {
+    process.stdout.write(trTest.stdout || '');
+    process.stderr.write(trTest.stderr || '');
+    fail(`the lyric translation regression failed: ${rel(trTestFile)}`);
+  }
+  process.stdout.write(trTest.stdout || '');
   // The beat's motion has to follow the sound. This test runs the shipped module in a
   // sandbox with a controllable analyser and measures the shake: silence must be still,
   // a loud passage must shake harder.
@@ -1413,7 +1441,31 @@ function runHaloPresetCheck() {
     fail(`the outer beam regression failed: ${rel(beamsTestFile)}`);
   }
   process.stdout.write(beamsTest.stdout || '');
-  // The ring's pop follows the map's detected drum hits, not the tempo grid.
+  // The outer ring is several element families (rays, bars, sectors), not one.
+  const familiesTestFile = path.join(appRoot, 'tests', 'halo-beam-families.test.js');
+  if (!fs.existsSync(familiesTestFile)) {
+    fail('tests/halo-beam-families.test.js is missing; the beam families would only be checked by eye');
+  }
+  const familiesTest = spawnSync(process.execPath, [familiesTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (familiesTest.status !== 0) {
+    process.stdout.write(familiesTest.stdout || '');
+    process.stderr.write(familiesTest.stderr || '');
+    fail(`the outer beam families regression failed: ${rel(familiesTestFile)}`);
+  }
+  process.stdout.write(familiesTest.stdout || '');
+  // The ring's pop takes the analysis' own beat points, not the whole grid it laid over the song.
+  const sourceTestFile = path.join(appRoot, 'tests', 'halo-beat-source.test.js');
+  if (!fs.existsSync(sourceTestFile)) {
+    fail('tests/halo-beat-source.test.js is missing; the ring would pop on every grid slot again');
+  }
+  const sourceTest = spawnSync(process.execPath, [sourceTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (sourceTest.status !== 0) {
+    process.stdout.write(sourceTest.stdout || '');
+    process.stderr.write(sourceTest.stderr || '');
+    fail(`the beat point regression failed: ${rel(sourceTestFile)}`);
+  }
+  process.stdout.write(sourceTest.stdout || '');
+  // and the drum hits under those points decide how hard each one lands.
   const hitsTestFile = path.join(appRoot, 'tests', 'halo-beat-hits.test.js');
   if (!fs.existsSync(hitsTestFile)) {
     fail('tests/halo-beat-hits.test.js is missing; the ring would pop on the metronome again');
@@ -1425,6 +1477,31 @@ function runHaloPresetCheck() {
     fail(`the drum hit regression failed: ${rel(hitsTestFile)}`);
   }
   process.stdout.write(hitsTest.stdout || '');
+  // The light that runs in on a beat: slow enough to read, at most two in the air, and the
+  // panel it updates carries the beat's emphasis instead of the streak.
+  const waveTestFile = path.join(appRoot, 'tests', 'halo-beat-wave.test.js');
+  if (!fs.existsSync(waveTestFile)) {
+    fail('tests/halo-beat-wave.test.js is missing; the beat light would only be checked by eye');
+  }
+  const waveTest = spawnSync(process.execPath, [waveTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (waveTest.status !== 0) {
+    process.stdout.write(waveTest.stdout || '');
+    process.stderr.write(waveTest.stderr || '');
+    fail(`the beat light regression failed: ${rel(waveTestFile)}`);
+  }
+  process.stdout.write(waveTest.stdout || '');
+  // The pop belongs to the ring and not to the camera: the picture behind it must stay put.
+  const ringPopTestFile = path.join(appRoot, 'tests', 'halo-beat-ring-pop.test.js');
+  if (!fs.existsSync(ringPopTestFile)) {
+    fail('tests/halo-beat-ring-pop.test.js is missing; the pop would scale the whole scene again');
+  }
+  const ringPopTest = spawnSync(process.execPath, [ringPopTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (ringPopTest.status !== 0) {
+    process.stdout.write(ringPopTest.stdout || '');
+    process.stderr.write(ringPopTest.stderr || '');
+    fail(`the ring pop layering regression failed: ${rel(ringPopTestFile)}`);
+  }
+  process.stdout.write(ringPopTest.stdout || '');
   const pkg = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
   const buildFiles = (pkg.build && pkg.build.files) || [];
   if (!buildFiles.some((f) => /^public\/\*\*\/\*$/.test(f))) {

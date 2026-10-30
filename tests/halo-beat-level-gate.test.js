@@ -120,6 +120,34 @@ assert.strictEqual(sandbox.haloLevelGate(), 1, 'the knob at zero must open the g
 sandbox.haloTuning.levelGain = 2.6;
 sandbox.haloAudio.level = 0;
 
+// ---------------------------------------------------------------- the beat's own gate
+// haloLevelGate is a measure of the room. What the beat is multiplied by is not allowed to
+// read it straight: the app reports a normal track as an eight-bin mean of about 0.2, and
+// that took almost half of every pop off the ring, so the ring's motion followed the mix's
+// loudness instead of the drums.
+sandbox.haloAudio.level = 0.2;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+const motionAtTypical = sandbox.haloMotionGate();
+assert(motionAtTypical >= 0.7,
+  `a typical track must keep most of the beat, got ${motionAtTypical.toFixed(3)}`);
+assert(motionAtTypical < 1,
+  `and a louder passage must still be able to open it further, got ${motionAtTypical.toFixed(3)}`);
+sandbox.haloAudio.level = 0.6;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert(sandbox.haloMotionGate() > motionAtTypical,
+  'a louder passage must still be allowed to move the ring harder');
+sandbox.haloAudio.level = 0.02;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert.strictEqual(sandbox.haloMotionGate(), 0, 'a silent room keeps none of the beat');
+// The knob at zero turns the whole gate off, and that has to reach the beat too.
+sandbox.haloTuning.levelGain = 0;
+sandbox.haloState.levelGate = sandbox.haloLevelGate();
+assert.strictEqual(sandbox.haloMotionGate(), 1,
+  'with the gate turned off the beat must have all of it back');
+sandbox.haloTuning.levelGain = 2.6;
+sandbox.haloAudio.level = 0;
+sandbox.haloState.levelGate = 0;
+
 function runFrames(count) {
   for (let i = 0; i < count; i++) {
     sandbox.haloRenderFrame(canvas, i * 16.7, 1 / 60);
@@ -190,6 +218,36 @@ function runFrames(count) {
   sandbox.haloAudio.level = 0;
   sandbox.haloState.levelGate = 0;
   console.log(`  beam kick on a beat: silence ${silentKick.toFixed(2)}, loud ${loudKick.toFixed(2)}`);
+}
+
+// --------------------------------------------------- the shake belongs to the hit
+// The throw used to be a sine of the playhead. Its phase had nothing to do with the drum, so
+// a beat that landed on a node of that sine moved nothing, and the frames between beats kept
+// jittering at an amplitude the beat had no part in choosing. The hit throws now, and the
+// picture slides back as that beat's envelope dies.
+{
+  analyserByte = 200;
+  runFrames(60);
+  sandbox.haloState.ringPulse = 1;
+  sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+  const onTheHit = Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY);
+  assert(onTheHit >= sandbox.haloTuning.shakePx * 0.5,
+    `the hit's own frame must carry most of the knob, got ${onTheHit.toFixed(2)}px`);
+  const decays = [];
+  for (let level = 0.75; level >= 0.25; level -= 0.25) {
+    sandbox.haloState.ringPulse = level;
+    sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+    decays.push(Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY));
+  }
+  for (let i = 1; i < decays.length; i++) {
+    assert(decays[i] < decays[i - 1],
+      `the throw must slide back from the hit, not buzz (${decays[i].toFixed(2)} against ${decays[i - 1].toFixed(2)})`);
+  }
+  sandbox.haloState.ringPulse = 0;
+  sandbox.haloRenderFrame(canvas, 0, 1 / 30);
+  assert.strictEqual(Math.hypot(sandbox.haloState.shakeX, sandbox.haloState.shakeY), 0,
+    'with nothing left of the beat there is nothing left of the throw');
+  console.log(`  throw: hit ${onTheHit.toFixed(2)}px, then ${decays.map((v) => v.toFixed(1)).join(' > ')} and still`);
 }
 
 console.log('[OK] The ring\'s beat motion follows the sound: silence is still, a loud passage shakes harder.');

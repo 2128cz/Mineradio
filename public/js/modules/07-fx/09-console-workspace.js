@@ -156,6 +156,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-halohazeAmount', '雾光强度', '环形数据流 雾 辉光'),
         fxConsoleItem('fx-halostreakAmount', '飞线强度', '环形数据流 飞线 拖尾'),
         fxConsoleItem('fx-halospectrumGain', '频谱增益', '环形数据流 频谱 增益 响应'),
+        fxConsoleItem('fx-halobeamFollow', '光线频谱跟随', '环形数据流 光线 柱状 扇形 频谱 跟随 缓动 响应'),
         fxConsoleItem('fx-halopulseScale', '拍点缩放', '环形数据流 拍点 鼓点 缩放 凸出'),
         fxConsoleItem('fx-haloshakePx', '拍点抖动', '环形数据流 拍点 鼓点 抖动 震动'),
         fxConsoleItem('fx-halolevelGain', '电平跟随', '环形数据流 拍点 电平 音量 跟随 灵敏度'),
