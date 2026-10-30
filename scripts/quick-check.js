@@ -1289,6 +1289,20 @@ function runHaloPresetCheck() {
     fail(`the ring turn and the lyric fit regression failed: ${rel(lyricTestFile)}`);
   }
   process.stdout.write(lyricTest.stdout || '');
+  // The ring pairs every line with the translation the app attached to that line by time -
+  // not with the translation that happens to sit at the same index, which slips the whole
+  // column whenever a song leaves a translation out.
+  const trTestFile = path.join(appRoot, 'tests', 'halo-lyric-translations.test.js');
+  if (!fs.existsSync(trTestFile)) {
+    fail('tests/halo-lyric-translations.test.js is missing; the ring would pair translations by index again');
+  }
+  const trTest = spawnSync(process.execPath, [trTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (trTest.status !== 0) {
+    process.stdout.write(trTest.stdout || '');
+    process.stderr.write(trTest.stderr || '');
+    fail(`the lyric translation regression failed: ${rel(trTestFile)}`);
+  }
+  process.stdout.write(trTest.stdout || '');
   // The beat's motion has to follow the sound. This test runs the shipped module in a
   // sandbox with a controllable analyser and measures the shake: silence must be still,
   // a loud passage must shake harder.
@@ -1389,6 +1403,19 @@ function runHaloPresetCheck() {
     fail(`the drum hit regression failed: ${rel(hitsTestFile)}`);
   }
   process.stdout.write(hitsTest.stdout || '');
+  // The light that runs in on a beat: slow enough to read, at most two in the air, and the
+  // panel it updates carries the beat's emphasis instead of the streak.
+  const waveTestFile = path.join(appRoot, 'tests', 'halo-beat-wave.test.js');
+  if (!fs.existsSync(waveTestFile)) {
+    fail('tests/halo-beat-wave.test.js is missing; the beat light would only be checked by eye');
+  }
+  const waveTest = spawnSync(process.execPath, [waveTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (waveTest.status !== 0) {
+    process.stdout.write(waveTest.stdout || '');
+    process.stderr.write(waveTest.stderr || '');
+    fail(`the beat light regression failed: ${rel(waveTestFile)}`);
+  }
+  process.stdout.write(waveTest.stdout || '');
   // The pop belongs to the ring and not to the camera: the picture behind it must stay put.
   const ringPopTestFile = path.join(appRoot, 'tests', 'halo-beat-ring-pop.test.js');
   if (!fs.existsSync(ringPopTestFile)) {

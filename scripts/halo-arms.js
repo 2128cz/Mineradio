@@ -293,6 +293,50 @@ function checkHaloCullArms(haloText, fail) {
     if (/\bscale:/.test(buildLyricFn)) {
       fail('the per-line scale must not be baked at build time: that is what made the lyrics shrink');
     }
+    // Each row takes the translation the app attached to that line by time. Pairing the two
+    // lists by index is not the same thing: a song that leaves one line untranslated shifts
+    // every translation after it onto the wrong original.
+    if (!/sub: haloLyricTranslationOf\(line\)/.test(buildLyricFn)) {
+      fail('a lyric row must take the translation the app matched to its own line, not one found by index');
+    }
+    if (/lyricsTranslationLines/.test(buildLyricFn)) {
+      fail('the ring must not pair the translation list with the lyric list by index');
+    }
+  }
+  // The translation helper has to read the line's own field, and the rebuild key has to see
+  // the translations: a translation that arrives after the lines (the NetEase fallback does)
+  // would otherwise never reach the row drawn before it landed.
+  {
+    const sigFn = haloSliceFunction(haloText, 'haloLyricSignature');
+    const trFn = haloSliceFunction(haloText, 'haloLyricTranslationOf');
+    if (!sigFn || !trFn) {
+      fail('the lyric signature and its translation lookup could not be read back');
+    }
+    if (trFn && !/normalizeLyricTranslationText\(line\.translation\)/.test(trFn)) {
+      fail("a line's translation must be the field the app's lyric pipeline filled by time");
+    }
+    if (sigFn && !/haloLyricTranslationOf\(lines\[i\]\)/.test(sigFn)) {
+      fail('the rebuild key must include the translations, or a late one never draws');
+    }
+    if (sigFn && !/text \+= translated \+ '\|';/.test(sigFn)) {
+      fail('the rebuild key must hash the translations themselves, not just how many there are');
+    }
+    if (sigFn && /lyricsTranslationLines/.test(sigFn)) {
+      fail('the rebuild key must not read the translation list by index either');
+    }
+    // The frame must go through haloSyncLyrics: rebuilding the dial for a translation that
+    // lands mid-song would put it back on the read mark and snap the turn.
+    const renderFn = haloSliceFunction(haloText, 'haloRenderFrame');
+    const syncFn = haloSliceFunction(haloText, 'haloSyncLyrics');
+    if (!renderFn || !syncFn) {
+      fail('the render frame and the lyric sync could not be read back');
+    }
+    if (renderFn && /haloLyricSignature\(\) !== haloLyric\.songKey/.test(renderFn)) {
+      fail('a translation arriving mid-song must not rebuild the dial and snap the turn');
+    }
+    if (syncFn && !/haloLyric\.items\[i\]\.sub = haloLyricTranslationOf\(lines\[haloLyric\.items\[i\]\.lineIndex\]\);/.test(syncFn)) {
+      fail('a late translation must be written into the existing rows, not into a new dial');
+    }
   }
   // The window and its mask must be one number: the knob that says how many lines read
   // also says how wide the clipped arc is. At the shipped 0 the knob is a cap and the list
@@ -385,6 +429,41 @@ function checkHaloCullArms(haloText, fail) {
     }
     if (hitFn && !/haloState\.shakeDirX = /.test(hitFn)) {
       fail('the hit, not the playhead, decides which way the picture is thrown');
+    }
+    // The updated panel carries the beat now: the streak is the slow herald, the flash is the
+    // landing.
+    if (hitFn && !/slot\.flash = 1;/.test(hitFn)) {
+      fail('the panel swapped in on a hit must light up, or the beat lands with nothing to see');
+    }
+    // The light is slow and the ring shows at most two at a time. A short flight on a dense
+    // grid was a blur of streaks, each one gone before the eye could follow it.
+    const launchFn = haloSliceFunction(haloText, 'haloBeatLaunch');
+    const enqueueFn = haloSliceFunction(haloText, 'haloEnqueueBeat');
+    if (!launchFn || !enqueueFn) {
+      fail('the beat launch and its queue could not be read back');
+    }
+    if (launchFn && !/var count = Math\.max\(0, Math\.min\(e\.weight > 0\.62 \? 2 : 1, 2 - flying\)\);/.test(launchFn)) {
+      fail('one beam per beat, two on a hard one, and never past the two already flying');
+    }
+    // A live onset is heard after it happened; its beam could not reach the ring on the beat,
+    // so it must not be sent at all - the panel flash carries that beat.
+    if (launchFn && !/if \(e\.late\) return;/.test(launchFn)) {
+      fail('a live onset must not send a light that cannot land on its beat');
+    }
+    if (enqueueFn && !/travel: weight > 0\.62 \? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST,/.test(enqueueFn)) {
+      fail('the flight time must come from the two travel constants, chosen by the beat\'s weight');
+    }
+    // A flight longer than the look-ahead is a flight that gets squeezed on the way in: the
+    // slow bundle has to be scheduled before it is due to leave.
+    {
+      const look = /var HALO_BEAT_LOOKAHEAD = ([\d.]+)/.exec(haloText);
+      const slow = /var HALO_TRAVEL_SLOW = ([\d.]+)/.exec(haloText);
+      if (!look || !slow) {
+        fail('the look-ahead and the slow flight time could not be read, so their relation is unchecked');
+      }
+      if (look && slow && Number(look[1]) < Number(slow[1]) + 0.1) {
+        fail('the beat look-ahead must outlast the slowest flight, or the light is sent late and races');
+      }
     }
   }
   // The outer beams: one spectrum bin per cluster (not one of eight bands), the level
@@ -537,8 +616,9 @@ function checkHaloCullArms(haloText, fail) {
     const motionFn = haloSliceFunction(haloText, 'haloLyricMotion');
     const contextFn = haloSliceFunction(haloText, 'haloLyricContextSettings');
     const frameFn = haloSliceFunction(haloText, 'haloRenderFrame');
-    if (!motionFn || !contextFn || !frameFn) {
-      fail('the lyric motion, its context settings and the frame check could not be read back');
+    const syncFn = haloSliceFunction(haloText, 'haloSyncLyrics');
+    if (!motionFn || !contextFn || !frameFn || !syncFn) {
+      fail('the lyric motion, its context settings, the frame check and the row sync could not be read back');
     }
     if (motionFn && !/lyricMotionProfile\(\)/.test(motionFn)) {
       fail("the rows must enter and leave with the app's own lyric motion profile");
@@ -549,7 +629,10 @@ function checkHaloCullArms(haloText, fail) {
     if (contextFn && !/lyricEdgeFade/.test(contextFn)) {
       fail("where the screen's edge takes a row away must be the console's 边缘渐隐 setting");
     }
-    if (frameFn && !/haloLyricStep\(\) !== haloLyric\.builtStep/.test(frameFn)) {
+    if (frameFn && !/haloSyncLyrics\(\);/.test(frameFn)) {
+      fail('the lyric rows must be synced every frame: a new song, a late translation and a resized ring all need it');
+    }
+    if (syncFn && !/step === haloLyric\.builtStep/.test(syncFn)) {
       fail('a resized ring must lay its rows out again: the pitch is a pixel height over the radius');
     }
   }
@@ -632,7 +715,7 @@ function checkHaloCullArms(haloText, fail) {
   }
   // The measured widths belong to the font they were taken with, so a font size change has
   // to rebuild the ring.
-  if (!/haloLyricFontPx\(\) !== haloLyric\.builtFontPx/.test(haloText)) {
+  if (!/font === haloLyric\.builtFontPx/.test(haloText)) {
     fail('the lyric ring must be rebuilt when the app\'s lyric size knob moves');
   }
 }

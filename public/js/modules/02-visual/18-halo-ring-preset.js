@@ -33,9 +33,14 @@ var HALO_PRESET_INDEX = 14;        // tracks MAX_VISUAL_PRESET_INDEX (four place
 var HALO_FPS = 30;                 // the layer's own frame gate
 var HALO_LYRIC_BASE_PX = 20;       // lyric text size at fx.lyricScale = 1
 var HALO_PREPARE_MS = 300;         // beat phase 1: prepare what lands on the beat
-var HALO_TRAVEL_FAST = 0.08;       // beam flight time (lands on the beat)
-var HALO_TRAVEL_SLOW = 0.25;       // converging bundle flight time
-var HALO_BEAT_LOOKAHEAD = 0.45;    // how far ahead the beat map is read
+// The beams still have to land on the beat, so the flight time is also how early they are
+// sent. They used to cross in 80-250 ms - about five frames - and a passage with two beats a
+// second put several of those streaks on the ring at once, which read as a flicker rather
+// than as light running in. A slower flight is a longer flight, so the look-ahead has to
+// cover it.
+var HALO_TRAVEL_FAST = 0.55;       // beam flight time (lands on the beat)
+var HALO_TRAVEL_SLOW = 0.9;        // converging bundle flight time
+var HALO_BEAT_LOOKAHEAD = 1.2;     // how far ahead the beat map is read
 // How often the ring may pop at all. A pop takes about a quarter of a second to grow and start
 // dying, so two closer than that are one buzz the eye cannot read as two beats - and a map is
 // allowed to lay a grid that fine under a fast song.
@@ -204,7 +209,8 @@ var haloLyric = {
   radial: { item: -1, prev: -1, phase: 1, startAt: 0, dur: 0.55 },
   builtFontPx: 0,     // the font the measured widths belong to
   builtStep: 0,       // the row pitch the angles were laid out with; it follows the ring's size
-  songKey: ''
+  listKey: '',        // the lines only; the 自动 tier resets on this
+  songKey: ''         // the lines and their translations; the rows are rebuilt on this
 };
 
 var haloBeat = {
@@ -773,7 +779,7 @@ function haloEnqueueBeat(hitAt, weight, late) {
     hitAt: hitAt,
     weight: weight,
     late: !!late,
-    travel: late ? HALO_TRAVEL_FAST : (weight > 0.62 ? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST),
+    travel: weight > 0.62 ? HALO_TRAVEL_SLOW : HALO_TRAVEL_FAST,
     prepared: false,
     launched: false,
     hit: false,
@@ -816,11 +822,21 @@ function haloBeatPrepare(e) {
 }
 
 function haloBeatLaunch(e) {
-  var s = haloState;
-  var count = e.weight > 0.62 ? 3 : 2;
-  for (var i = 0; i < count; i++) {
+  // A live onset is heard after it happened, so there is no time to send a light that lands
+  // on the beat; a rushed streak is exactly the flicker that could not be read. That beat is
+  // carried by the pop and the panel flashing under it.
+  if (e.late) return;
+  // A slow flight lasts about as long as two beats, so a dense passage would queue up more
+  // streaks than anyone can follow. Two bundles in flight is the most the ring shows at once;
+  // the beat itself is still carried by the ring's pop and the panel that updates under it.
+  var flying = 0;
+  for (var i = 0; i < haloCometList.length; i++) if (!haloCometList[i].hit) flying++;
+  // One beam per beat, two on a hard one - and a beat that cannot fit is skipped, not sent
+  // late to race across the ring.
+  var count = Math.max(0, Math.min(e.weight > 0.62 ? 2 : 1, 2 - flying));
+  for (var k = 0; k < count; k++) {
     var ang = haloRand(0, HALO_TAU);
-    haloSpawnComet(ang, e.travel, e.weight);
+    haloSpawnComet(ang, e.travel, e.weight, e.hitAt);
   }
 }
 
@@ -832,7 +848,10 @@ function haloBeatHit(e) {
       slot.c = slot.next;
       slot.next = null;
     }
-    slot.flash = 0.85;
+    // The panel that just took the new bitmap holds its glow long enough to be read: with the
+    // beams now crossing the ring slowly, this flash - not the streak - is what says "this
+    // block updated on that beat".
+    slot.flash = 1;
   }
   // The beat's whole job now: the ring pops out and shakes where it stands. The camera
   // stays where the user left it. A hard hit pops harder than a light one - the map's own
@@ -861,18 +880,51 @@ function haloCurrentSong() {
   return null;
 }
 
-function haloLyricSignature() {
-  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
-  var song = haloCurrentSong();
-  var key = '';
-  if (typeof lyricTimingSongKey === 'function') key = lyricTimingSongKey(song);
+function haloLyricHash(text) {
   var h = 2166136261;
-  var text = key + '|' + lines.length + '|' + (lines.length ? lines[0].text : '');
   for (var i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 1676997213) >>> 0;
   }
-  return (h >>> 0).toString(36) + ':' + lines.length;
+  return (h >>> 0).toString(36);
+}
+
+// The lines themselves. The 自动 draw tier is decided from this, so a translation that
+// arrives a moment after the lines must not look like a new song to it.
+function haloLyricListKey() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var song = haloCurrentSong();
+  var key = '';
+  if (typeof lyricTimingSongKey === 'function') key = lyricTimingSongKey(song);
+  return haloLyricHash(key + '|' + lines.length + '|' + (lines.length ? lines[0].text : '')) + ':' + lines.length;
+}
+
+// The dial is synced on this key, which includes the translations: they are matched to the
+// lines by the app's own lyric pipeline and can arrive after the lines (the NetEase fallback
+// does). A translation-only change is written into the existing rows (haloSyncLyrics); only a
+// new song or a new size rebuilds the dial. A row drawn before its translation landed would
+// otherwise keep that hole for the whole song.
+function haloLyricSignature() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var count = 0;
+  var text = '';
+  for (var i = 0; i < lines.length; i++) {
+    var translated = haloLyricTranslationOf(lines[i]);
+    if (!translated) continue;
+    count++;
+    text += translated + '|';
+  }
+  return haloLyricListKey() + '|' + count + '|' + haloLyricHash(text);
+}
+
+// A line's translation is the one the app attached to it (attachLyricTranslations, by time).
+// Pairing lyricsTranslationLines[i] with lyricsLines[i] is not the same thing: a song whose
+// translation list is shorter than the original has holes in it, and every translation after
+// the first hole shifts onto the wrong line.
+function haloLyricTranslationOf(line) {
+  if (!line) return '';
+  if (typeof normalizeLyricTranslationText === 'function') return normalizeLyricTranslationText(line.translation);
+  return String(line.translation || '').trim();
 }
 
 // The text size follows the app's own lyric size knob, so the two never disagree.
@@ -891,9 +943,8 @@ function haloReadAngle() { return haloParam('readAngle') * Math.PI / 180; }
 function haloBuildLyricRing() {
   // A different list of lines is new evidence for 自动, the same way a new plan is for the PV
   // layer: the decision belongs to one song's content and does not carry into the next.
-  var prevKey = haloLyric.songKey;
+  var prevKey = haloLyric.listKey;
   var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
-  var translations = (typeof lyricsTranslationLines !== 'undefined' && Array.isArray(lyricsTranslationLines)) ? lyricsTranslationLines : [];
   var offset = 0;
   if (typeof getActiveLyricTimingOffsetSeconds === 'function') offset = getActiveLyricTimingOffsetSeconds();
   haloLyric.items = [];
@@ -924,9 +975,9 @@ function haloBuildLyricRing() {
       widthFontPx: 0,
       angle: acc,
       startAt: Math.max(0, (Number(line.t) || 0) + offset),
-      sub: ''
+      lineIndex: i,
+      sub: haloLyricTranslationOf(line)
     };
-    if (translations[i] && translations[i].text) item.sub = String(translations[i].text).trim();
     haloLyric.items.push(item);
     acc += step;
   }
@@ -935,9 +986,30 @@ function haloBuildLyricRing() {
   // laid out again - otherwise the rows keep the old pitch and the sung row stops standing
   // out by the same amount.
   haloLyric.builtStep = haloLyricStep();
+  haloLyric.listKey = haloLyricListKey();
   haloLyric.songKey = haloLyricSignature();
-  if (prevKey !== haloLyric.songKey) haloAutoReset('a new lyric list');
+  if (prevKey !== haloLyric.listKey) haloAutoReset('a new lyric list');
   return haloLyric.items.length;
+}
+
+// Rows are laid out by the lines alone; a translation that lands late only changes what each
+// row reads. It is refreshed in place, not rebuilt: a rebuild would put the dial back on the
+// read mark and snap the turn in the middle of the song.
+function haloSyncLyrics() {
+  var font = haloLyricFontPx();
+  var step = haloLyricStep();
+  var sig = haloLyricSignature();
+  if (sig === haloLyric.songKey && font === haloLyric.builtFontPx && step === haloLyric.builtStep) return;
+  if (haloLyricListKey() === haloLyric.listKey && font === haloLyric.builtFontPx &&
+      step === haloLyric.builtStep && haloLyric.items.length) {
+    var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+    for (var i = 0; i < haloLyric.items.length; i++) {
+      haloLyric.items[i].sub = haloLyricTranslationOf(lines[haloLyric.items[i].lineIndex]);
+    }
+    haloLyric.songKey = sig;
+    return;
+  }
+  haloBuildLyricRing();
 }
 
 // The row height of the dial as the angle it takes on the ring: one line plus the gap.
@@ -2242,7 +2314,7 @@ function haloFlashSlotAt(angle) {
     var d = Math.abs(haloNormAngle(slot.a + haloState.decoRot - angle));
     if (d < bd) { bd = d; best = slot; }
   }
-  if (best && bd < 0.12) best.flash = Math.max(best.flash, 0.8);
+  if (best && bd < 0.12) best.flash = Math.max(best.flash, 1);
   return best;
 }
 
@@ -2628,7 +2700,7 @@ function haloDrawRing(ctx, dt) {
   ctx.fill('evenodd');
   for (var i = 0; i < haloSlotList.length; i++) {
     var slot = haloSlotList[i];
-    if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 2.2);
+    if (slot.flash > 0) slot.flash = Math.max(0, slot.flash - dt * 1.25);
     if (!slot.c) continue;
     if (!haloSlotVisible(slot)) continue;
     var A = slot.a + s.decoRot;
@@ -3499,10 +3571,7 @@ function haloRenderFrame(canvas, now, dt) {
   // The lyrics may have changed (a new song, or the translation arrived), or the app's
   // lyric size knob may have moved: the measured widths belong to the font they were
   // taken with.
-  if (haloLyricSignature() !== haloLyric.songKey || haloLyricFontPx() !== haloLyric.builtFontPx ||
-      haloLyricStep() !== haloLyric.builtStep) {
-    haloBuildLyricRing();
-  }
+  haloSyncLyrics();
   haloLyricUpdate(t);
   s.ringRot = haloLyric.rot;
   // The things painted on the ring follow the ring, not the lyric list's bookkeeping.
@@ -3634,6 +3703,7 @@ function haloReleaseHaloLayer() {
   haloLyric.pending = -1;
   haloLyric.tween = null;
   haloLyric.songKey = '';
+  haloLyric.listKey = '';
   haloPresetState.released += 1;
 }
 
