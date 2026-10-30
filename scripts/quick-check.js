@@ -1571,6 +1571,7 @@ function runBlackHolePresetCheck() {
   const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
   if (!/id: 'blackhole-pass'/.test(ownerBlock)) fail('the pass must register as a takeover owner');
   if (/stageLyrics: true/.test(ownerBlock)) fail('a pass cannot refract a layer it suppressed');
+  if (!/particles: true/.test(ownerBlock)) fail('the preset must take the cover-particle field over: it paints its own barred-spiral galaxy');
   if (!/stageLyrics: false/.test(ownerBlock)) fail('stageLyrics must stay on: text outside the render target cannot be bent by the lens');
   // The ported kernel has to be in the shader, where it is actually evaluated.
   const shader = text.slice(text.indexOf('var BH_PASS_FS'));
@@ -1609,6 +1610,31 @@ function runBlackHolePresetCheck() {
   }
   if (!/key: 'blackhole'/.test(consoleText) || !/title: '银河黑洞'/.test(consoleText)) {
     fail('the visual console needs a 银河黑洞 group in the 动效 tab');
+  }
+  // The field is the preset's own, not the app's cover particles: a barred spiral with two arms
+  // inside the split and branch segments outside it, built as Points in the scene the lens
+  // renders, and centred on the hole's own world point so the lens and the galaxy share a centre.
+  for (const pattern of [
+    /function bhGalaxyArmOffsets\(/,
+    /function bhGalaxySegments\(/,
+    /new THREE\.Points\(bhGalaxyGeometry/,
+    /bhGalaxy\.group\.position\.set\(frame\.world\.x, frame\.world\.y, frame\.world\.z\)/,
+  ]) {
+    if (!pattern.test(text)) fail('the galaxy field is incomplete: ' + pattern);
+  }
+  if (!/particles: true/.test(text.slice(text.indexOf('registerVisualTakeoverOwner({')))) {
+    fail('the preset must take the cover-particle layers over: the field here is its own galaxy');
+  }
+  if (!/galaxy: bhGalaxyStatus\(\)/.test(text)) fail('blackHoleStatus() must report the field, or it cannot be read back live');
+  // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
+  if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
+    fail('the field needs two bands at different angular rates, or it turns rigidly');
+  }
+  if (!/band\.rotation -= \(Number\(dt\) \|\| 0\) \* spin \* band\.rate/.test(text)) {
+    fail('each band must advance by its own rate');
+  }
+  if (!/new THREE\.PointsMaterial\(/.test(text)) {
+    fail('the field must use PointsMaterial: a custom Points shader drew but never reached the framebuffer on this three build');
   }
   if (!/mineradio-blackhole-tuning-v1/.test(tuningText) || !/function bindBlackHoleTuningResetButtons\(/.test(tuningText)) {
     fail('the hole knobs need their own store and one reset button per row');

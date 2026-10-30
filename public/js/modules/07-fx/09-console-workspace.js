@@ -172,7 +172,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认'),
         fxConsoleItem('halo-camera-reset', '重置视角', '环形数据流 视角 复位 拖拽 缩放 平移')
       ] },
-      { key: 'blackhole', title: '银河黑洞', hint: '引力透镜把画面里的东西（含歌词）绕洞弯折；洞的位置、自旋与歌词坠入都可调，文字大小仍复用「歌词」标签里的字号', items: [
+      { key: 'blackhole', title: '银河黑洞', hint: '自带一片棒旋星系（内部两臂、外部再分叉），黑洞在它的中心，引力透镜把星系与歌词一起绕洞弯折；文字大小仍复用「歌词」标签里的字号', items: [
         fxConsoleItem('fx-bhholeX', '黑洞水平位置', '银河黑洞 黑洞 水平 位置 取景 中心'),
         fxConsoleItem('fx-bhholeY', '黑洞垂直位置', '银河黑洞 黑洞 垂直 位置 取景 中心'),
         fxConsoleItem('fx-bhholeDepth', '黑洞距离', '银河黑洞 距离 深度 远近'),
@@ -192,6 +192,14 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhswallow', '吸入时长', '银河黑洞 歌词 吸入 消失 时长'),
         fxConsoleItem('fx-bhfallCurve', '落入指数', '银河黑洞 落入 指数 幂 加速 欻'),
         fxConsoleItem('fx-bhpassScale', '后处理分辨率', '银河黑洞 后处理 分辨率 性能 清晰'),
+        fxConsoleItem('fx-bhgalaxyDensity', '星系星点数', '银河黑洞 星系 星点 数量 粒子 银河'),
+        fxConsoleItem('fx-bhgalaxyRadius', '星系半径', '银河黑洞 星系 半径 大小 范围 银河'),
+        fxConsoleItem('fx-bhgalaxyPitch', '旋臂缠绕', '银河黑洞 旋臂 缠绕 螺距 手臂 卷'),
+        fxConsoleItem('fx-bhgalaxyBranches', '外臂分叉数', '银河黑洞 分叉 旋臂 分支 棒旋 多臂'),
+        fxConsoleItem('fx-bhgalaxyArmWidth', '旋臂宽度', '银河黑洞 旋臂 宽度 发散 厚薄'),
+        fxConsoleItem('fx-bhgalaxySpin', '星系自转', '银河黑洞 星系 自转 旋转 较差 转动'),
+        fxConsoleItem('fx-bhgalaxyGlow', '星光亮度', '银河黑洞 星点 亮度 星光 粒子 亮'),
+        fxConsoleItem('fx-bhnebulaAmount', '星云浓度', '银河黑洞 星云 雾 浓度 弥漫 背景'),
         fxConsoleItem({ selector: '.fx-blackhole-tuning .fx-actions' }, '恢复银河黑洞默认', '银河黑洞 重置 还原 默认')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

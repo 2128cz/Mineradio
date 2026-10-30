@@ -57,7 +57,17 @@ var BH_TUNING_SCHEMA = {
   flyIn: { def: 0.75, min: 0.15, max: 2.5, kind: 'sec', rebuild: 'live' },
   swallow: { def: 0.55, min: 0.15, max: 2, kind: 'sec', rebuild: 'live' },
   fallCurve: { def: 0.66, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
-  passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
+  passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
+  // The field is this preset's own galaxy, not the app's cover particles: density, size and the
+  // branch count rebuild the buffer, brightness / spin / haze are read every frame.
+  galaxyDensity: { def: 2600, min: 300, max: 6000, kind: 'count', rebuild: 'field' },
+  galaxyRadius: { def: 4.4, min: 1.2, max: 12, kind: 'unit', rebuild: 'field' },
+  galaxyPitch: { def: 1.35, min: 0.2, max: 4, kind: 'ratio', rebuild: 'field' },
+  galaxyBranches: { def: 2, min: 1, max: 4, kind: 'count', rebuild: 'field' },
+  galaxyArmWidth: { def: 0.16, min: 0.02, max: 0.5, kind: 'ratio', rebuild: 'field' },
+  galaxySpin: { def: 0.55, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  galaxyGlow: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
+  nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
 // The live value of a knob. The store is built by a later module, so the schema default is
@@ -562,6 +572,9 @@ function blackHoleApplyCamera(dt) {
   blackHoleState.level += (bhClamp(energy, 0, 1) - blackHoleState.level) * ease;
   blackHoleFlight.time += Math.max(0, Number(dt) || 0);
   blackHoleState.frame = bhComputeFrame();
+  // The field is built here rather than in the render path: a structural knob only changes a
+  // string key, and rebuilding a buffer between two draws would hitch the frame it lands on.
+  if (blackHoleState.frame) bhBuildGalaxy(false);
   return true;
 }
 
@@ -591,12 +604,17 @@ function renderBlackHoleFrame() {
   if (!blackHolePresetIsActive()) return false;
   if (!blackHoleState.rt && !bhBuildPass()) return false;
   var frame = blackHoleState.frame || bhComputeFrame();
+  // The field is built here as well as in the camera pass: at startup the preset is restored
+  // without going through setPreset, and with nothing playing the loop can be parked - the first
+  // real frame must not be a frame without a galaxy.
+  if (frame && frame.uv && !bhGalaxy.group) bhBuildGalaxy(true);
   if (!frame || !frame.uv || !bhEnsureScratch()) {
     blackHoleState.fallbacks++;
     return false;
   }
   bhAlignPassSize();
   bhSyncLens(frame);
+  bhPlaceGalaxy(frame, 0);
   var started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   var firstDraw = blackHoleState.draws === 0;
   var shaderErrors = [];
@@ -647,7 +665,9 @@ function applyBlackHolePresetNow(prev, next) {
   if (on) {
     if (!blackHoleState.rt) bhBuildPass();
     blackHoleState.frame = bhComputeFrame();
+    bhBuildGalaxy(true);
   } else if (was) {
+    bhDisposeGalaxy();
     bhDisposePass();
     blackHoleState.active = false;
   }
@@ -683,6 +703,7 @@ function blackHoleStatus() {
       naked: radii.naked
     },
     shadowUv: frame ? Math.round(frame.uvShadow * 10000) / 10000 : null,
+    galaxy: bhGalaxyStatus(),
     error: blackHoleState.error
   };
 }
@@ -696,13 +717,15 @@ if (typeof registerVisualTakeoverOwner === 'function') {
     id: 'blackhole-pass',
     isActive: blackHolePresetIsActive,
     suppresses: {
-      particles: false,
-      bloom: false,
-      float: false,
-      backCover: false,
-      starRiver: false,
-      ripples: false,
-      lyricsParticles: false,
+      // The cover particle field is what the other presets paint; this preset brings its own
+      // galaxy, so those layers are taken over rather than left under the lens.
+      particles: true,
+      bloom: true,
+      float: true,
+      backCover: true,
+      starRiver: true,
+      ripples: true,
+      lyricsParticles: true,
       stageLyrics: false
     }
   });
@@ -926,4 +949,342 @@ function updateBlackHoleLyricFlight(dt) {
   blackHoleFlight.holding = counts.holding;
   blackHoleState.frame = frame;
   return true;
+}
+
+// ---------------------------------------------------------------- the galaxy
+//
+// The user's own cover-particle layers are suppressed while this preset is on (that is what the
+// ring's "深海绽放" look was), so the field here is the preset's own: a barred spiral - a bar, two
+// arms leaving its ends, and those arms branching into further segments outside a split radius.
+//
+// Two rules the rest of the file keeps:
+//   - the pattern is deterministic and the *placement* is not: a segment's angle comes from the
+//     model, the sample inside it comes from a seeded RNG, so the arms read as arms and not as a
+//     lattice;
+//   - the field is built around the hole's own world point (bhComputeFrame().world), and the lens
+//     is centred on that point's projection. One source, so "the hole sits in the middle of the
+//     galaxy" cannot drift out of alignment the way two independently-tracked centres would.
+var BH_GALAXY_MODEL = {
+  barLength: 0.26,      // the bar, in units of the field's outer radius
+  split: 0.52,         // inside it: the bar plus two arms; outside: the arms branch
+  barAngle: 0.0,
+  branchStartSpread: 0.34,
+  branchWind: 0.55
+};
+
+// The segments of the pattern, as a function of the knobs rather than of a random draw: inner
+// arms exist from the bar ends outward, and each of them throws off `branches` further segments
+// starting at staggered radii. Pure, so the two-arm-inside / multi-segment-outside claim is a
+// testable statement and not a description of a picture.
+function bhGalaxySegments(branches) {
+  var count = Math.max(1, Math.round(Number(branches) || 2));
+  var segments = [];
+  for (var arm = 0; arm < 2; arm++) {
+    var root = BH_GALAXY_MODEL.barAngle + arm * Math.PI;
+    segments.push({ arm: arm, kind: 'inner', r0: BH_GALAXY_MODEL.barLength, r1: 1, root: root, offset: 0 });
+    for (var b = 0; b < count; b++) {
+      var start = BH_GALAXY_MODEL.split + (0.06 + 0.11 * b) + arm * 0.035;
+      if (start >= 0.98) continue;
+      segments.push({
+        arm: arm,
+        kind: 'branch',
+        branch: b,
+        // Branches fan away from the arm they came from and keep winding, so they read as
+        // separate segments rather than as one wider arm.
+        offset: (b + 1) * BH_GALAXY_MODEL.branchStartSpread * (arm === 0 ? 1 : -1),
+        wind: BH_GALAXY_MODEL.branchWind * (b + 1) * (arm === 0 ? 1 : -1),
+        r0: start,
+        r1: Math.min(1, start + 0.30 + 0.09 * b),
+        root: root
+      });
+    }
+  }
+  return segments;
+}
+
+// A seeded RNG: the field has to be reproducible, or every rebuild (a knob move, a resize) would
+// shuffle the galaxy and the "pattern" claim could not be checked against anything.
+function bhGalaxyRandom(seed) {
+  var state = (Number(seed) || 1) % 2147483647;
+  if (state <= 0) state += 2147483646;
+  return function () {
+    state = (state * 16807) % 2147483647;
+    return (state - 1) / 2147483646;
+  };
+}
+
+// The arm angle at a radius: a logarithmic spiral (wind proportional to ln(r/rBar)), which is what
+// keeps the pitch of the arms constant in the way real spirals do.
+function bhGalaxyArmAngle(root, radius, pitch) {
+  var inner = Math.max(1e-3, radius);
+  return root + (Number(pitch) || 1.35) * Math.log(inner / Math.max(1e-3, BH_GALAXY_MODEL.barLength) + 1);
+}
+
+// Which segments are alive at a radius, and where they sit: the count is 2 inside the split and
+// grows past it as the branches start.
+function bhGalaxyArmOffsets(radius, params) {
+  var pitch = params ? params.pitch : 1.35;
+  var branches = params ? params.branches : 2;
+  // Inside the bar radius the "arms" are the bar itself: two lobes at opposite ends.
+  if (radius < BH_GALAXY_MODEL.barLength) {
+    return [BH_GALAXY_MODEL.barAngle, BH_GALAXY_MODEL.barAngle + Math.PI];
+  }
+  var segments = bhGalaxySegments(branches);
+  var out = [];
+  for (var i = 0; i < segments.length; i++) {
+    var seg = segments[i];
+    if (radius < seg.r0 || radius > seg.r1) continue;
+    var angle = bhGalaxyArmAngle(seg.root, radius, pitch);
+    if (seg.kind === 'branch') angle += seg.offset + seg.wind * (radius - seg.r0);
+    out.push(angle);
+  }
+  return out;
+}
+
+// One particle: a segment is chosen by area, then the radius and the angular scatter come from the
+// RNG. Thickness falls with radius (a disc that flares a little at the rim), colour warms inward.
+function bhGalaxyPoint(index, rand, params) {
+  var segments = bhGalaxySegments(params.branches);
+  var total = 0;
+  var weights = [];
+  for (var i = 0; i < segments.length; i++) {
+    var seg = segments[i];
+    var weight = Math.max(0.02, seg.r1 * seg.r1 - seg.r0 * seg.r0);
+    weights.push(weight);
+    total += weight;
+  }
+  var pick = rand() * total;
+  var chosen = segments[segments.length - 1];
+  for (var w = 0; w < segments.length; w++) {
+    pick -= weights[w];
+    if (pick <= 0) { chosen = segments[w]; break; }
+  }
+  var radius = Math.sqrt(chosen.r0 * chosen.r0 + rand() * rand() * Math.max(0, chosen.r1 * chosen.r1 - chosen.r0 * chosen.r0));
+  radius = Math.min(1, Math.max(0.02, radius));
+  var angle = bhGalaxyArmAngle(chosen.root, radius, params.pitch);
+  if (chosen.kind === 'branch') angle += chosen.offset + chosen.wind * (radius - chosen.r0);
+  // Arms are wider relative to their own length at the outside, and branches are looser than the
+  // main arms - otherwise the whole field reads as two hard lines.
+  var spread = params.armWidth * (0.45 + radius * 0.85) * (chosen.kind === 'branch' ? 1.45 : 1);
+  var scatter = (rand() + rand() + rand() - 1.5) * spread;
+  // A quarter of the field is inter-arm: halo stars and diffuse haze, so the arms sit in a
+  // background instead of floating on black.
+  if (rand() < 0.24) {
+    radius = Math.pow(rand(), 0.6);
+    angle += (rand() - 0.5) * Math.PI * 0.9;
+    scatter = 0;
+  }
+  var z = (rand() - 0.5) * params.thickness * (1.35 - radius * 0.75) * (chosen.kind === 'branch' ? 1.5 : 1);
+  var warmth = Math.max(0, Math.min(1, 1.15 - radius * 1.1));
+  var bright = 0.35 + rand() * 0.65;
+  if (rand() < 0.02) bright *= 3.1;   // a few HII knots, bright and pinkish
+  return {
+    radius: radius,
+    angle: angle + scatter,
+    z: z,
+    size: (0.35 + Math.pow(rand(), 3) * 1.9) * (rand() < 0.04 ? 3.4 : 1),
+    warmth: warmth,
+    bright: bright,
+    knot: radius,
+    seed: rand()
+  };
+}
+
+// ---------------------------------------------------------------- the galaxy, in the scene
+//
+// Built as THREE.Points whose positions are computed in the vertex shader from per-particle
+// (radius, angle, height, size, colour). That is what buys differential rotation - inner turns
+// faster, so the arms wind up slowly while the pattern holds - without touching the buffer every
+// frame, and it keeps the field inside the render target the lens refracts.
+var bhGalaxy = { group: null, bands: [], key: '', count: 0, hazeCount: 0, error: '' };
+
+function bhGalaxyParams() {
+  return {
+    density: Math.round(bhClamp(bhParam('galaxyDensity'), 200, 6000)),
+    radius: bhClamp(bhParam('galaxyRadius'), 0.6, 14),
+    pitch: bhClamp(bhParam('galaxyPitch'), 0.2, 4),
+    branches: Math.round(bhClamp(bhParam('galaxyBranches'), 1, 4)),
+    armWidth: bhClamp(bhParam('galaxyArmWidth'), 0.02, 0.5),
+    thickness: 0.075,
+    spin: bhClamp(bhParam('galaxySpin'), 0, 3),
+    glow: bhClamp(bhParam('galaxyGlow'), 0, 2.5),
+    haze: bhClamp(bhParam('nebulaAmount'), 0, 1.5)
+  };
+}
+
+// Warm core, blue-white arms, pinkish knots: the palette is the app's own lyric palette's
+// neighbourhood rather than a second colour scheme invented here.
+function bhGalaxyColour(point) {
+  var warm = point.warmth;
+  var red = 0.55 + warm * 0.45;
+  var green = 0.45 + warm * 0.30 + (1 - warm) * 0.22;
+  var blue = 0.42 + (1 - warm) * 0.58;
+  if (point.knot > 0.35 && point.bright > 2) { red = 1.0; green = 0.45; blue = 0.72; }
+  var gain = Math.min(3.2, point.bright);
+  return [red * gain, green * gain, blue * gain];
+}
+
+// Two rings, two speeds: the inner band turns faster than the outer one, which is the cheap
+// version of differential rotation (a real disc shears continuously; a PointsMaterial cannot, and
+// a custom vertex shader for it turned into a silent "drawn but invisible" on this three build -
+// the field has to be visible, so it uses the material the rest of the app already proves works).
+var BH_GALAXY_BANDS = [
+  { key: 'inner', rate: 1.0, maxRadius: 0.55 },
+  { key: 'outer', rate: 0.55, maxRadius: 1.01 }
+];
+
+function bhGalaxyBandOf(point) {
+  for (var i = 0; i < BH_GALAXY_BANDS.length; i++) {
+    if (point.radius < BH_GALAXY_BANDS[i].maxRadius) return i;
+  }
+  return BH_GALAXY_BANDS.length - 1;
+}
+
+function bhGalaxyColours(point) {
+  var warm = point.warmth;
+  var red = 0.55 + warm * 0.45;
+  var green = 0.45 + warm * 0.30 + (1 - warm) * 0.22;
+  var blue = 0.42 + (1 - warm) * 0.58;
+  if (point.knot > 0.35 && point.bright > 2) { red = 1.0; green = 0.45; blue = 0.72; }
+  var gain = Math.min(3.2, point.bright) * 0.55;
+  return [red * gain, green * gain, blue * gain];
+}
+
+// Positions are written once: the pattern is static in the band's own frame and the band turns.
+// Haze is the same samples at a bigger size and a colder colour, so it tracks the arms exactly.
+function bhGalaxyGeometry(points, params, haze) {
+  var count = points.length;
+  var position = new Float32Array(count * 3);
+  var colour = new Float32Array(count * 3);
+  for (var i = 0; i < count; i++) {
+    var point = points[i];
+    var radius = point.radius * params.radius;
+    position[i * 3] = Math.cos(point.angle) * radius;
+    position[i * 3 + 1] = Math.sin(point.angle) * radius;
+    position[i * 3 + 2] = point.z * params.radius;
+    var rgb = haze
+      ? [0.30 + point.warmth * 0.24, 0.26 + point.warmth * 0.12, 0.46 + (1 - point.warmth) * 0.22]
+      : bhGalaxyColours(point);
+    colour[i * 3] = rgb[0];
+    colour[i * 3 + 1] = rgb[1];
+    colour[i * 3 + 2] = rgb[2];
+  }
+  var geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colour, 3));
+  return geometry;
+}
+
+function bhGalaxyMaterial(params, haze) {
+  var material = new THREE.PointsMaterial({
+    size: params.radius * (haze ? 0.055 : 0.012),
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    opacity: haze ? bhClamp(params.haze, 0, 1.5) * 0.55 : bhClamp(params.glow, 0, 2.5)
+  });
+  material.userData.bhHaze = !!haze;
+  return material;
+}
+
+function bhDisposeGalaxy() {
+  if (bhGalaxy.group && bhGalaxy.group.parent) bhGalaxy.group.parent.remove(bhGalaxy.group);
+  (bhGalaxy.bands || []).forEach(function (band) {
+    [band.stars, band.haze].forEach(function (object) {
+      if (!object) return;
+      if (object.geometry && object.geometry.dispose) object.geometry.dispose();
+      if (object.material && object.material.dispose) object.material.dispose();
+    });
+  });
+  bhGalaxy.group = null;
+  bhGalaxy.bands = [];
+  bhGalaxy.key = '';
+  bhGalaxy.count = 0;
+  bhGalaxy.hazeCount = 0;
+}
+
+function bhBuildGalaxy(force) {
+  if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !scene) return false;
+  var params = bhGalaxyParams();
+  var key = [params.density, params.radius, params.pitch, params.branches, params.armWidth].join(':');
+  if (bhGalaxy.group && bhGalaxy.key === key && !force) {
+    // Brightness and haze only move what the materials already read; the buffers stay.
+    (bhGalaxy.bands || []).forEach(function (band) {
+      if (band.stars) band.stars.material.opacity = bhClamp(params.glow, 0, 2.5);
+      if (band.haze) band.haze.material.opacity = bhClamp(params.haze, 0, 1.5) * 0.55;
+    });
+    return true;
+  }
+  var rand = bhGalaxyRandom(20261030);
+  var buckets = BH_GALAXY_BANDS.map(function () { return { points: [], haze: [] }; });
+  for (var i = 0; i < params.density; i++) {
+    var point = bhGalaxyPoint(i, rand, params);
+    var bucket = buckets[bhGalaxyBandOf(point)];
+    bucket.points.push(point);
+    if (i % 6 === 0) bucket.haze.push(point);
+  }
+  try {
+    bhDisposeGalaxy();
+    var group = new THREE.Group();
+    group.frustumCulled = false;
+    var bands = [];
+    buckets.forEach(function (bucket, index) {
+      if (!bucket.points.length) return;
+      var band = BH_GALAXY_BANDS[index];
+      var stars = new THREE.Points(bhGalaxyGeometry(bucket.points, params, false), bhGalaxyMaterial(params, false));
+      var haze = new THREE.Points(bhGalaxyGeometry(bucket.haze, params, true), bhGalaxyMaterial(params, true));
+      stars.frustumCulled = false;
+      haze.frustumCulled = false;
+      stars.renderOrder = 6;
+      haze.renderOrder = 5;
+      group.add(haze);
+      group.add(stars);
+      bands.push({ key: band.key, rate: band.rate, stars: stars, haze: haze, rotation: 0 });
+    });
+    scene.add(group);
+    bhGalaxy.group = group;
+    bhGalaxy.bands = bands;
+    bhGalaxy.key = key;
+    bhGalaxy.count = params.density;
+    bhGalaxy.hazeCount = buckets.reduce(function (sum, bucket) { return sum + bucket.haze.length; }, 0);
+    return true;
+  } catch (error) {
+    bhGalaxy.error = String((error && error.message) || error);
+    bhDisposeGalaxy();
+    return false;
+  }
+}
+
+// One centre for the whole preset: the field sits on the hole's own world point and faces the
+// camera; the lens is centred on that point's projection, so the hole is in the middle of the
+// galaxy by construction rather than by two numbes that happen to agree.
+function bhPlaceGalaxy(frame, dt) {
+  if (!bhGalaxy.group) return false;
+  bhGalaxy.group.position.set(frame.world.x, frame.world.y, frame.world.z);
+  if (typeof camera !== 'undefined' && camera) bhGalaxy.group.quaternion.copy(camera.quaternion);
+  var params = bhGalaxyParams();
+  var spin = bhClamp(params.spin, 0, 3);
+  (bhGalaxy.bands || []).forEach(function (band) {
+    // Bands carry their own angular speed, so the inner arms lap the outer ones.
+    band.rotation -= (Number(dt) || 0) * spin * band.rate * 0.5;
+    band.stars.rotation.z = band.rotation;
+    band.haze.rotation.z = band.rotation;
+  });
+  return true;
+}
+
+function bhGalaxyStatus() {
+  return {
+    built: !!bhGalaxy.group,
+    stars: bhGalaxy.count,
+    haze: bhGalaxy.hazeCount,
+    bands: (bhGalaxy.bands || []).length,
+    key: bhGalaxy.key,
+    armsInside: bhGalaxyArmOffsets(0.4, { pitch: bhParam('galaxyPitch'), branches: bhParam('galaxyBranches') }).length,
+    armsOutside: bhGalaxyArmOffsets(0.95, { pitch: bhParam('galaxyPitch'), branches: bhParam('galaxyBranches') }).length,
+    error: bhGalaxy.error || ''
+  };
 }

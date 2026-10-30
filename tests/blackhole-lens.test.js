@@ -56,7 +56,42 @@ function makeThree(record) {
     Scene: function () { this.children = []; this.add = function (o) { this.children.push(o); }; this.clear = function () { this.children = []; }; },
     OrthographicCamera: function () {},
     Mesh: function (geo, mat) { this.geometry = geo; this.material = mat; },
-    PlaneGeometry: function () { this.dispose = function () { record.disposed.push('geometry'); }; }
+    PlaneGeometry: function () { this.dispose = function () { record.disposed.push('geometry'); }; },
+    Group: function () {
+      this.children = [];
+      this.position = new V3();
+      this.quaternion = { copy: function (source) { this.copiedFrom = source; return this; } };
+      this.rotation = { z: 0 };
+      this.visible = true;
+      this.add = function (o) { this.children.push(o); o.parent = this; };
+      this.remove = function (o) { this.children = this.children.filter(function (c) { return c !== o; }); };
+      this.updateMatrixWorld = function () {};
+    },
+    Points: function (geometry, material) {
+      this.geometry = geometry;
+      this.material = material;
+      this.count = geometry ? geometry.pointCount : 0;
+      this.rotation = { z: 0 };
+    },
+    BufferGeometry: function () {
+      var self = this;
+      this.attributes = {};
+      this.pointCount = 0;
+      this.setAttribute = function (name, attr) { self.attributes[name] = attr; if (name === 'position') self.pointCount = attr.count; };
+      this.dispose = function () { record.disposed.push('galaxy-geometry'); };
+    },
+    BufferAttribute: function (array, itemSize) { this.array = array; this.itemSize = itemSize; this.count = array.length / itemSize; },
+    AdditiveBlending: 5,
+    PointsMaterial: function (options) {
+      options = options || {};
+      this.size = options.size;
+      this.sizeAttenuation = options.sizeAttenuation;
+      this.vertexColors = options.vertexColors;
+      this.opacity = options.opacity;
+      this.transparent = options.transparent;
+      this.userData = {};
+      this.dispose = function () { record.disposed.push('galaxy-material'); };
+    }
   };
 }
 
@@ -345,7 +380,7 @@ function load(overrides) {
   // stageLyrics alone, and the loop must route the render through the pass with a fallback.
   const ownerBlock = source.slice(source.indexOf("registerVisualTakeoverOwner({"));
   assert(/stageLyrics: false/.test(ownerBlock), 'stageLyrics must stay on: text outside the render target cannot be bent');
-  assert(/particles: false/.test(ownerBlock), 'the scene stays on: it is what the lens bends');
+  assert(/particles: true/.test(ownerBlock), "the app's cover-particle field belongs to the other presets; this one paints its own galaxy");
   assert(/renderBlackHoleFrame\(\)/.test(loopText), 'the main loop must route the render through the lens');
   assert(/if \(!lensFrameDone\) renderer\.render\(scene, camera\)/.test(loopText), 'and fall back to a plain render');
   const atCamera = loopText.indexOf('blackHoleApplyCamera(dt)');
@@ -359,6 +394,146 @@ function load(overrides) {
   assert(atFlight < atPass, 'the flight must be in the target the lens renders');
   const gridText = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
   assert(/applyBlackHolePresetNow\(prev, p\)/.test(gridText), 'selecting the preset must build the pass');
+}
+
+// ------------------------------------------------ the field is a barred spiral, statistically
+//
+// "random arrangement, but the arrangement follows a rule" is only a claim if it can be counted.
+// The arms come from bhGalaxyArmOffsets (the model), the samples from a seeded RNG, and the test
+// measures how tightly the samples hug the arms - a lattice would hug them too well, and a
+// uniform disc would not hug them at all.
+{
+  const sandbox = load({ fx: { preset: 15 } });
+  const params = {
+    pitch: sandbox.bhParam('galaxyPitch'),
+    branches: sandbox.bhParam('galaxyBranches'),
+    armWidth: sandbox.bhParam('galaxyArmWidth'),
+    thickness: 0.075,
+    radius: 1
+  };
+
+  const insideBar = sandbox.bhGalaxyArmOffsets(0.12, params);
+  assert(insideBar.length === 2, 'the bar is two lobes, found ' + insideBar.length);
+  const barFlip = ((insideBar[0] - insideBar[1]) % Math.PI + Math.PI) % Math.PI;
+  assert(Math.min(barFlip, Math.PI - barFlip) < 1e-9,
+    "the bar's two ends must be opposite each other, found " + insideBar.join(' / '));
+  const innerArms = sandbox.bhGalaxyArmOffsets(0.38, params);
+  const outerArms = sandbox.bhGalaxyArmOffsets(0.95, params);
+  assert(innerArms.length === 2, 'two arms inside the split, found ' + innerArms.length);
+  assert(outerArms.length > innerArms.length, 'outside the split there must be more segments than inside, found ' + outerArms.length);
+  // Branch segments occupy their own radial bands, so the count varies with radius; what has to
+  // hold is that past the split the two arms throw off further segments - counted as a maximum over
+  // the outer field, because a single radius would only prove the bands happen to overlap there.
+  let maxOuter = 0;
+  const splitAt = (sandbox.BH_GALAXY_MODEL && sandbox.BH_GALAXY_MODEL.split) || 0.53;
+  for (let sweep = splitAt + 0.01; sweep <= 1.0001; sweep += 0.01) {
+    maxOuter = Math.max(maxOuter, sandbox.bhGalaxyArmOffsets(sweep, params).length);
+  }
+  assert(maxOuter >= 2 + 2 * params.branches,
+    'the outer field must branch into ' + (2 + 2 * params.branches) + ' segments at its widest, got ' + maxOuter);
+
+  // Log winding: the arm angle grows with ln(r/rBar), so the pitch is the same at every radius.
+  const bar = 0.26;
+  const wound = sandbox.bhGalaxyArmAngle(0, 0.9, params.pitch) - sandbox.bhGalaxyArmAngle(0, 0.45, params.pitch);
+  const closed = params.pitch * Math.log((0.9 / bar + 1) / (0.45 / bar + 1));
+  assert(Math.abs(wound - closed) < 1e-9, 'the winding must be the log spiral: ' + wound + ' vs ' + closed);
+  assert(wound > 0, 'arms must wind further out, not unwind');
+
+  const rand = sandbox.bhGalaxyRandom(20261030);
+  const samples = [];
+  for (let i = 0; i < 2400; i++) samples.push(sandbox.bhGalaxyPoint(i, rand, params));
+  function hugInBand(lo, hi) {
+    const offsets = [];
+    for (let r = lo; r <= hi + 1e-9; r += 0.01) offsets.push({ r: r, arms: sandbox.bhGalaxyArmOffsets(r, params) });
+    let inside = 0, counted = 0, halo = 0;
+    samples.forEach(function (point) {
+      if (point.radius < lo || point.radius > hi) return;
+      counted++;
+      let best = 9;
+      let row = offsets[0];
+      offsets.forEach(function (candidate) {
+        if (Math.abs(candidate.r - point.radius) < Math.abs(row.r - point.radius)) row = candidate;
+      });
+      row.arms.forEach(function (arm) {
+        let d = Math.abs(point.angle - arm) % (2 * Math.PI);
+        d = Math.min(d, 2 * Math.PI - d) * point.radius;
+        best = Math.min(best, d);
+      });
+      if (best < params.armWidth * 2.6 * point.radius) inside++;
+      else halo++;
+    });
+    return { counted: counted, inside: inside, halo: halo };
+  }
+  const innerBand = hugInBand(0.34, 0.42);
+  const outerBand = hugInBand(0.86, 0.96);
+  assert(innerBand.counted > 40 && outerBand.counted > 40,
+    'the bands must be sampled: ' + innerBand.counted + ' / ' + outerBand.counted);
+  const innerFrac = innerBand.inside / innerBand.counted;
+  const outerFrac = outerBand.inside / outerBand.counted;
+  assert(innerFrac > 0.6, 'most of the inner band must sit on an arm, got ' + innerFrac.toFixed(2));
+  assert(outerFrac > 0.6, 'most of the outer band must sit on a branch, got ' + outerFrac.toFixed(2));
+  assert(innerBand.halo > 0 && outerBand.halo > 0, 'and some must be inter-arm haze, or it is a lattice not a galaxy');
+  const distinct = new Set(samples.map(function (p) { return Math.round(p.radius * 120); })).size;
+  assert(distinct > 100, 'the field must fill the disc radially, got ' + distinct + ' radial bins');
+  const again = sandbox.bhGalaxyPoint(0, sandbox.bhGalaxyRandom(20261030), params);
+  assert(Math.abs(again.radius - samples[0].radius) < 1e-12 && Math.abs(again.angle - samples[0].angle) < 1e-12,
+    'the sampler must be reproducible from its seed');
+  const other = sandbox.bhGalaxyPoint(0, sandbox.bhGalaxyRandom(7), params);
+  assert(Math.abs(other.radius - samples[0].radius) > 1e-9, 'a different seed must place a different field');
+  console.log('galaxy: bar lobes 2, arms inside ' + innerArms.length + ', segments outside ' + outerArms.length
+    + ', band hug inner ' + (innerFrac * 100).toFixed(0) + '% / outer ' + (outerFrac * 100).toFixed(0) + '%'
+    + ', inter-arm ' + (innerBand.halo + outerBand.halo) + ' of ' + (innerBand.counted + outerBand.counted)
+    + ', radial bins ' + distinct);
+}
+
+// --------------------------------------------------------- one centre, and it is the hole's
+{
+  const scene = {
+    children: [],
+    add(object) { object.parent = this; this.children.push(object); },
+    remove(object) { this.children = this.children.filter(function (c) { return c !== object; }); }
+  };
+  const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
+  const record3 = { draws: [], rtSizes: [], disposed: [], setTarget: [] };
+  const sandbox = load({
+    THREE: makeThree(record3),
+    camera: camera,
+    scene: scene,
+    fx: { preset: 15 },
+    renderer: {
+      drawingSize: { x: 1600, y: 900 },
+      getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+      getPixelRatio() { return 1; }
+    }
+  });
+  assert(sandbox.bhBuildGalaxy(true) === true, 'the field must build');
+  const group = scene.children[0];
+  assert(!!group, 'the field must be added to the scene the lens renders');
+  const frame = sandbox.bhComputeFrame();
+  sandbox.bhPlaceGalaxy(frame, 0.016);
+  const gap = Math.hypot(group.position.x - frame.world.x, group.position.y - frame.world.y, group.position.z - frame.world.z);
+  assert(gap < 1e-9, 'the galaxy must be centred on the hole, gap ' + gap);
+  assert(sandbox.blackHoleStatus().galaxy.stars === Math.round(sandbox.bhParam('galaxyDensity')),
+    'the star count must be what the knob asks for: ' + JSON.stringify(sandbox.blackHoleStatus().galaxy));
+  assert(sandbox.blackHoleStatus().galaxy.haze > 0, 'and the haze layer must exist');
+
+  // A structural knob rebuilds; a brightness knob only moves a uniform.
+  sandbox.blackHoleTuning = sandbox.blackHoleTuning || {};
+  const before = scene.children[0];
+  const countBefore = sandbox.blackHoleStatus().galaxy.stars;
+  sandbox.blackHoleTuning.galaxyGlow = 2;
+  sandbox.bhBuildGalaxy(false);
+  assert(scene.children[0] === before, 'a brightness knob must not rebuild the buffer');
+  assert(sandbox.blackHoleStatus().galaxy.stars === countBefore, 'nor change the count');
+  sandbox.blackHoleTuning.galaxyDensity = 900;
+  sandbox.bhBuildGalaxy(false);
+  assert(sandbox.blackHoleStatus().galaxy.stars !== countBefore, 'a density knob must rebuild the buffer');
+  assert(record3.disposed.indexOf('galaxy-geometry') >= 0, 'and the rebuild must dispose the old geometry');
+
+  sandbox.applyBlackHolePresetNow(15, 14);
+  assert(scene.children.length === 0, 'leaving the preset must take the field out of the scene');
+  assert(record3.disposed.filter(function (name) { return name === 'galaxy-geometry'; }).length >= 2,
+    'and dispose it: ' + JSON.stringify(record3.disposed));
 }
 
 // ------------------------------------------------------------------ the lyric flight

@@ -70,6 +70,9 @@ function bhTuningApply(key) {
   var spec = BH_TUNING_SCHEMA[key];
   if (!spec) return false;
   if (spec.rebuild === 'pass' && typeof bhAlignPassSize === 'function') bhAlignPassSize();
+  // 'field' is a structural change to the galaxy: the buffer is rebuilt here rather than waiting
+  // for the frame loop, so a knob drag does not leave the old star count on screen for a frame.
+  if (spec.rebuild === 'field' && typeof bhBuildGalaxy === 'function') bhBuildGalaxy(false);
   if (spec.rebuild === 'lyric' && typeof blackHoleFlight !== 'undefined') blackHoleFlight.time = 0;
   if (typeof markRenderInteraction === 'function') markRenderInteraction('blackhole-tuning');
   return true;
