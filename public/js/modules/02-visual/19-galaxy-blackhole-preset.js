@@ -61,13 +61,18 @@ var BH_TUNING_SCHEMA = {
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
   // branch count rebuild the buffer, brightness / spin / haze are read every frame.
   galaxyDensity: { def: 2600, min: 300, max: 6000, kind: 'count', rebuild: 'field' },
-  galaxyRadius: { def: 4.4, min: 1.2, max: 12, kind: 'unit', rebuild: 'field' },
+  galaxyRadius: { def: 2.6, min: 0.8, max: 12, kind: 'unit', rebuild: 'field' },
   galaxyPitch: { def: 1.35, min: 0.2, max: 4, kind: 'ratio', rebuild: 'field' },
   galaxyBranches: { def: 2, min: 1, max: 4, kind: 'count', rebuild: 'field' },
   galaxyArmWidth: { def: 0.16, min: 0.02, max: 0.5, kind: 'ratio', rebuild: 'field' },
   galaxySpin: { def: 0.55, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   galaxyGlow: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
-  nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
+  nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  // The lyrics run along the galaxy's outer rim; the radius has to stay outside the field, which
+  // the test pins against galaxyRadius.
+  lyricRadius: { def: 3.3, min: 0.5, max: 12, kind: 'unit', rebuild: 'live' },
+  lyricSpread: { def: 0.16, min: 0.02, max: 0.9, kind: 'ratio', rebuild: 'live' },
+  lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
 // The live value of a knob. The store is built by a later module, so the schema default is
@@ -666,7 +671,9 @@ function applyBlackHolePresetNow(prev, next) {
     if (!blackHoleState.rt) bhBuildPass();
     blackHoleState.frame = bhComputeFrame();
     bhBuildGalaxy(true);
+    bhBuildLyrics();
   } else if (was) {
+    bhDisposeLyrics();
     bhDisposeGalaxy();
     bhDisposePass();
     blackHoleState.active = false;
@@ -704,6 +711,7 @@ function blackHoleStatus() {
     },
     shadowUv: frame ? Math.round(frame.uvShadow * 10000) / 10000 : null,
     galaxy: bhGalaxyStatus(),
+    lyrics: bhLyricStatus(),
     error: blackHoleState.error
   };
 }
@@ -726,7 +734,9 @@ if (typeof registerVisualTakeoverOwner === 'function') {
       starRiver: true,
       ripples: true,
       lyricsParticles: true,
-      stageLyrics: false
+      // The straight lyric rows are replaced by this preset's own arc rows, which are meshes in
+      // the render target - so the app's layer is taken over rather than left underneath.
+      stageLyrics: true
     }
   });
 }
@@ -866,6 +876,8 @@ function bhEntryWorld(lineIndex, frame) {
 // the pass renders (so the displacement is inside the target the lens refracts).
 function updateBlackHoleLyricFlight(dt) {
   if (!blackHolePresetIsActive()) return false;
+  // The arc layer is the owner of the text while it is up; only one of the two may move meshes.
+  if (bhLyrics.layer) return false;
   var frame = blackHoleState.frame || bhComputeFrame();
   if (!frame || !frame.uv) return false;
   if (typeof stageLyrics === 'undefined' || !stageLyrics || !stageLyrics.group) return false;
@@ -1274,6 +1286,376 @@ function bhPlaceGalaxy(frame, dt) {
     band.haze.rotation.z = band.rotation;
   });
   return true;
+}
+
+
+// ---------------------------------------------------------------- the lyric arc
+//
+// The text does not sit in the middle of the frame: it runs along the galaxy's outer rim in curved
+// rows, drifting there, and the sung line is the one at the front. Two pieces are borrowed from
+// the ring preset rather than re-derived - the per-glyph arc maths (haloDrawArcLine draws each
+// glyph with its own rotation and keeps its feet towards the centre) and the lyric timing/palette
+// plumbing (lyricsLines + getActiveLyricTimingOffsetSeconds, the translation the app attached to
+// the line, haloLyricPalette / lyricMotionProfile for colour and motion).
+//
+// The difference is where it is drawn. The ring paints on a DOM canvas, which this preset's post
+// pass cannot refract; here each row is rasterised into its own canvas, uploaded as a texture and
+// mapped onto a plane that stands tangent to the rim inside the render target - so the arc bends
+// with everything else the lens touches.
+var bhLyrics = {
+  layer: null,
+  rows: [],
+  items: [],
+  listKey: '',
+  sung: -1,
+  time: 0,
+  builtKey: ''
+};
+
+function bhLyricTranslationOf(line) {
+  if (!line) return '';
+  if (typeof haloLyricTranslationOf === 'function') return haloLyricTranslationOf(line);
+  if (typeof normalizeLyricTranslationText === 'function') return normalizeLyricTranslationText(line.translation);
+  return String(line.translation || '').trim();
+}
+
+function bhLyricFontPx() {
+  var scale = 1;
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricScale))) scale = Number(fx.lyricScale);
+  return Math.max(11, Math.min(44, 19 * bhClamp(scale, 0.35, 1.65)));
+}
+
+// The lines, with the app's own timing offset folded in, so a row's start is the moment it is
+// sung rather than the moment the file says.
+function bhLyricItems() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var offset = 0;
+  if (typeof getActiveLyricTimingOffsetSeconds === 'function') offset = getActiveLyricTimingOffsetSeconds();
+  var items = [];
+  for (var i = 0; i < lines.length; i++) {
+    var text = String((lines[i] && lines[i].text) || '').trim();
+    if (!text) continue;
+    items.push({
+      index: i,
+      text: text,
+      sub: bhLyricTranslationOf(lines[i]),
+      startAt: Number(lines[i].t) + offset
+    });
+  }
+  for (var k = 0; k < items.length; k++) {
+    items[k].endAt = k + 1 < items.length ? items[k + 1].startAt : items[k].startAt + 6;
+  }
+  return items;
+}
+
+function bhLyricListKey(items) {
+  var song = '';
+  if (typeof haloCurrentSong === 'function') {
+    var current = haloCurrentSong();
+    song = String((current && (current.id || current.name || current.title)) || '');
+  }
+  return song + '|' + items.length + '|' + (items.length ? items[0].text : '');
+}
+
+// Which line is being sung at t: the last one whose start has passed.
+function bhLyricSungIndex(items, t) {
+  if (!items || !items.length) return -1;
+  var found = -1;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].startAt <= t) found = i; else break;
+  }
+  return found;
+}
+
+// Per-glyph placement along a circular arc, in canvas pixels with y pointing down. Radius is the
+// arc's radius; the glyphs sit on the circle of that radius whose centre is `radius` below the
+// baseline. Each glyph is rotated by its own angle, so the letters stay upright on the curve
+// instead of being turned by the plane.
+function bhArcGlyphs(widths, radius, cx, cy) {
+  var total = 0;
+  for (var i = 0; i < widths.length; i++) total += widths[i];
+  var placed = [];
+  var travelled = -total / 2;
+  for (var g = 0; g < widths.length; g++) {
+    travelled += widths[g] / 2;
+    var angle = travelled / Math.max(1, radius);
+    placed.push({
+      x: cx + Math.sin(angle) * radius,
+      y: cy + radius - Math.cos(angle) * radius,
+      angle: angle
+    });
+    travelled += widths[g] / 2;
+  }
+  return { glyphs: placed, total: total, span: total / Math.max(1, radius) };
+}
+
+// Where a row sits in the disc, given how far it is from the sung line. Rotation is signed so the
+// rows advance the same way round the rim, and each row keeps a small radial offset so the text
+// looks scattered around the galaxy instead of ruled onto a circle.
+function bhArcRowPlacement(offset, params) {
+  var step = params.spread;
+  return {
+    angle: -offset * step,
+    radius: params.radius * (1 + (offset % 2 === 0 ? 0.035 : -0.045) * (Math.abs(offset) > 0 ? 1 : 0)),
+    opacity: offset === 0 ? 1 : Math.max(0.18, 0.62 - Math.abs(offset) * 0.14),
+    scale: offset === 0 ? 1.18 : 1
+  };
+}
+
+function bhLyricPaletteState() {
+  if (typeof haloLyricPalette === 'function') {
+    var palette = haloLyricPalette();
+    return {
+      primary: palette.primary || '#9db8cf',
+      highlight: palette.highlight || palette.primary || '#fff0b8',
+      context: palette.secondary || palette.primary || '#7f8fa3',
+      signature: [palette.primary, palette.highlight, palette.secondary].join(',')
+    };
+  }
+  return { primary: '#9db8cf', highlight: '#fff0b8', context: '#7f8fa3', signature: 'default' };
+}
+
+function bhLyricMotionState() {
+  if (typeof lyricMotionProfile === 'function') {
+    try { return lyricMotionProfile(); } catch (_) {}
+  }
+  return { floatAmp: 0.4, enter: 0.28 };
+}
+
+// Rasterises one row onto its own canvas: the line on the upper arc, the translation under it on a
+// slightly wider one, both bent by the same maths.
+function bhDrawRowCanvas(row, item, sung, palette, motion) {
+  var fontPx = bhLyricFontPx();
+  var subPx = Math.round(fontPx * 0.62);
+  var font = '700 ' + fontPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : '"JetBrains Mono","Microsoft YaHei",monospace');
+  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : 'monospace');
+  // Measure first, then size the canvas to the text: a plane that carries a mostly empty texture
+  // puts the letters about a pixel tall on screen.
+  var measure = row.ctx;
+  measure.font = font;
+  var widths = [];
+  var chars = item.text.split('');
+  var mainWidth = 0;
+  for (var i = 0; i < chars.length; i++) {
+    var w = measure.measureText(chars[i]).width;
+    widths.push(w > 0 ? w : fontPx * 0.6);
+    mainWidth += widths[i];
+  }
+  var subWidths = [];
+  var subChars = item.sub ? item.sub.split('') : [];
+  measure.font = subFont;
+  var subWidth = 0;
+  for (var s0 = 0; s0 < subChars.length; s0++) {
+    var sw = measure.measureText(subChars[s0]).width;
+    subWidths.push(sw > 0 ? sw : subPx * 0.6);
+    subWidth += subWidths[s0];
+  }
+  var canvasWidth = Math.max(fontPx * 4, Math.min(2048, Math.ceil(Math.max(mainWidth, subWidth) + fontPx * 1.4)));
+  var canvasHeight = Math.ceil((fontPx + (item.sub ? subPx * 1.9 : 0)) * 1.9);
+  if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
+    row.canvas.width = canvasWidth;
+    row.canvas.height = canvasHeight;
+  }
+  var ctx = row.canvas.getContext('2d');
+  row.ctx = ctx;
+  row.widthRatio = canvasWidth / canvasHeight;
+  var width = canvasWidth;
+  var height = canvasHeight;
+  ctx.clearRect(0, 0, width, height);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  var colour = sung ? palette.highlight : palette.primary;
+  var alpha = sung ? 1 : 0.72;
+  ctx.font = font;
+  var radius = width * 1.6;
+  var main = bhArcGlyphs(widths, radius, width / 2, fontPx * 0.75);
+  var clip = Math.min(main.total / 2, width / 2 - 4);
+  for (var g = 0; g < main.glyphs.length; g++) {
+    var spot = main.glyphs[g];
+    if (Math.abs(spot.x - width / 2) > clip) continue;
+    ctx.save();
+    ctx.translate(spot.x, spot.y);
+    ctx.rotate(spot.angle);
+    ctx.font = font;
+    ctx.fillStyle = bhLyricCss(colour, alpha);
+    ctx.fillText(chars[g], 0, 0);
+    ctx.restore();
+  }
+  if (item.sub) {
+    ctx.font = subFont;
+    var subArc = bhArcGlyphs(subWidths, radius * 1.12, width / 2, fontPx * 0.75 + subPx * 1.7);
+    for (var t2 = 0; t2 < subArc.glyphs.length; t2++) {
+      var subSpot = subArc.glyphs[t2];
+      if (Math.abs(subSpot.x - width / 2) > clip) continue;
+      ctx.save();
+      ctx.translate(subSpot.x, subSpot.y);
+      ctx.rotate(subSpot.angle);
+      ctx.font = subFont;
+      ctx.fillStyle = bhLyricCss(palette.context, alpha * 0.72);
+      ctx.fillText(subChars[t2], 0, 0);
+      ctx.restore();
+    }
+  }
+  row.sung = sung;
+}
+
+function bhLyricCss(colour, alpha) {
+  if (typeof haloRgba === 'function') return haloRgba(colour, alpha);
+  return colour;
+}
+
+function bhBuildLyricRow(width, height) {
+  var canvas = document.createElement('canvas');
+  canvas.width = Math.max(64, Math.round(width));
+  canvas.height = Math.max(32, Math.round(height));
+  var texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  var material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    opacity: 1
+  });
+  var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 60;
+  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, exitAt: 0 };
+}
+
+function bhDisposeLyrics() {
+  if (bhLyrics.layer && bhLyrics.layer.parent) bhLyrics.layer.parent.remove(bhLyrics.layer);
+  (bhLyrics.rows || []).forEach(function (row) {
+    if (row.texture && row.texture.dispose) row.texture.dispose();
+    if (row.material && row.material.dispose) row.material.dispose();
+    if (row.mesh && row.mesh.geometry && row.mesh.geometry.dispose) row.mesh.geometry.dispose();
+  });
+  bhLyrics.layer = null;
+  bhLyrics.rows = [];
+  bhLyrics.items = [];
+  bhLyrics.listKey = '';
+  bhLyrics.builtKey = '';
+  bhLyrics.sung = -1;
+}
+
+function bhBuildLyrics() {
+  if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !scene) return false;
+  var items = bhLyricItems();
+  var layer = new THREE.Group();
+  layer.frustumCulled = false;
+  var params = bhLyricParams();
+  var rows = [];
+  var fontPx = bhLyricFontPx();
+  var worldHeight = fontPx * 0.0085;
+  for (var i = 0; i < 5; i++) {
+    var row = bhBuildLyricRow(1024, 256);
+    row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
+    layer.add(row.mesh);
+    rows.push(row);
+  }
+  scene.add(layer);
+  bhLyrics.layer = layer;
+  bhLyrics.rows = rows;
+  bhLyrics.items = items;
+  bhLyrics.listKey = bhLyricListKey(items);
+  bhLyrics.builtKey = bhLyrics.listKey + '|' + fontPx;
+  return true;
+}
+
+function bhLyricParams() {
+  return {
+    radius: bhClamp(bhParam('lyricRadius'), 0.5, 12),
+    spread: bhClamp(bhParam('lyricSpread'), 0.02, 0.9),
+    drift: bhClamp(bhParam('lyricDrift'), 0, 1.5)
+  };
+}
+
+// The rows ride the same layer transform as the galaxy, so they stay on its rim from any camera
+// angle; the swallow keeps the power law the flight had.
+function bhPlaceLyrics(frame, dt) {
+  if (!bhLyrics.layer) return false;
+  var params = bhLyricParams();
+  bhLyrics.time += Math.max(0, Number(dt) || 0);
+  var time = bhLyrics.time;
+  var motion = bhLyricMotionState();
+  bhLyrics.layer.position.set(frame.world.x, frame.world.y, frame.world.z);
+  if (typeof camera !== 'undefined' && camera) bhLyrics.layer.quaternion.copy(camera.quaternion);
+  var drift = Math.sin(time * 0.18) * params.drift * 0.35;
+  for (var i = 0; i < bhLyrics.rows.length; i++) {
+    var row = bhLyrics.rows[i];
+    var itemIndex = bhLyrics.sung < 0 ? i : bhLyrics.sung + (i - 2);
+    if (itemIndex < 0 || itemIndex >= bhLyrics.items.length) {
+      row.mesh.visible = false;
+      continue;
+    }
+    if (row.itemIndex !== itemIndex) {
+      row.itemIndex = itemIndex;
+      row.exitAt = 0;
+      bhDrawRowCanvas(row, bhLyrics.items[itemIndex], itemIndex === bhLyrics.sung, bhLyricPaletteState(), motion);
+      row.texture.needsUpdate = true;
+    }
+    var offset = itemIndex - bhLyrics.sung;
+    var place = bhArcRowPlacement(offset, params);
+    var angle = place.angle + drift;
+    var radius = place.radius;
+    var floatPx = Math.sin(time * 0.6 + itemIndex * 0.9) * (motion.floatAmp || 0) * 0.02;
+    var x = Math.cos(angle) * radius;
+    var y = Math.sin(angle) * radius + floatPx;
+    // Leaving the sung line: the row falls into the hole on the same power law the rows used
+    // before the arc - the last stretch is the quick one.
+    if (itemIndex !== bhLyrics.sung) {
+      if (!row.exitAt) row.exitAt = time;
+      var u = bhClamp((time - row.exitAt) / Math.max(0.05, bhParam('swallow')), 0, 1);
+      var keep = Math.pow(Math.max(0, 1 - u), bhClamp(bhParam('fallCurve'), 0.05, 3));
+      x *= keep;
+      y *= keep;
+      row.mesh.visible = u < 1;
+    } else {
+      row.mesh.visible = true;
+    }
+    row.mesh.position.set(x, y, 0.02);
+    row.mesh.rotation.z = angle + Math.PI / 2;
+    var worldH = bhLyricFontPx() * 0.0085;
+    row.mesh.scale.set(worldH * (row.widthRatio || 4), worldH, 1);
+    row.material.opacity = place.opacity;
+  }
+  return true;
+}
+
+function bhLyricStatus() {
+  return {
+    built: !!bhLyrics.layer,
+    rows: bhLyrics.rows.length,
+    items: bhLyrics.items.length,
+    sung: bhLyrics.sung,
+    radius: Math.round(bhParam('lyricRadius') * 100) / 100,
+    text: bhLyrics.sung >= 0 && bhLyrics.items[bhLyrics.sung] ? bhLyrics.items[bhLyrics.sung].text.slice(0, 20) : ''
+  };
+}
+
+// The arc layer owns the text while it exists; the app's own row flight only runs when it does not,
+// so there is exactly one thing moving lyric meshes at a time.
+function updateBlackHoleLyrics(dt) {
+  if (!blackHolePresetIsActive()) return false;
+  var frame = blackHoleState.frame || bhComputeFrame();
+  if (!frame || !frame.uv) return false;
+  if (!bhLyrics.layer) {
+    if (!bhBuildLyrics()) return false;
+  }
+  var items = bhLyricItems();
+  var key = bhLyricListKey(items);
+  if (key !== bhLyrics.listKey) {
+    bhLyrics.items = items;
+    bhLyrics.listKey = key;
+    bhLyrics.builtKey = key + '|' + bhLyricFontPx();
+    for (var i = 0; i < bhLyrics.rows.length; i++) bhLyrics.rows[i].itemIndex = -1;
+  }
+  var t = 0;
+  if (typeof audio !== 'undefined' && audio && isFinite(Number(audio.currentTime))) t = Number(audio.currentTime);
+  bhLyrics.sung = bhLyricSungIndex(bhLyrics.items, t);
+  return bhPlaceLyrics(frame, dt);
 }
 
 function bhGalaxyStatus() {

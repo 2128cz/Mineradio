@@ -692,6 +692,7 @@ function animate() {
   // Rows are displaced after the app has laid them out, every frame, so the flight into the hole
   // stays smooth even when the lyric layout itself is running on a lower gate.
   if (typeof updateBlackHoleLyricFlight === 'function') updateBlackHoleLyricFlight(dt);
+  if (typeof updateBlackHoleLyrics === 'function') updateBlackHoleLyrics(dt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.stage-lyrics', stageLyricsPerfStart);
   var desktopOverlayPerfStart = performance.now();
   var desktopOverlayStepDt = consumeFrameGate(mainFrameGates.desktopOverlay, now, dt, targetMainDesktopOverlayFps(now), false, 'desktop-overlay');

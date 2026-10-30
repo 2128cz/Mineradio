@@ -200,6 +200,9 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhgalaxySpin', '星系自转', '银河黑洞 星系 自转 旋转 较差 转动'),
         fxConsoleItem('fx-bhgalaxyGlow', '星光亮度', '银河黑洞 星点 亮度 星光 粒子 亮'),
         fxConsoleItem('fx-bhnebulaAmount', '星云浓度', '银河黑洞 星云 雾 浓度 弥漫 背景'),
+        fxConsoleItem('fx-bhlyricRadius', '歌词弧半径', '银河黑洞 歌词 弧 半径 外围 银河 外缘'),
+        fxConsoleItem('fx-bhlyricSpread', '歌词间距', '银河黑洞 歌词 行距 间距 错开'),
+        fxConsoleItem('fx-bhlyricDrift', '歌词飘散', '银河黑洞 歌词 漂移 漂浮 飘散 缓慢'),
         fxConsoleItem({ selector: '.fx-blackhole-tuning .fx-actions' }, '恢复银河黑洞默认', '银河黑洞 重置 还原 默认')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

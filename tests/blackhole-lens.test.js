@@ -379,7 +379,13 @@ function load(overrides) {
   // The lens bends text only if the text is inside its target: the takeover owner must leave
   // stageLyrics alone, and the loop must route the render through the pass with a fallback.
   const ownerBlock = source.slice(source.indexOf("registerVisualTakeoverOwner({"));
-  assert(/stageLyrics: false/.test(ownerBlock), 'stageLyrics must stay on: text outside the render target cannot be bent');
+  // The straight rows are replaced by this preset's own arc rows, which are meshes inside the
+  // render target - suppressing the app's layer is what stops two copies of the text fighting.
+  assert(/stageLyrics: true/.test(ownerBlock), "the app's straight lyric rows must be taken over by the arc layer");
+  assert(/function bhArcGlyphs\(/.test(source) && /function bhDrawRowCanvas\(/.test(source),
+    'the arc rows have to be rasterised with the per-glyph arc maths');
+  assert(/new THREE\.CanvasTexture\(canvas\)/.test(source) && /THREE\.MeshBasicMaterial\(/.test(source),
+    'and uploaded as textures on planes, which is what lets the lens bend them');
   assert(/particles: true/.test(ownerBlock), "the app's cover-particle field belongs to the other presets; this one paints its own galaxy");
   assert(/renderBlackHoleFrame\(\)/.test(loopText), 'the main loop must route the render through the lens');
   assert(/if \(!lensFrameDone\) renderer\.render\(scene, camera\)/.test(loopText), 'and fall back to a plain render');
@@ -534,6 +540,66 @@ function load(overrides) {
   assert(scene.children.length === 0, 'leaving the preset must take the field out of the scene');
   assert(record3.disposed.filter(function (name) { return name === 'galaxy-geometry'; }).length >= 2,
     'and dispose it: ' + JSON.stringify(record3.disposed));
+}
+
+// ------------------------------------------- the text runs on an arc around the galaxy's rim
+{
+  const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
+  const sandbox = load({ camera: camera, fx: { preset: 15 } });
+  // A stage that would let the app-row flight run, so the takeover check below is an A/B and not
+  // two unrelated reasons to return false.
+  sandbox.stageLyrics = { group: { updateMatrixWorld: function () {}, children: [] }, current: null, outgoing: [] };
+  sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
+
+  // Per-glyph placement: positions advance across the canvas, the angles are symmetric about the
+  // run's middle, and the run's arc length is the text width.
+  const widths = [10, 10, 10, 10, 10];
+  const arc = sandbox.bhArcGlyphs(widths, 800, 500, 100);
+  assert(arc.glyphs.length === 5, 'one glyph per character');
+  for (let i = 1; i < arc.glyphs.length; i++) {
+    assert(arc.glyphs[i].x > arc.glyphs[i - 1].x, 'glyphs must advance across the arc');
+  }
+  assert(Math.abs(arc.glyphs[0].angle + arc.glyphs[4].angle) < 1e-12, 'the run must be centred on the arc');
+  assert(Math.abs(arc.span - arc.total / 800) < 1e-12, 'the span must be the arc length over the radius');
+  assert(Math.abs(arc.glyphs[2].x - 500) < 1e-9, 'the middle glyph must sit on the centre line');
+  // Wider glyphs travel further along the arc: the width is the advance, not a fixed step.
+  const uneven = sandbox.bhArcGlyphs([4, 20, 4], 600, 0, 0);
+  assert(uneven.glyphs[1].angle > uneven.glyphs[0].angle * 2, 'advance must follow each glyph width');
+
+  // The sung line is the last one whose start has passed; a seek backwards lands on the right one.
+  const items = [{ startAt: 0 }, { startAt: 2 }, { startAt: 4 }];
+  assert(sandbox.bhLyricSungIndex(items, -1) === -1, 'before the first line nothing is sung');
+  assert(sandbox.bhLyricSungIndex(items, 0) === 0, 'at its start a line is already sung');
+  assert(sandbox.bhLyricSungIndex(items, 1.9) === 0, 'and stays sung until the next one');
+  assert(sandbox.bhLyricSungIndex(items, 2) === 1, 'the next line takes over at its start');
+  assert(sandbox.bhLyricSungIndex(items, 99) === 2, 'and the last line is sung to the end');
+
+  // Where a row sits: the sung one in front and full size, the rest fading with distance.
+  const params = { radius: sandbox.bhParam('lyricRadius'), spread: sandbox.bhParam('lyricSpread') };
+  const front = sandbox.bhArcRowPlacement(0, params);
+  const back = sandbox.bhArcRowPlacement(2, params);
+  assert(front.opacity === 1 && back.opacity < front.opacity, 'rows behind the sung one must fade');
+  assert(front.scale > back.scale, 'and shrink');
+  assert(Math.abs(back.angle) > Math.abs(front.angle), 'and fan out along the rim');
+  assert(Math.abs(front.radius - params.radius) < 1e-9, 'the sung row sits on the arc radius');
+
+  // The arc has to sit outside the field: the text is "around the galaxy", not inside it.
+  const fieldRadius = sandbox.bhParam('galaxyRadius');
+  assert(params.radius > fieldRadius, 'the lyric arc radius must stay outside the galaxy radius ('
+    + params.radius + ' against ' + fieldRadius + ')');
+
+  // One owner for the text: the row flight runs on its own, and stands down the moment the arc
+  // layer exists. Asserted as an A/B so "it returned false anyway" cannot pass for the guard.
+  sandbox.bhLyrics.layer = null;
+  const flightAlone = sandbox.updateBlackHoleLyricFlight(0.016);
+  sandbox.bhLyrics.layer = { fake: true };
+  const flightWithArc = sandbox.updateBlackHoleLyricFlight(0.016);
+  sandbox.bhLyrics.layer = null;
+  assert(flightAlone === true, 'without the arc layer the row flight must still run');
+  assert(flightWithArc === false, 'the arc layer must take the text over from the row flight');
+  console.log('lyric arc: glyphs ' + arc.glyphs.length + ', span ' + arc.span.toFixed(3) + ' rad over r=800, front opacity '
+    + front.opacity + ' / back ' + back.opacity.toFixed(2) + ', radius ' + params.radius + ' outside field '
+    + fieldRadius);
 }
 
 // ------------------------------------------------------------------ the lyric flight

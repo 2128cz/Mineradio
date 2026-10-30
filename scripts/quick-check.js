@@ -1570,9 +1570,9 @@ function runBlackHolePresetCheck() {
   // text disappear from the pass silently.
   const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
   if (!/id: 'blackhole-pass'/.test(ownerBlock)) fail('the pass must register as a takeover owner');
-  if (/stageLyrics: true/.test(ownerBlock)) fail('a pass cannot refract a layer it suppressed');
+  if (!/stageLyrics: true/.test(ownerBlock)) fail('the app straight lyric rows must be taken over by the arc layer');
   if (!/particles: true/.test(ownerBlock)) fail('the preset must take the cover-particle field over: it paints its own barred-spiral galaxy');
-  if (!/stageLyrics: false/.test(ownerBlock)) fail('stageLyrics must stay on: text outside the render target cannot be bent by the lens');
+  if (!/scene\.add\(layer\);/.test(text) || !/bhLyrics\.layer = layer;/.test(text)) { fail('the arc rows must be added to the scene the lens renders: text outside the render target cannot be bent by the lens'); }
   // The ported kernel has to be in the shader, where it is actually evaluated.
   const shader = text.slice(text.indexOf('var BH_PASS_FS'));
   if (!/float ksRadius\(float px, float py, float pz, float a\)/.test(shader)) fail('the fragment stage must carry the Kerr-Schild radius');
@@ -1626,6 +1626,23 @@ function runBlackHolePresetCheck() {
     fail('the preset must take the cover-particle layers over: the field here is its own galaxy');
   }
   if (!/galaxy: bhGalaxyStatus\(\)/.test(text)) fail('blackHoleStatus() must report the field, or it cannot be read back live');
+  // The lyrics are arc rows on the galaxy's rim: per-glyph arc maths, a canvas per row, a plane in
+  // the render target, and an arc radius that stays outside the field.
+  for (const pattern of [
+    /function bhArcGlyphs\(/,
+    /function bhDrawRowCanvas\(/,
+    /new THREE\.CanvasTexture\(canvas\)/,
+    /new THREE\.MeshBasicMaterial\(/,
+    /function updateBlackHoleLyrics\(dt\)/,
+  ]) {
+    if (!pattern.test(text)) fail('the lyric arc layer is incomplete: ' + pattern);
+  }
+  const lyricRadius = Number((text.match(/lyricRadius: \{ def: (-?[\d.]+)/) || [])[1]);
+  const fieldRadius = Number((text.match(/galaxyRadius: \{ def: (-?[\d.]+)/) || [])[1]);
+  if (!(lyricRadius > fieldRadius)) {
+    fail(`the lyric arc radius (${lyricRadius}) must stay outside the galaxy radius (${fieldRadius})`);
+  }
+  if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric arc too');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');
