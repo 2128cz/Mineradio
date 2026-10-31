@@ -79,7 +79,7 @@ var BH_TUNING_SCHEMA = {
   startNear: { def: 1.6, min: 0.7, max: 4, kind: 'unit', rebuild: 'lyric' },
   flyIn: { def: 0.75, min: 0.15, max: 2.5, kind: 'sec', rebuild: 'live' },
   swallow: { def: 1.4, min: 0.2, max: 3, kind: 'sec', rebuild: 'live' },
-  fallCurve: { def: 0.66, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
+  fallCurve: { def: 0.5, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
   passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
   // branch count rebuild the buffer, brightness / spin / haze are read every frame.
@@ -98,7 +98,7 @@ var BH_TUNING_SCHEMA = {
   // round (radians per second), lyricWind how many extra radians it turns while falling in.
   lyricOrbit: { def: 2.4, min: 0.4, max: 12, kind: 'unit', rebuild: 'live' },
   lyricOrbitRate: { def: 0.5, min: 0.05, max: 2, kind: 'ratio', rebuild: 'live' },
-  lyricWind: { def: 2.0, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  lyricWind: { def: 5.0, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
@@ -1715,29 +1715,128 @@ function bhOrbitPoint(basis, radius, angle) {
   };
 }
 
-// Where a line is at `now`, as a fraction of the hold radius and an angle on the orbit:
-// - before its first word it comes round from behind at the orbit rate (angle above the front),
-// - while it is being sung it waits at the front, which is where it can be read,
-// - after its last word it keeps going the same way while the radius falls on the free-fall law,
-//   and `wind` adds the extra turn that makes the inward path a spiral. null once it is gone.
-function bhLyricOrbitState(item, now, params, frontAngle) {
+// The panel a row is painted on is a sign standing on the orbit: its face is the outward radial
+// direction (so it is turned away from the hole and towards the eye only near the front), and its
+// up is the disc normal. It is not billboarded - that is what makes it swing round and foreshorten
+// as it comes past instead of sliding across the screen like a subtitle.
+function bhOrbitPanel(basis, angle) {
+  var c = Math.cos(angle);
+  var s = Math.sin(angle);
+  var forward = {
+    x: basis.e1.x * c + basis.e2.x * s,
+    y: basis.e1.y * c + basis.e2.y * s,
+    z: basis.e1.z * c + basis.e2.z * s
+  };
+  var up = basis.n;
+  // right = up x forward; forward lies in the plane whose normal is up, so all three are unit and
+  // orthogonal and (right, up, forward) is a rotation.
+  var right = {
+    x: up.y * forward.z - up.z * forward.y,
+    y: up.z * forward.x - up.x * forward.z,
+    z: up.x * forward.y - up.y * forward.x
+  };
+  return { right: right, up: up, forward: forward };
+}
+
+// Rotation whose local x/y/z are right/up/forward. Written out so the maths can be tested without
+// a THREE.Matrix4 (the panel orientation is the thing the eye judges, so it should not be opaque).
+function bhPanelQuaternion(panel) {
+  var r = panel.right;
+  var u = panel.up;
+  var f = panel.forward;
+  var m00 = r.x, m01 = u.x, m02 = f.x;
+  var m10 = r.y, m11 = u.y, m12 = f.y;
+  var m20 = r.z, m21 = u.z, m22 = f.z;
+  var trace = m00 + m11 + m22;
+  var q = { x: 0, y: 0, z: 0, w: 1 };
+  if (trace > 0) {
+    var s0 = Math.sqrt(trace + 1.0) * 2;
+    q.w = 0.25 * s0;
+    q.x = (m21 - m12) / s0;
+    q.y = (m02 - m20) / s0;
+    q.z = (m10 - m01) / s0;
+  } else if (m00 > m11 && m00 > m22) {
+    var s1 = Math.sqrt(1.0 + m00 - m11 - m22) * 2;
+    q.w = (m21 - m12) / s1;
+    q.x = 0.25 * s1;
+    q.y = (m01 + m10) / s1;
+    q.z = (m02 + m20) / s1;
+  } else if (m11 > m22) {
+    var s2 = Math.sqrt(1.0 + m11 - m00 - m22) * 2;
+    q.w = (m02 - m20) / s2;
+    q.x = (m01 + m10) / s2;
+    q.y = 0.25 * s2;
+    q.z = (m12 + m21) / s2;
+  } else {
+    var s3 = Math.sqrt(1.0 + m22 - m00 - m11) * 2;
+    q.w = (m10 - m01) / s3;
+    q.x = (m02 + m20) / s3;
+    q.y = (m12 + m21) / s3;
+    q.z = 0.25 * s3;
+  }
+  return q;
+}
+
+// When a line starts to leave the front. It leaves a little before its nominal end so the next one
+// is not still pushing it out of the way; the exit only ever starts after the line has existed.
+function bhLyricExitStart(item, params) {
+  var start = Number(item && item.startAt) || 0;
+  var end = Number(item && item.endAt) || start;
+  var exitLead = Math.max(0.1, Number(params.exitLead) || 0.45);
+  return Math.max(start + 0.2, end - exitLead);
+}
+
+// Where a line is at `now`. The schedule is what keeps the hand-over unhurried:
+// - it waits off to the side (invisible) until its turn,
+// - eases to the front and comes to rest there - zero angular speed at both ends of the ease,
+// - stays for as long as it is sung,
+// - leaves from the front while the next one only starts easing in after it has begun to go, so
+//   the two are never both at the front. If the previous line has not begun to leave, the next
+//   one does not start its approach at all (its arrival is pushed back with it).
+// After the exit the radius falls on the free-fall law and the turn accelerates into the spiral.
+function bhLyricOrbitState(item, now, params, frontAngle, prevExitStart) {
   var t = Number(now) || 0;
   var start = Number(item && item.startAt) || 0;
   var end = Number(item && item.endAt) || start;
   var rate = Math.max(0.001, Number(params.rate) || 0.5);
-  if (t < start) {
-    return { phase: 'approach', angle: frontAngle + rate * (start - t), radius: 1, fall: 0 };
+  var flyIn = Math.max(0.2, Number(params.flyIn) || 0.75);
+  var waitAngle = Math.max(0.2, Number(params.waitAngle) || 0.65);
+  var gap = Math.max(0, Number(params.gap) || 0.2);
+  var exitStart = bhLyricExitStart(item, params);
+  var prev = (prevExitStart === null || prevExitStart === undefined || !isFinite(Number(prevExitStart)))
+    ? -Infinity : Number(prevExitStart);
+  var arriveAt = Math.max(start, prev + gap + 0.2);
+  var approachBegin = Math.max(arriveAt - flyIn, prev + gap);
+  if (arriveAt - approachBegin < 0.2) arriveAt = approachBegin + 0.2;
+  // A line that had to wait so long that its reading window is gone still gets a moment on screen.
+  exitStart = Math.max(exitStart, arriveAt + 0.15);
+  if (t < approachBegin) {
+    return { phase: 'wait', angle: frontAngle + waitAngle, radius: 1, alpha: 0, fall: 0 };
   }
-  if (t <= end) {
-    return { phase: 'read', angle: frontAngle, radius: 1, fall: 0 };
+  if (t < arriveAt) {
+    var ease = bhClamp((t - approachBegin) / Math.max(0.05, arriveAt - approachBegin), 0, 1);
+    var smooth = ease * ease * (3 - 2 * ease);
+    return {
+      phase: 'approach',
+      angle: frontAngle + waitAngle * (1 - smooth),
+      radius: 1,
+      alpha: bhClamp(ease / 0.35, 0, 1),
+      fall: 0
+    };
   }
-  var u = bhClamp((t - end) / Math.max(0.1, Number(params.swallow) || 1.4), 0, 1);
+  if (t <= exitStart) {
+    return { phase: 'read', angle: frontAngle, radius: 1, alpha: 1, fall: 0 };
+  }
+  var u = bhClamp((t - exitStart) / Math.max(0.1, Number(params.swallow) || 1.4), 0, 1);
   if (u >= 1) return null;
   var curve = bhClamp(Number(params.curve) || 0.66, 0.05, 3);
+  var turn = (Number(params.wind) || 0) + rate * Math.max(0.1, Number(params.swallow) || 1.4);
   return {
     phase: 'fall',
-    angle: frontAngle - rate * (t - end) - (Number(params.wind) || 0) * Math.pow(u, 1.4),
+    // u^1.6 starts at zero angular speed, so the exit does not snap away from the front.
+    angle: frontAngle - turn * Math.pow(u, 1.6),
     radius: Math.pow(Math.max(0, 1 - u), curve),
+    alpha: 1,
     fall: u
   };
 }
@@ -1827,6 +1926,9 @@ function bhBuildLyricRow(width, height) {
     transparent: true,
     depthTest: false,
     depthWrite: false,
+    // The panel is a physical sign: on the far half we are looking at its back, and that is the
+    // view the lens smears around the rim. A single-sided plane would be culled and vanish.
+    side: THREE.DoubleSide,
     opacity: 1
   });
   var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
@@ -1879,10 +1981,16 @@ function bhLyricParams() {
   return {
     orbit: bhClamp(bhParam('lyricOrbit'), 0.3, 20),
     rate: bhClamp(bhParam('lyricOrbitRate'), 0.05, 2),
-    wind: bhClamp(bhParam('lyricWind'), 0, 3),
+    wind: bhClamp(bhParam('lyricWind'), 0, 8),
     curve: bhClamp(bhParam('fallCurve'), 0.05, 3),
     swallow: Math.max(0.1, bhParam('swallow')),
     drift: bhClamp(bhParam('lyricDrift'), 0, 1.5),
+    flyIn: Math.max(0.2, bhParam('flyIn')),
+    // Where a line waits before its turn, how early it leaves the front, and the pause between the
+    // previous leaving and the next starting its ease.
+    waitAngle: 0.65,
+    exitLead: 0.3,
+    gap: 0.2,
     // The plane's height as a fraction of the visible half-height at the hole's depth. A row at
     // the front of the orbit is nearer the eye, so the perspective makes it larger - that is the
     // same near/far enlargement the rest of the scene gets, not a separate scale animation.
@@ -1955,10 +2063,24 @@ function bhPlaceLyrics(frame, dt) {
       bhDrawRowCanvas(row, items[index], current, bhLyricPaletteState(), motion);
       row.texture.needsUpdate = true;
     }
-    var state = bhLyricOrbitState(items[index], now, params, front);
+    var state = bhLyricOrbitState(
+      items[index],
+      now,
+      params,
+      front,
+      index > 0 && items[index - 1] ? bhLyricExitStart(items[index - 1], params) : null
+    );
     if (!state) {
       row.live = false;
       row.itemIndex = -1;
+      row.mesh.visible = false;
+      row.material.opacity = 0;
+      continue;
+    }
+    if (state.phase === 'wait') {
+      // Not its turn yet: the row is on the ring but not shown, so two lines cannot be in the air
+      // at once. Keeping its itemIndex means it carries on rather than being rebuilt.
+      row.live = false;
       row.mesh.visible = false;
       row.material.opacity = 0;
       continue;
@@ -1969,9 +2091,12 @@ function bhPlaceLyrics(frame, dt) {
     var radius = params.orbit * state.radius;
     var point = bhOrbitPoint(basis, radius, angle);
     row.mesh.position.set(point.x, point.y, point.z);
-    // The row faces the eye wherever it is on the circle: a line turned edge-on would stop being
-    // text. The layer itself is not rotated, so this is also its world orientation.
-    row.mesh.quaternion.copy(camera.quaternion);
+    // The panel is not billboarded: it faces outward from the hole and stands on the disc, so it
+    // swings round as it comes past and only faces the eye near the front. The perspective of
+    // that turn is the foreshortening the eye reads as rotation on the ring.
+    var panel = bhOrbitPanel(basis, angle);
+    var quat = bhPanelQuaternion(panel);
+    row.mesh.quaternion.set(quat.x, quat.y, quat.z, quat.w);
     var wx = frame.world.x + point.x;
     var wy = frame.world.y + point.y;
     var wz = frame.world.z + point.z;
@@ -1990,6 +2115,7 @@ function bhPlaceLyrics(frame, dt) {
     row.mesh.visible = true;
     var opacity = current ? 1 : 0.72;
     if (state.phase === 'read') opacity = current ? 1 : 0.85;
+    if (state.phase === 'approach') opacity = state.alpha * (current ? 1 : 0.9);
     if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, shadowWorld);
     row.material.opacity = opacity;
   }

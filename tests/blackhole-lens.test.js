@@ -47,6 +47,7 @@ function makeThree(record) {
     Vector4: V4,
     Vector2: V2,
     LinearFilter: 1,
+    DoubleSide: 2,
     RGBAFormat: 2,
     UnsignedByteType: 3,
     ClampToEdgeWrapping: 4,
@@ -573,6 +574,8 @@ function load(overrides) {
     'the rows have to be placed on the disc-plane orbit and rasterised');
   assert(/new THREE\.CanvasTexture\(canvas\)/.test(source) && /THREE\.MeshBasicMaterial\(/.test(source),
     'and uploaded as textures on planes, which is what lets the lens bend them');
+  assert(/side: THREE\.DoubleSide/.test(source),
+    'the panels must be two-sided: on the far half we see their back, and that is the view the lens bends');
   assert(/particles: true/.test(ownerBlock), "the app's cover-particle field belongs to the other presets; this one paints its own galaxy");
   assert(/renderBlackHoleFrame\(\)/.test(loopText), 'the main loop must route the render through the lens');
   assert(/if \(!lensFrameDone\) renderer\.render\(scene, camera\)/.test(loopText), 'and fall back to a plain render');
@@ -772,44 +775,100 @@ function load(overrides) {
   assert(dot(frontPoint, towardCamera) >= nearest - 1e-9, 'the front angle must be the point nearest the eye');
   assert(frontPoint.z > orbitR * 0.99, 'which is the side of the circle towards the camera');
 
-  // Timing: approach, read, fall. `now` is the audio clock, so the line is at the front exactly
-  // while it is being sung.
+  // The panel is not billboarded: it faces outward from the hole, its up is the disc normal, so it
+  // faces the eye at the front, is edge-on at the side and is seen from behind on the far half.
+  // That turn is the rotation; the camera's perspective supplies the foreshortening.
+  const panelFront = sandbox.bhOrbitPanel(basis, front);
+  const panelSide = sandbox.bhOrbitPanel(basis, front + Math.PI / 2);
+  const panelBack = sandbox.bhOrbitPanel(basis, front + Math.PI);
+  assert(dot(panelFront.forward, towardCamera) / len(towardCamera) > 0.99,
+    'at the front the panel faces the camera (within the disc tilt): '
+    + (dot(panelFront.forward, towardCamera) / len(towardCamera)).toFixed(4));
+  assert(Math.abs(dot(panelSide.forward, towardCamera) / len(towardCamera)) < 0.12,
+    'at the side it is edge-on: ' + dot(panelSide.forward, towardCamera) / len(towardCamera));
+  assert(dot(panelBack.forward, towardCamera) < 0, 'and on the far half it faces away from the eye');
+  assert(Math.abs(len(panelFront.right) - 1) < 1e-9 && Math.abs(dot(panelFront.right, panelFront.up)) < 1e-9
+    && Math.abs(dot(panelFront.right, panelFront.forward)) < 1e-9 && Math.abs(dot(panelFront.up, panelFront.forward)) < 1e-9,
+    'the panel axes have to be orthonormal');
+  // The quaternion the mesh gets must map the plane's local +z to that face and +y to the disc up.
+  const rotate = function (q, v) {
+    const tx = 2 * (q.y * v.z - q.z * v.y);
+    const ty = 2 * (q.z * v.x - q.x * v.z);
+    const tz = 2 * (q.x * v.y - q.y * v.x);
+    return {
+      x: v.x + q.w * tx + (q.y * tz - q.z * ty),
+      y: v.y + q.w * ty + (q.z * tx - q.x * tz),
+      z: v.z + q.w * tz + (q.x * ty - q.y * tx)
+    };
+  };
+  const qFront = sandbox.bhPanelQuaternion(panelFront);
+  const mappedZ = rotate(qFront, { x: 0, y: 0, z: 1 });
+  const mappedY = rotate(qFront, { x: 0, y: 1, z: 0 });
+  assert(Math.abs(mappedZ.x - panelFront.forward.x) < 1e-6 && Math.abs(mappedZ.y - panelFront.forward.y) < 1e-6
+    && Math.abs(mappedZ.z - panelFront.forward.z) < 1e-6, 'local +z must map to the outward face');
+  assert(Math.abs(mappedY.x - panelFront.up.x) < 1e-6 && Math.abs(mappedY.y - panelFront.up.y) < 1e-6
+    && Math.abs(mappedY.z - panelFront.up.z) < 1e-6, 'local +y must map to the disc normal');
+
+  // Timing: wait, ease to the front, read, leave early enough for the next. The ease has zero
+  // angular speed at both ends, so the line settles instead of stopping dead.
   const params = sandbox.bhLyricParams();
   const item = { startAt: 10, endAt: 13 };
-  const before = sandbox.bhLyricOrbitState(item, 8, params, front);
-  assert(before && before.phase === 'approach' && before.angle > front && before.radius === 1,
-    'before its first word a line is still coming round, at the hold radius');
-  const atStart = sandbox.bhLyricOrbitState(item, 10, params, front);
-  const during = sandbox.bhLyricOrbitState(item, 12, params, front);
-  assert(atStart.phase === 'read' && Math.abs(atStart.angle - front) < 1e-9, 'at its start the line is at the front');
-  assert(during.phase === 'read' && Math.abs(during.angle - front) < 1e-9, 'and waits there while it is sung');
-  // Approaching: the angle only ever decreases towards the front.
-  let approachAngle = Infinity;
-  for (let t = 5; t <= 10; t += 0.5) {
-    const s = sandbox.bhLyricOrbitState(item, t, params, front);
-    assert(s.angle <= approachAngle + 1e-9, 'the approach must only get closer to the front');
-    approachAngle = s.angle;
-  }
+  const waiting = sandbox.bhLyricOrbitState(item, 5, params, front, null);
+  assert(waiting.phase === 'wait' && waiting.alpha === 0, 'a line waits off the front, invisible, until its turn');
+  const approachBegin = 10 - params.flyIn;
+  const frontOffset = sandbox.bhLyricOrbitState(item, approachBegin, params, front, null);
+  const startLater = sandbox.bhLyricOrbitState(item, approachBegin + 0.05, params, front, null);
+  const midEarlier = sandbox.bhLyricOrbitState(item, 10 - params.flyIn * 0.55, params, front, null);
+  const midLater = sandbox.bhLyricOrbitState(item, 10 - params.flyIn * 0.50, params, front, null);
+  const endEarlier = sandbox.bhLyricOrbitState(item, 10 - 0.05, params, front, null);
+  const endAtFront = sandbox.bhLyricOrbitState(item, 10, params, front, null);
+  assert(frontOffset.phase === 'approach' && endEarlier.phase === 'approach', 'the last stretch is the ease');
+  assert(frontOffset.angle > midLater.angle && midLater.angle > endAtFront.angle, 'it only comes closer to the front');
+  const startDelta = frontOffset.angle - startLater.angle;
+  const midDelta = midEarlier.angle - midLater.angle;
+  const endDelta = endEarlier.angle - endAtFront.angle;
+  assert(midDelta > startDelta && midDelta > endDelta,
+    'the ease must accelerate out of the wait and decelerate into the front: ' + startDelta.toFixed(4)
+    + ' / ' + midDelta.toFixed(4) + ' / ' + endDelta.toFixed(4));
+  const atStart = sandbox.bhLyricOrbitState(item, 10, params, front, null);
+  assert(atStart.phase === 'read' && Math.abs(atStart.angle - front) < 1e-9, 'at its start the line rests at the front');
+  const exitStart = sandbox.bhLyricExitStart(item, params);
+  assert(exitStart < 13, 'it leaves before its nominal end so the next one is not pushing it: ' + exitStart);
+  const beforeExit = sandbox.bhLyricOrbitState(item, exitStart - 0.05, params, front, null);
+  assert(beforeExit.phase === 'read' && Math.abs(beforeExit.angle - front) < 1e-9, 'and is still at the front until then');
+  assert(sandbox.bhLyricOrbitState(item, 12.9, params, front, null).phase === 'fall',
+    'the exit starts before the nominal end, so the next one is not pushing it out');
 
-  // After the line: the same direction round the circle, plus the wind, while the radius falls.
-  const fall = sandbox.bhLyricOrbitState(item, 13.5, params, front);
+  // The next line is gated: if the previous has not started leaving, it does not come to the front.
+  const gatedWait = sandbox.bhLyricOrbitState(item, 10.9, params, front, 11.2);
+  assert(gatedWait.phase === 'wait', 'a predecessor still on the front keeps the next line away');
+  const gatedEase = sandbox.bhLyricOrbitState(item, 11.5, params, front, 11.2);
+  assert(gatedEase.phase === 'approach', 'once the predecessor is leaving, the next one eases in');
+  const gatedRead = sandbox.bhLyricOrbitState(item, 11.65, params, front, 11.2);
+  assert(gatedRead.phase === 'read', 'and only then takes the front');
+
+  // After the exit: same direction round the circle plus the wind, radius on the free-fall law.
+  const fall = sandbox.bhLyricOrbitState(item, exitStart + 0.35, params, front, null);
   assert(fall.phase === 'fall' && fall.angle < front && fall.radius < 1, 'the fall keeps going the same way while it comes in');
-  const later = sandbox.bhLyricOrbitState(item, 14.2, params, front);
+  const later = sandbox.bhLyricOrbitState(item, exitStart + 0.9, params, front, null);
   assert(later.radius < fall.radius, 'the radius must only shrink: ' + fall.radius + ' -> ' + later.radius);
   assert(later.angle < fall.angle, 'and the angle keep advancing into the spiral');
-  assert(sandbox.bhLyricOrbitState(item, 13 + params.swallow + 0.01, params, front) === null,
+  assert(sandbox.bhLyricOrbitState(item, exitStart + params.swallow + 0.01, params, front, null) === null,
     'once the fall is over the line is gone');
-  const noWind = sandbox.bhLyricOrbitState(item, 14.2, { rate: params.rate, wind: 0, curve: params.curve, swallow: params.swallow }, front);
+  const noWind = sandbox.bhLyricOrbitState(item, exitStart + 0.9, {
+    rate: params.rate, wind: 0, curve: params.curve, swallow: params.swallow,
+    flyIn: params.flyIn, exitLead: params.exitLead, gap: params.gap, waitAngle: params.waitAngle
+  }, front, null);
   assert(noWind.angle > later.angle, 'wind 0 has to be the plain orbit, with no extra turn');
   assert(Math.abs(noWind.radius - later.radius) < 1e-9, 'the wind changes the turn, not the fall');
 
   // The fall is a spiral, not a radial drop: its arc is longer than the straight line from the
   // hold point to the hole.
   let path = 0;
-  let prev = sandbox.bhOrbitPoint(basis, params.orbit * 1, front);
+  let prev = sandbox.bhOrbitPoint(basis, params.orbit, front);
   for (let i = 1; i <= 60; i++) {
-    const t = 13 + params.swallow * i / 60;
-    const s = sandbox.bhLyricOrbitState(item, t, params, front);
+    const t = exitStart + params.swallow * i / 60;
+    const s = sandbox.bhLyricOrbitState(item, t, params, front, null);
     if (!s) break;
     const p = sandbox.bhOrbitPoint(basis, params.orbit * s.radius, s.angle);
     path += Math.sqrt((p.x - prev.x) * (p.x - prev.x) + (p.y - prev.y) * (p.y - prev.y) + (p.z - prev.z) * (p.z - prev.z));
@@ -817,9 +876,8 @@ function load(overrides) {
   }
   assert(path > params.orbit * 1.15, 'the inward path must be a spiral, not a radius: ' + path.toFixed(2) + ' against ' + params.orbit);
 
-  // Placement: a line that is being sung sits at the front and is flagged front (it will be
-  // composited over the picture); a line still on the far half is flagged back (it belongs in the
-  // scene, where the lens and the disc fog own it).
+  // Placement: only one line is at the front at a time; a line leaves early and the next is still
+  // off to the side while it goes; a falling line is flagged back once it crosses the hole.
   function fakeRow(index) {
     const ctx = {
       font: '', textAlign: '', textBaseline: '', fillStyle: '',
@@ -833,7 +891,8 @@ function load(overrides) {
       texture: { needsUpdate: false, dispose() {} },
       material: { opacity: 1, dispose() {} },
       mesh: {
-        position: new V3(), scale: new V3(1, 1, 1), quaternion: { copied: null, copy(q) { this.copied = q; return this; } },
+        position: new V3(), scale: new V3(1, 1, 1),
+        quaternion: { value: null, set(x, y, z, w) { this.value = [x, y, z, w]; return this; } },
         renderOrder: 0, visible: false, geometry: { dispose() {} }
       }
     };
@@ -850,46 +909,69 @@ function load(overrides) {
   sandbox.bhLyrics.rows = rows;
   sandbox.bhLyrics.items = items;
   sandbox.bhLyrics.sung = 2;
-  sandbox.bhLyrics.now = 12;
+  sandbox.bhLyrics.now = 13.7;
   sandbox.bhLyrics.time = 0;
   sandbox.bhPlaceLyrics(frame, 0.016);
 
-  assert(rows[2].mesh.position.z > 1.5, 'the sung line is on the near side of the hole: z=' + rows[2].mesh.position.z);
-  assert(rows[2].front === true, 'and flagged front');
-  assert(rows[2].sung === true, 'and rasterised in the highlight colour');
-  assert(rows[3].front === true && rows[4].front === false,
-    'the next line is still on the near half, the one after it is behind the hole');
-  assert(rows[3].mesh.position.z < rows[2].mesh.position.z, 'the near half runs towards the hole as the lines queue');
-  assert(rows[4].mesh.position.z < 0, 'the far line is behind the hole plane: z=' + rows[4].mesh.position.z);
-  assert(rows[2].mesh.quaternion.copied === camera.quaternion, 'every row faces the camera wherever it is on the circle');
-  assert(rows[2].mesh.scale.x > rows[3].mesh.scale.x, 'the sung line is drawn a little larger than the queue');
   assert(rows[0].itemIndex === -1 && rows[1].itemIndex === -1, 'lines whose fall is over are dropped');
-  // The split is exactly what the renderer uses to choose a target.
-  assert(sandbox.bhSetLyricSideVisibility(true) === 2, 'front half: the sung line and the next one');
-  assert(rows[2].mesh.visible === true && rows[3].mesh.visible === true && rows[4].mesh.visible === false,
-    'and the far row is hidden for the near pass');
-  assert(sandbox.bhSetLyricSideVisibility(false) === 1 && rows[4].mesh.visible === true,
-    'back half: only the far row');
-  assert(sandbox.bhSetLyricSideVisibility(null) === 3, 'the fallback render gets all live rows back');
+  assert(rows[3].live === true && rows[3].front === true, 'the next line has eased in on the near half');
+  assert(rows[3].mesh.position.z > 1.5, 'it is between the eye and the hole: z=' + rows[3].mesh.position.z);
+  assert(rows[3].mesh.quaternion.value && Math.abs(Math.sqrt(
+    rows[3].mesh.quaternion.value[0] ** 2 + rows[3].mesh.quaternion.value[1] ** 2
+    + rows[3].mesh.quaternion.value[2] ** 2 + rows[3].mesh.quaternion.value[3] ** 2) - 1) < 1e-6,
+    'the row gets a real rotation for its panel, not a camera copy');
+  const placedQ = rows[3].mesh.quaternion.value;
+  const placedFace = rotate({ x: placedQ[0], y: placedQ[1], z: placedQ[2], w: placedQ[3] }, { x: 0, y: 0, z: 1 });
+  const placedLen = Math.hypot(rows[3].mesh.position.x, rows[3].mesh.position.y, rows[3].mesh.position.z);
+  assert(Math.abs(placedFace.x - rows[3].mesh.position.x / placedLen) < 1e-6
+    && Math.abs(placedFace.y - rows[3].mesh.position.y / placedLen) < 1e-6
+    && Math.abs(placedFace.z - rows[3].mesh.position.z / placedLen) < 1e-6,
+    'the placed panel face must point outward along its own radius');
+  assert(rows[2].live === true && rows[2].front === false, 'the line leaving has crossed behind the hole');
+  assert(rows[2].mesh.position.z < 0, 'and its panel is on the far side: z=' + rows[2].mesh.position.z);
+  assert(rows[4].live === false && rows[4].mesh.visible === false, 'the line after next is not in the air yet');
+  // The two visible lines are on opposite sides of the front, not on top of each other.
+  const angleOf = function (row) { return Math.atan2(row.mesh.position.x, row.mesh.position.z); };
+  assert(Math.abs(angleOf(rows[3]) - angleOf(rows[2])) > 0.8,
+    'a leaving line and an entering line must not overlap: ' + angleOf(rows[3]).toFixed(2) + ' vs ' + angleOf(rows[2]).toFixed(2));
+  assert(rows[2].sung === true && rows[3].sung === false, 'the line still being sung keeps the highlight');
 
-  // Advancing: the highlight moves, and the line that was sung spirals in and goes out.
-  sandbox.bhLyrics.sung = 3;
-  sandbox.bhLyrics.now = 14.05;
+  // The split is exactly what the renderer uses to choose a target.
+  assert(sandbox.bhSetLyricSideVisibility(true) === 1 && rows[3].mesh.visible === true && rows[2].mesh.visible === false,
+    'near half: only the entering line');
+  assert(sandbox.bhSetLyricSideVisibility(false) === 1 && rows[2].mesh.visible === true,
+    'far half: only the line going behind');
+  assert(sandbox.bhSetLyricSideVisibility(null) === 2, 'the fallback render gets both halves back');
+
+  // While the previous line is still on the front, the next is not shown: the gap the user asked
+  // for. Two tenths of a second later it starts to come in.
+  rows.forEach(function (row) { row.itemIndex = -1; row.live = true; row.sung = null; });
+  sandbox.bhLyrics.now = 13.2;
   sandbox.bhPlaceLyrics(frame, 0.016);
-  assert(rows[3].sung === true && rows[2].sung === false, 'the highlight moves to the new line');
+  assert(rows[2].live === true && rows[2].mesh.visible === true, 'the line that was sung is still falling');
+  assert(rows[3].live === false && rows[3].mesh.visible === false, 'but the next one is not there yet');
+  sandbox.bhLyrics.now = 13.4;
+  sandbox.bhPlaceLyrics(frame, 0.016);
+  assert(rows[3].live === true && rows[3].mesh.visible === true, 'and starts to come in once the front is free');
+
+  // Advancing: the highlight moves, and the falling line spirals in and goes out.
+  sandbox.bhLyrics.sung = 3;
+  sandbox.bhLyrics.now = 13.2;
+  sandbox.bhPlaceLyrics(frame, 0.016);
+  assert(rows[3].sung === true, 'the highlight moves to the new line');
   const fallingRow = rows[2];
   const distances = [];
   const opacities = [];
   for (let step = 0; step < 14; step++) {
-    sandbox.bhLyrics.now += 0.1;
-    sandbox.bhPlaceLyrics(frame, 0.1);
+    sandbox.bhLyrics.now += 0.08;
+    sandbox.bhPlaceLyrics(frame, 0.08);
     if (fallingRow.itemIndex < 0) break;
     distances.push(Math.hypot(fallingRow.mesh.position.x, fallingRow.mesh.position.y, fallingRow.mesh.position.z));
     opacities.push(fallingRow.material.opacity);
   }
   for (let i = 1; i < distances.length; i++) {
     assert(distances[i] <= distances[i - 1] + 1e-9,
-      'the sung line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
+      'the line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
   }
   assert(distances.length >= 3 && distances[distances.length - 1] < distances[0] * 0.4,
     'and be swallowed by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
@@ -900,7 +982,7 @@ function load(overrides) {
     'a swallowed row is hidden and fully transparent');
   console.log('orbit: radius ' + params.orbit + ', rate ' + params.rate + ' rad/s, wind ' + params.wind
     + '; front ' + front.toFixed(2) + ', spiral ' + path.toFixed(2) + ' vs radius ' + params.orbit
-    + '; fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+    + ', exit at ' + exitStart + ', fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
   sandbox.bhLyrics.layer = null;
 
   // One owner for the text: the row flight runs on its own, and stands down the moment the orbit

@@ -1667,14 +1667,24 @@ function runBlackHolePresetCheck() {
   for (const key of ['lyricOrbit', 'lyricOrbitRate', 'lyricWind', 'discWisp']) {
     if (!new RegExp(key + ': \\{ def: ').test(text)) fail('the lyric orbit / disc fog needs its own ' + key + ' knob');
   }
-  if (!/var state = bhLyricOrbitState\(items\[index\], now, params, front\)/.test(text)) {
+  if (!/bhLyricOrbitState\(/.test(text) || !/bhLyricExitStart\(/.test(text)) {
     fail('the row position has to come from the orbit timing, not a local slide clock');
   }
+  if (!/phase: 'wait'/.test(text)) fail('a line has to wait off the front until its turn');
+  if (!/var approachBegin = Math\.max\(arriveAt - flyIn, prev \+ gap\)/.test(text)) {
+    fail('the next line must not start easing in before the previous has begun to leave');
+  }
+  if (!/var smooth = ease \* ease \* \(3 - 2 \* ease\)/.test(text)) fail('the approach has to decelerate into the front');
   if (!/row\.front = alongRow < depth;/.test(text)) fail('each row has to be flagged front or back by its depth');
   if (!/bhSetLyricSideVisibility\(true\) > 0/.test(text) || !/bhSetLyricSideVisibility\(false\)/.test(text)) {
     fail('the renderer must split the near and far rows between the two targets');
   }
-  if (!/row\.mesh\.quaternion\.copy\(camera\.quaternion\)/.test(text)) fail('every row must face the camera');
+  if (!/function bhOrbitPanel\(/.test(text) || !/var panel = bhOrbitPanel\(basis, angle\)/.test(text)) {
+    fail('each row must stand on the ring facing outward, not be billboarded');
+  }
+  if (!/row\.mesh\.quaternion\.set\(quat\.x, quat\.y, quat\.z, quat\.w\)/.test(text)) {
+    fail('the panel rotation has to reach the mesh');
+  }
   if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric rows too');
   // The near-field lens: scene content around the hole is sampled back through the bend, so what
   // is behind the hole shows up around the rim. The near rows are pasted straight over the picture
