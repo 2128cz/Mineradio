@@ -42,9 +42,9 @@ var BH_TUNING_SCHEMA = {
   // World units: the hole is a scene point, so these are positions in the scene and the horizon
   // radius is a length, not a fraction of the viewport.
   holeX: { def: 0.0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
-  holeY: { def: -0.55, min: -6, max: 6, kind: 'unit', rebuild: 'live' },
+  holeY: { def: -0.35, min: -6, max: 6, kind: 'unit', rebuild: 'live' },
   holeDepth: { def: 0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
-  mass: { def: 0.9, min: 0.05, max: 6, kind: 'unit', rebuild: 'live' },
+  mass: { def: 0.30, min: 0.02, max: 6, kind: 'unit', rebuild: 'live' },
   spin: { def: 0.7, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   charge: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   deflect: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
@@ -53,20 +53,24 @@ var BH_TUNING_SCHEMA = {
   ringGlow: { def: 0.45, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // The accretion disc is horizontal (a small tilt only, so it is seen slightly from above), and its
   // radii are world lengths like every other size in this preset.
-  discInner: { def: 1.6, min: 0.2, max: 12, kind: 'unit', rebuild: 'live' },
-  discOuter: { def: 4.2, min: 0.6, max: 24, kind: 'unit', rebuild: 'live' },
+  discInner: { def: 0.45, min: 0.02, max: 12, kind: 'unit', rebuild: 'live' },
+  discOuter: { def: 1.70, min: 0.05, max: 24, kind: 'unit', rebuild: 'live' },
   discTilt: { def: 14, min: -60, max: 60, kind: 'deg', rebuild: 'live' },
   discGain: { def: 0.85, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   // The disc is a volume of this world thickness: the camera can be inside it and still see it.
-  discThickness: { def: 0.6, min: 0.05, max: 6, kind: 'unit', rebuild: 'live' },
+  discThickness: { def: 0.12, min: 0.01, max: 6, kind: 'unit', rebuild: 'live' },
   // One softness for the whole backdrop: the galaxy, the streaks and the glow move together.
   softness: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  cameraDrift: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  debris: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
   textLens: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  fovDeg: { def: 58, min: 35, max: 92, kind: 'deg', rebuild: 'live' },
+  // A long lens: the narrower the fov, the flatter the perspective and the more the hole reads as
+  // a distant object with mass rather than as something close and small.
+  fovDeg: { def: 40, min: 24, max: 92, kind: 'deg', rebuild: 'live' },
   sideSpread: { def: 6.2, min: 2.5, max: 14, kind: 'unit', rebuild: 'lyric' },
   startNear: { def: 1.6, min: 0.7, max: 4, kind: 'unit', rebuild: 'lyric' },
   flyIn: { def: 0.75, min: 0.15, max: 2.5, kind: 'sec', rebuild: 'live' },
@@ -342,9 +346,38 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform float uSpin;',
     'uniform float uRing;',
     'uniform float uSoft;',
+    'uniform vec2 uShake;',
+    'uniform float uDolly;',
+    'uniform float uDebris;',
     'uniform float uLevel;',
     '',
     'float hash21(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }',
+    '',
+    '// Near debris: sparse specks drifting across the frame, dark bodies with a lit rim on the side',
+    '// that faces the disc. They are the reference the eye needs: without something small and close,',
+    '// a black hole has no size.',
+    'vec4 nearDebris(vec2 uv, float t, float amount) {',
+    '  if (amount <= 0.001) return vec4(0.0);',
+    '  vec4 outColor = vec4(0.0);',
+    '  for (int layer = 0; layer < 2; layer++) {',
+    '    float fl = float(layer);',
+    '    float scale = mix(6.0, 13.0, fl);',
+    '    vec2 drift = vec2(t * (0.011 + 0.007 * fl), -t * (0.005 + 0.004 * fl));',
+    '    vec2 p = uv * vec2(iResolution.x / max(1.0, iResolution.y), 1.0) * scale + drift;',
+    '    vec2 cell = floor(p);',
+    '    float h = hash21(cell + fl * 37.0);',
+    '    if (h < 0.90) continue;',
+    '    vec2 centre = (vec2(hash21(cell + 1.7), hash21(cell + 4.3)) - 0.5) * 0.55;',
+    '    float d = length(fract(p) - 0.5 - centre);',
+    '    float size = 0.05 + 0.11 * hash21(cell + 9.1);',
+    '    float core = smoothstep(size, size * 0.5, d);',
+    '    float rim = max(0.0, smoothstep(size * 1.12, size * 0.78, d) - core);',
+    '    vec3 col = vec3(0.015, 0.017, 0.022) + rim * vec3(1.0, 0.62, 0.34);',
+    '    float alpha = (core * 0.92 + rim * 0.75) * amount * (0.55 + 0.45 * hash21(cell + 21.0));',
+    '    outColor = mix(outColor, vec4(col, alpha), clamp(alpha, 0.0, 1.0));',
+    '  }',
+    '  return outColor;',
+    '}',
     '',
     '// The galaxy, bent by the field and softened: `bend` is how far the marched direction is from the',
     '// straight one, clamped so the sky cannot be squeezed into strips, and the lookup is blurred so',
@@ -363,7 +396,9 @@ var BH_PASS_FS = shadertoyFragment(
     '',
     'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
     '  vec2 uv = fragCoord.xy / iResolution.xy;',
-    '  vec2 ndc = (uv - 0.5) * 2.0;',
+    // A long lens with a slow, small drift: the frame breathes instead of sitting still, which is
+  // most of what separates a plate of a huge thing from a screenshot of a shader.
+  '  vec2 ndc = (uv - 0.5) * 2.0 * (1.0 + uDolly) + uShake;',
     '  vec3 dir = normalize(uCamFwd + uCamRight * ndc.x * uTanHalf * uAspect + uCamUp * ndc.y * uTanHalf);',
     '',
     '  vec3 pos = (uCamPos - uHole) / max(0.0001, uRs);',
@@ -402,6 +437,9 @@ var BH_PASS_FS = shadertoyFragment(
     '      vec2 cell = floor(vec2(phase * 7.0, r * 6.0 + iTime * 0.25));',
     '      float h = hash21(cell);',
     '      float grain = mix(0.25, 1.75, smoothstep(0.52, 0.94, h));',
+    '      // A second, finer octave: near the hole the fog has wisps, not just cells.',
+    '      float fine = hash21(floor(vec2(phase * 21.0, r * 17.0 + iTime * 0.7)));',
+    '      grain *= mix(1.0, mix(0.45, 1.9, fine), smoothstep(0.55, 0.12, rn));',
     '      vec2 tangent = normalize(vec2(-pos.z, pos.x));',
     '      vec2 motion = normalize(vec2(vel.x, vel.z));',
     '      float doppler = 1.0 + uSpin * 0.8 * dot(tangent, motion);',
@@ -436,7 +474,10 @@ var BH_PASS_FS = shadertoyFragment(
     '  color += uRing * 0.05 * vec3(0.45, 0.62, 0.95) * exp(-pow((dUv - 0.34) / 0.22, 2.0));',
     '  color *= 1.0 - 0.28 * smoothstep(0.42, 1.05, dUv);',
     '',
-    '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
+    '  vec4 debris = nearDebris(uv, iTime, uDebris);',
+  '  color = mix(color, debris.rgb, clamp(debris.a, 0.0, 1.0));',
+  '',
+  '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
     '  vec2 textUv = clamp(mix(uv, uv + bend, clamp(uTextLens, 0.0, 1.0) * closeness), 0.0, 1.0);',
     '  vec4 text = texture2D(iChannel1, textUv);',
     '  color = color * (1.0 - text.a) + text.rgb;',
@@ -551,6 +592,9 @@ function bhBuildPass() {
         uTextLens: { value: 0.75 },
         uCenter: { value: new THREE.Vector2(0.5, 0.5) },
         uSoft: { value: 0.6 },
+        uShake: { value: new THREE.Vector2() },
+        uDolly: { value: 0 },
+        uDebris: { value: 0.6 },
         uDiscThick: { value: 0.9 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
@@ -641,6 +685,10 @@ function bhSyncLens(frame) {
   u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
   if (u.uDiscThick) u.uDiscThick.value = Math.max(0.01, bhClamp(bhParam('discThickness'), 0.02, 8) / rs);
   if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 1);
+  if (u.uDebris) u.uDebris.value = bhClamp(bhParam('debris'), 0, 1);
+  var drift = bhCameraDrift(blackHoleFlight.time, bhClamp(bhParam('cameraDrift'), 0, 1));
+  if (u.uShake) u.uShake.value.set(drift.x, drift.y);
+  if (u.uDolly) u.uDolly.value = drift.dolly;
   if (u.uCenter) u.uCenter.value.set(frame.uv ? frame.uv.u : 0.5, frame.uv ? frame.uv.v : 0.5);
   u.uDiscTilt.value = bhClamp(bhParam('discTilt'), -60, 60) * Math.PI / 180;
   u.uDiscGain.value = bhClamp(bhParam('discGain'), 0, 3);
@@ -1541,6 +1589,19 @@ function bhArcGlyphs(widths, radius, cx, cy) {
     travelled += widths[g] / 2;
   }
   return { glyphs: placed, total: total, span: total / Math.max(1, radius) };
+}
+
+// Slow camera drift, as an offset in ndc plus a small dolly. Two incommensurable sines per axis, so
+// it never repeats inside a song, and it is bounded by the amplitude: a shake that is allowed to
+// grow reads as a broken camera, not as weight.
+function bhCameraDrift(time, amount) {
+  var amp = bhClamp(Number(amount) || 0, 0, 1);
+  var t = Number(time) || 0;
+  return {
+    x: amp * (Math.sin(t * 0.43) * 0.0016 + Math.sin(t * 1.13 + 1.7) * 0.0008),
+    y: amp * (Math.sin(t * 0.61 + 0.4) * 0.0014 + Math.sin(t * 1.71 + 2.3) * 0.0007),
+    dolly: amp * (Math.sin(t * 0.23 + 1.1) * 0.006 + Math.sin(t * 0.77 + 0.2) * 0.002)
+  };
 }
 
 // How much of a row survives at a distance from the hole, in the hole's own shadow radius: it stays

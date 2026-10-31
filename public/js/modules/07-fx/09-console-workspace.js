@@ -189,6 +189,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhdiscGain', '吸积盘亮度', '银河黑洞 吸积盘 亮度 盘'),
         fxConsoleItem('fx-bhdiscThickness', '吸积盘厚度', '银河黑洞 吸积盘 厚度 体积 雾 穿过'),
         fxConsoleItem('fx-bhsoftness', '整体柔化', '银河黑洞 柔化 模糊 清晰度 统一 背景'),
+        fxConsoleItem('fx-bhcameraDrift', '镜头拖舵', '银河黑洞 镜头 抖动 漂移 呼吸 史诗'),
+        fxConsoleItem('fx-bhdebris', '碎片浮尘', '银河黑洞 碎片 陨石 小行星 参照 前景'),
         fxConsoleItem('fx-bhmarchSteps', '光线步数', '银河黑洞 光线 步数 精度 性能 积分'),
         fxConsoleItem('fx-bhtextLens', '歌词弯折度', '银河黑洞 歌词 弯折 透镜 通道 文字'),
         fxConsoleItem('fx-bhskyStars', '星空密度', '银河黑洞 星空 星星 背景'),

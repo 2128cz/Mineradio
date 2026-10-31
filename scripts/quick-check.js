@@ -1582,6 +1582,13 @@ function runBlackHolePresetCheck() {
   if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
   if (!/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader)) fail('a ray inside the horizon has to be captured');
   if (!/abs\(side\) < halfThick/.test(shader)) fail('the disc has to be a volume: a plane crossing has no thickness to see through');
+  // The weight of the shot: the drift has to move the ray, the near debris has to exist and be
+  // composited in front, and the near fog needs its second octave or it reads as a smooth sheet.
+  if (!/function bhCameraDrift\(/.test(text)) fail('the shot needs its slow camera drift');
+  if (!/\(1\.0 \+ uDolly\) \+ uShake/.test(shader)) fail('the drift and dolly must reach the ray');
+  if (!/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(shader)) fail('near debris is the reference something small that makes the hole huge');
+  if (!/color = mix\(color, debris\.rgb/.test(shader)) fail('the debris has to be composited in front of the field');
+  if (!/phase \* 21\.0/.test(shader)) fail('the near fog needs a fine octave to look wispy');
   if (!/dot\(outDir, uCamRight\)/.test(shader)) fail('an escaped ray must sample the galaxy along its own direction (that is the lensing)');
   if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
   // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the

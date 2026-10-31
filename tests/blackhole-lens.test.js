@@ -137,6 +137,40 @@ function load(overrides) {
   return sandbox;
 }
 
+// ---------------------------------------- the weight of the shot: long lens, drift, debris
+{
+  const sandbox = load({ fx: { preset: 15 } });
+  // A long lens is the framing: the default has to be narrower than the app's own 45 degrees.
+  assert(sandbox.bhParam('fovDeg') < 48, 'the default fov must be a long lens, got ' + sandbox.bhParam('fovDeg'));
+
+  // Drift: nothing when it is off, bounded when it is on, slow between frames, and never repeating
+  // inside a song (two incommensurable sines per axis).
+  const off = sandbox.bhCameraDrift(12.3, 0);
+  assert(off.x === 0 && off.y === 0 && off.dolly === 0, 'drift 0 must be still');
+  const on = sandbox.bhCameraDrift(12.3, 1);
+  assert(Math.abs(on.x) <= 0.0024 + 1e-12 && Math.abs(on.y) <= 0.0021 + 1e-12 && Math.abs(on.dolly) <= 0.008 + 1e-12,
+    'drift must stay bounded: ' + JSON.stringify(on));
+  const next = sandbox.bhCameraDrift(12.316, 1);
+  assert(Math.abs(next.x - on.x) < 0.0002 && Math.abs(next.dolly - on.dolly) < 0.001,
+    'one frame of drift must be a slow change');
+  let moved = false;
+  for (let t = 0; t < 40; t += 0.37) {
+    const a = sandbox.bhCameraDrift(t, 1);
+    if (Math.abs(a.x - on.x) > 0.0004) { moved = true; break; }
+  }
+  assert(moved, 'the drift has to actually move over a song');
+
+  // The shader applies the drift to the ray, carries the debris pass and a second filament octave.
+  assert(/vec2 ndc = \(uv - 0\.5\) \* 2\.0 \* \(1\.0 \+ uDolly\) \+ uShake;/.test(source),
+    'the drift and dolly have to reach the ray');
+  assert(/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(source), 'the near debris pass must exist');
+  assert(/float fine = hash21\(floor\(vec2\(phase \* 21\.0/.test(source), 'the near fog needs its fine octave');
+  assert(/color = mix\(color, debris\.rgb, clamp\(debris\.a, 0\.0, 1\.0\)\)/.test(source),
+    'and the debris has to be composited in front');
+  console.log('epic: fov ' + sandbox.bhParam('fovDeg') + ' deg, drift ' + on.x.toFixed(5) + '/' + on.y.toFixed(5)
+    + ' dolly ' + on.dolly.toFixed(5) + ' (bounded, slow), debris and fine filaments present');
+}
+
 // ------------------------------------------------------- the marched Schwarzschild field
 //
 // The pass is a ray march now, so the numbers that matter are the ones a photon makes: the

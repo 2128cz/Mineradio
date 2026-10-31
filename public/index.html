@@ -1173,24 +1173,26 @@
         <div class="fx-slider"><label>黑洞水平位置</label><input id="fx-bhholeX" type="range" min="-8" max="8" step="0.1" oninput="setBlackHoleTuning('holeX', this.value)"><output></output></div>
         <div class="fx-slider"><label>黑洞垂直位置</label><input id="fx-bhholeY" type="range" min="-6" max="6" step="0.1" oninput="setBlackHoleTuning('holeY', this.value)"><output></output></div>
         <div class="fx-slider"><label>黑洞距离</label><input id="fx-bhholeDepth" type="range" min="-8" max="8" step="0.1" oninput="setBlackHoleTuning('holeDepth', this.value)"><output></output></div>
-        <div class="fx-slider"><label>视界大小</label><input id="fx-bhmass" type="range" min="0.05" max="6" step="0.05" oninput="setBlackHoleTuning('mass', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视界大小</label><input id="fx-bhmass" type="range" min="0.02" max="6" step="0.01" oninput="setBlackHoleTuning('mass', this.value)"><output></output></div>
         <div class="fx-slider"><label>自旋</label><input id="fx-bhspin" type="range" min="-1" max="1" step="0.01" oninput="setBlackHoleTuning('spin', this.value)"><output></output></div>
         <div class="fx-slider"><label>电荷</label><input id="fx-bhcharge" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('charge', this.value)"><output></output></div>
         <div class="fx-slider"><label>偏折强度</label><input id="fx-bhdeflect" type="range" min="0" max="2.5" step="0.01" oninput="setBlackHoleTuning('deflect', this.value)"><output></output></div>
         <div class="fx-slider"><label>影子倍率</label><input id="fx-bhshadowScale" type="range" min="0.5" max="1.6" step="0.01" oninput="setBlackHoleTuning('shadowScale', this.value)"><output></output></div>
         <div class="fx-slider"><label>坐标系拖曳</label><input id="fx-bhswirl" type="range" min="0" max="2.5" step="0.01" oninput="setBlackHoleTuning('swirl', this.value)"><output></output></div>
         <div class="fx-slider"><label>光子环亮度</label><input id="fx-bhringGlow" type="range" min="0" max="2" step="0.01" oninput="setBlackHoleTuning('ringGlow', this.value)"><output></output></div>
-        <div class="fx-slider"><label>吸积盘内径</label><input id="fx-bhdiscInner" type="range" min="0.2" max="12" step="0.1" oninput="setBlackHoleTuning('discInner', this.value)"><output></output></div>
-        <div class="fx-slider"><label>吸积盘外径</label><input id="fx-bhdiscOuter" type="range" min="0.6" max="24" step="0.1" oninput="setBlackHoleTuning('discOuter', this.value)"><output></output></div>
+        <div class="fx-slider"><label>吸积盘内径</label><input id="fx-bhdiscInner" type="range" min="0.02" max="12" step="0.01" oninput="setBlackHoleTuning('discInner', this.value)"><output></output></div>
+        <div class="fx-slider"><label>吸积盘外径</label><input id="fx-bhdiscOuter" type="range" min="0.05" max="24" step="0.05" oninput="setBlackHoleTuning('discOuter', this.value)"><output></output></div>
         <div class="fx-slider"><label>吸积盘倾角</label><input id="fx-bhdiscTilt" type="range" min="-60" max="60" step="1" oninput="setBlackHoleTuning('discTilt', this.value)"><output></output></div>
         <div class="fx-slider"><label>吸积盘亮度</label><input id="fx-bhdiscGain" type="range" min="0" max="3" step="0.05" oninput="setBlackHoleTuning('discGain', this.value)"><output></output></div>
-        <div class="fx-slider"><label>吸积盘厚度</label><input id="fx-bhdiscThickness" type="range" min="0.05" max="6" step="0.05" oninput="setBlackHoleTuning('discThickness', this.value)"><output></output></div>
+        <div class="fx-slider"><label>吸积盘厚度</label><input id="fx-bhdiscThickness" type="range" min="0.01" max="6" step="0.01" oninput="setBlackHoleTuning('discThickness', this.value)"><output></output></div>
         <div class="fx-slider"><label>整体柔化</label><input id="fx-bhsoftness" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('softness', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头拖舵</label><input id="fx-bhcameraDrift" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('cameraDrift', this.value)"><output></output></div>
+        <div class="fx-slider"><label>碎片浮尘</label><input id="fx-bhdebris" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('debris', this.value)"><output></output></div>
         <div class="fx-slider"><label>光线步数</label><input id="fx-bhmarchSteps" type="range" min="24" max="256" step="2" oninput="setBlackHoleTuning('marchSteps', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词弯折度</label><input id="fx-bhtextLens" type="range" min="0" max="1" step="0.01" oninput="setBlackHoleTuning('textLens', this.value)"><output></output></div>
         <div class="fx-slider"><label>星空密度</label><input id="fx-bhskyStars" type="range" min="0" max="1.5" step="0.01" oninput="setBlackHoleTuning('skyStars', this.value)"><output></output></div>
         <div class="fx-slider"><label>银河光带</label><input id="fx-bhskyBand" type="range" min="0" max="1.5" step="0.01" oninput="setBlackHoleTuning('skyBand', this.value)"><output></output></div>
-        <div class="fx-slider"><label>视锥角度</label><input id="fx-bhfovDeg" type="range" min="35" max="92" step="1" oninput="setBlackHoleTuning('fovDeg', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视锥角度</label><input id="fx-bhfovDeg" type="range" min="24" max="92" step="1" oninput="setBlackHoleTuning('fovDeg', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词入场宽度</label><input id="fx-bhsideSpread" type="range" min="2.5" max="14" step="0.1" oninput="setBlackHoleTuning('sideSpread', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词起点距离</label><input id="fx-bhstartNear" type="range" min="0.7" max="4" step="0.05" oninput="setBlackHoleTuning('startNear', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词入场时长</label><input id="fx-bhflyIn" type="range" min="0.15" max="2.5" step="0.05" oninput="setBlackHoleTuning('flyIn', this.value)"><output></output></div>
