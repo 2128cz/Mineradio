@@ -1596,7 +1596,9 @@ function runBlackHolePresetCheck() {
   if (!/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(shader)) fail('near debris is the reference something small that makes the hole huge');
   if (!/color = mix\(color, debris\.rgb/.test(shader)) fail('the debris has to be composited in front of the field');
   if (!/phase \* 21\.0/.test(shader)) fail('the near fog needs a fine octave to look wispy');
-  if (!/dot\(outDir, uCamRight\)/.test(shader)) fail('an escaped ray must sample the galaxy along its own direction (that is the lensing)');
+  if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the backdrop bend needs its impact parameter floored at the shadow');
+  if (!/\* skyMask;/.test(shader)) fail('the sky must go black inside the shadow');
+  if (/lensedUv - uv/.test(shader)) fail('bending the backdrop by the marched direction folds it once per quadrant');
   if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
   // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the
   // per-field reset button), and a console group that lists them all.

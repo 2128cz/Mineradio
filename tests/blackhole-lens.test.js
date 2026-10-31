@@ -863,7 +863,13 @@ function load(overrides) {
   assert(/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader), 'the march must integrate the Schwarzschild acceleration');
   assert(/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader), 'a ray inside the horizon must be captured');
   assert(/Math.abs\(side\) < halfThick/.test(shader) || /abs\(side\) < halfThick/.test(shader), 'the disc must be a volume, not a plane crossing');
-  assert(/dot\(outDir, uCamRight\)/.test(shader), 'an escaped ray samples the galaxy along its own direction');
+  // The backdrop bends radially and monotonically. Sampling the marched direction folded the
+  // screen texture once per quadrant (rays that wrap over the top come out the other side), which
+  // read as four separate swirls in the frame.
+  assert(/float impact = max\(qlen, uShadowUv \* 0\.98\);/.test(shader), 'the impact parameter is floored at the shadow');
+  assert(/float bendMag = uDeflect \* 0\.65 \* uShadowUv \* uShadowUv \/ impact;/.test(shader), 'the bend must fall off as rs^2/b');
+  assert(/\* skyMask;/.test(shader), 'the sky has to be masked out inside the shadow');
+  assert(!/lensedUv - uv/.test(shader), 'the direction-difference fold must not come back');
   assert(/uDiscInner/.test(shader) && /uDiscTilt/.test(shader), 'the disc has to be in the shader and tiltable');
   // The driver itself: a Shadertoy body is wrapped with its own main().
   const driver = fs.readFileSync(driverPath, 'utf8');
