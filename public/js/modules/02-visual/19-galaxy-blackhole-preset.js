@@ -1747,6 +1747,20 @@ function bhRowBend(localX, width, radius) {
   return { x: (r / w) * Math.sin(a), z: r * (Math.cos(a) - 1), angle: a };
 }
 
+// The width of a row's arc at a given radius. The row is spaghettified as it closes on the hole:
+// the arc length grows with the fall while the glyphs keep their height, so the line smears into a
+// long band. The limit is one full turn - at the horizon the band is closed round the hole instead
+// of piling on itself for ever - which is the visual answer to "stretched to infinite length".
+function bhLyricArcWidth(width, radius, orbit) {
+  var w = Math.max(1e-4, Number(width) || 0);
+  var r = Math.max(1e-4, Number(radius) || 0);
+  var o = Math.max(r, Number(orbit) || r);
+  var t = bhClamp(1 - r / o, 0, 1);
+  var stretched = w * (1 + 2.2 * t * t * t);
+  var ring = 6.28318 * r * 0.98;
+  return Math.min(stretched, ring);
+}
+
 // A row's drift through the disc, in world units along the disc normal: two incommensurable sines
 // with a phase of their own, and a deeper swing while it is falling. Pure, so the "rows must not
 // bob in lockstep" can be checked as numbers instead of by eye.
@@ -2252,16 +2266,12 @@ function bhPlaceLyrics(frame, dt) {
     // stretched along the orbit until the arch is actually visible (a 40 cm line on a 2.4 m orbit
     // would otherwise be almost straight); the stretch is uniform, so the glyphs keep their shape.
     // The target uses the *orbit* radius, not the row's current one, so the line keeps one size from
-  // the front all the way in; only the curvature tightens.
+  // the front all the way in; the curvature tightens and the tidal stretch takes over on the way.
     var arcTarget = params.orbit * 0.46;
     var grow = Math.max(1, arcTarget / Math.max(1e-4, worldW));
     worldW *= grow;
     worldHH *= grow;
-    // Past about 117 degrees it would fold onto itself, so the row shrinks instead of wrapping.
-    var arcHalfMax = 1.02;
-    var arch = Math.min(1, (2 * arcHalfMax * radius) / Math.max(1e-4, worldW));
-    worldW *= arch;
-    worldHH *= arch;
+    worldW = bhLyricArcWidth(worldW, radius, params.orbit);
     row.mesh.scale.set(worldW, worldHH, 1);
     bhBendRowMesh(row.mesh, worldW, radius);
     row.mesh.visible = true;

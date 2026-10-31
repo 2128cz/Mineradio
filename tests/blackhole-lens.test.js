@@ -1026,6 +1026,21 @@ function load(overrides) {
   assert(Math.abs(bendWorldX - 2.4 * Math.sin(1 / 2.4)) < 1e-9, 'the arc length has to be the row width');
   const tight = sandbox.bhRowBend(0.5, 2, 0.9);
   assert(tight.z < bend.z, 'a closer row has to bend harder: ' + tight.z.toFixed(3) + ' vs ' + bend.z.toFixed(3));
+  // Tidal stretch: the line elongates along the orbit as it closes in, and the limit is one full
+  // turn round the hole - stretched to "infinite" length is a closed ring, not a pile of turns.
+  const arcRead = sandbox.bhLyricArcWidth(1.1, params.orbit, params.orbit);
+  assert(Math.abs(arcRead - 1.1) < 1e-9, 'no stretch at the hold radius: ' + arcRead);
+  const arcMid = sandbox.bhLyricArcWidth(1.1, 0.8, params.orbit);
+  const arcDeep = sandbox.bhLyricArcWidth(1.1, 0.5, params.orbit);
+  assert(arcDeep > arcMid && arcMid > arcRead, 'the arc has to grow as the row falls: '
+    + arcRead.toFixed(2) + ' -> ' + arcMid.toFixed(2) + ' -> ' + arcDeep.toFixed(2));
+  assert(arcMid / 0.8 > Math.PI / 2, 'by 0.8 the band has to wrap past a quarter turn: ' + (arcMid / 0.8).toFixed(2) + ' rad');
+  for (const r of [0.3, 0.25, 0.2]) {
+    const a = sandbox.bhLyricArcWidth(1.1, r, params.orbit);
+    assert(a <= 6.28318 * r * 0.98 + 1e-9, 'the band may not wrap past one turn: ' + a);
+  }
+  assert(/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(source),
+    'the placement has to use the tidal width');
   // The bend is written into the mesh's own buffer from the rest positions, so it can be re-bent
   // every frame without the arch creeping.
   const rest = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 0]);

@@ -1736,6 +1736,8 @@ function runBlackHolePresetCheck() {
   }
   if (!/new THREE\.PlaneGeometry\(1, 1, 24, 1\)/.test(text)) fail('the bent row needs enough columns to stay smooth');
   if (!/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(text)) fail('the placement must bend each row to its own radius');
+  if (!/function bhLyricArcWidth\(/.test(text)) fail('the lyric has to be stretched along the orbit as it falls');
+  if (!/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(text)) fail('the placement must use the tidal width, not shrink the row');
   if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
   if (!/bhSwallowAlpha\(radius, horizonWorld\)/.test(text)) fail('the row has to live until the horizon, not fade at the shadow');
   if (!/for \(var i = 0; i < 7; i\+\+\)/.test(text)) fail('seven row slots: an inspiral longer than a line needs its mesh kept');
