@@ -161,7 +161,7 @@ function load(overrides) {
   assert(/starField\(uv \+ bend, iTime\)/.test(source), 'the stars have to be added to the backdrop');
   assert(!/texel\.x \* r \* 2\.4/.test(source), 'the old isotropic five-tap soft focus must be gone');
   // The subject stays sharp: everything that builds the disc and the ring is added after the blur.
-  const blurAt = source.indexOf('sampleSky(uv, bend, uSoft)');
+  const blurAt = source.indexOf('sampleSky(uv, uSoft)');
   const discAt = source.indexOf('emit += tint');
   assert(discAt > 0 && blurAt > 0 && discAt < blurAt, 'the disc is built before the backdrop is sampled, unblurred');
   console.log('backdrop: radial taps ' + JSON.stringify(taps) + ' at ' + sandbox.bhParam('softness') + 'px, four-point stars, no isotropic blur');
@@ -866,6 +866,9 @@ function load(overrides) {
   // The backdrop bends radially and monotonically. Sampling the marched direction folded the
   // screen texture once per quadrant (rays that wrap over the top come out the other side), which
   // read as four separate swirls in the frame.
+  assert(/vec3 sampleSky\(vec2 uv, float blurPx\)/.test(shader), 'the near-field galaxy must be sampled without the bend');
+  assert(!/sampleSky\(uv, bend/.test(shader), 'passing the far-field bend into the galaxy lookup stretched the frame edges');
+  assert(/return \(sum \/ 5\.0\) \* edge;/.test(shader), 'the border fade has to actually multiply the galaxy sample');
   assert(/float impact = max\(qlen, uShadowUv \* 0\.98\);/.test(shader), 'the impact parameter is floored at the shadow');
   assert(/float bendMag = uDeflect \* 0\.65 \* uShadowUv \* uShadowUv \/ impact;/.test(shader), 'the bend must fall off as rs^2/b');
   assert(/\* skyMask;/.test(shader), 'the sky has to be masked out inside the shadow');

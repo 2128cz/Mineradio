@@ -1596,7 +1596,9 @@ function runBlackHolePresetCheck() {
   if (!/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(shader)) fail('near debris is the reference something small that makes the hole huge');
   if (!/color = mix\(color, debris\.rgb/.test(shader)) fail('the debris has to be composited in front of the field');
   if (!/phase \* 21\.0/.test(shader)) fail('the near fog needs a fine octave to look wispy');
-  if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the backdrop bend needs its impact parameter floored at the shadow');
+  if (/sampleSky\(uv, bend/.test(shader)) fail('the near-field galaxy must not take the far-field bend: it stretched the frame edges into radial streaks');
+  if (!/smoothstep\(0\.0, 0\.07, min\(min\(uv\.x, 1\.0 - uv\.x\)/.test(shader)) fail('the backdrop has to fade at the render target border');
+  if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the star bend needs its impact parameter floored at the shadow');
   if (!/\* skyMask;/.test(shader)) fail('the sky must go black inside the shadow');
   if (/lensedUv - uv/.test(shader)) fail('bending the backdrop by the marched direction folds it once per quadrant');
   if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
