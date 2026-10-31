@@ -1589,13 +1589,20 @@ function runBlackHolePresetCheck() {
   if (!/float glint = exp\(-ad\.x/.test(shader)) fail('distant stars need their four-point glint');
   if (!/starField\(uv \+ bend, iTime\)/.test(shader)) fail('the star field has to be part of the backdrop');
   if (/texel\.x \* r \* 2\.4/.test(shader)) fail('the isotropic soft focus must not come back: the subject stays sharp');
-  // The weight of the shot: the drift has to move the ray, the near debris has to exist and be
-  // composited in front, and the near fog needs its second octave or it reads as a smooth sheet.
+  // The weight of the shot: the drift has to move the ray, the fog has to be a fractal sum that is
+  // band-limited by the step, and the debris has to live inside the disc (shards on the orbital
+  // lattice, dimmed by the fog), not as specks on the screen.
   if (!/function bhCameraDrift\(/.test(text)) fail('the shot needs its slow camera drift');
   if (!/\(1\.0 \+ uDolly\) \+ uShake/.test(shader)) fail('the drift and dolly must reach the ray');
-  if (!/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(shader)) fail('near debris is the reference something small that makes the hole huge');
-  if (!/color = mix\(color, debris\.rgb/.test(shader)) fail('the debris has to be composited in front of the field');
-  if (!/float warp = noise3\(q \* 1\.1/.test(shader)) fail('the near fog needs its domain warp to look wispy');
+  if (!/float discFbm\(float flow, float ringR, float rad, float lod\)/.test(shader)) fail('the disc fog has to be a fractal sum, not one hashed cell');
+  if (!/float a = flow \+ 1\.73 \* float\(i\) \+ 0\.37;/.test(shader)) fail('the fog octaves must not share a lattice, or the cloud is a grid');
+  if (!/if \(i == 3\) keep = 1\.0 - lod;/.test(shader)) fail('the finest octave has to be band-limited, or the disc moires at grazing angles');
+  if (!/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(shader)) fail('the slab sample has to be jittered, or the integration is regular');
+  if (!/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(shader)) fail('the Keplerian shear has to be bounded, or the field winds into radial moire');
+  if (!/float discFragment\(/.test(shader)) fail('the disc needs shards inside it, not screen-space specks');
+  if (!/if \(bestR > uDiscInner && bestR < uDiscOuter\)/.test(shader)) fail('the shards have to be looked up where the ray meets the disc');
+  if (!/bestTransmit/.test(shader)) fail('the shards have to be dimmed by the fog in front of them');
+  if (!/float warp = noise3\(vec3\(cos\(flow\), sin\(flow\)/.test(shader)) fail('the near fog needs its domain warp to look wispy');
   if (/sampleSky\(uv, bend/.test(shader)) fail('the near-field galaxy must not take the far-field bend: it stretched the frame edges into radial streaks');
   if (!/smoothstep\(0\.0, 0\.07, min\(min\(uv\.x, 1\.0 - uv\.x\)/.test(shader)) fail('the backdrop has to fade at the render target border');
   if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the star bend needs its impact parameter floored at the shadow');
@@ -1701,18 +1708,38 @@ function runBlackHolePresetCheck() {
     fail('the scene must be sampled through the inverse bend, or nothing behind the hole appears at the rim');
   }
   if (!/sampleSky\(lensUv, uSoft\)/.test(text)) fail('the scene sample must use the lensed coordinate');
-  // The disc is a volume sampled in 3D along the march, not hashed cells in (angle, radius).
-  for (const pattern of [/float hash13\(vec3/, /float noise3\(vec3/, /float fbm3\(vec3/, /float base = fbm3\(q \* 2\.0\);/, /q = vec3\(cos\(flow\) \* r, sin\(flow\) \* r, side \* 4\.5\)/]) {
+  // The disc is a volume sampled in 3D along the march, not hashed cells in (angle, radius), and its
+  // density is a fractal sum around the orbit rather than one noise octave.
+  for (const pattern of [
+    /float hash13\(vec3/,
+    /float noise3\(vec3/,
+    /float discFbm\(float flow, float ringR, float rad, float lod\)/,
+    /vec2 ring = vec2\(cos\(a\), sin\(a\)\) \* \(ringR \* f\);/,
+    /float base = discFbm\(flow \+ warp \* 0\.9, 2\.6 \* rJ, radCoord \+ warp \* 0\.6, lod\);/,
+    /float radCoord = rJ \* 3\.0 \+ sideJ \* 7\.0;/,
+  ]) {
     if (!pattern.test(text)) fail('the disc fog is incomplete: ' + pattern);
   }
-  if (!/float fog = mix\(1\.0, 0\.10 \+ 1\.9 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(text)) {
+  if (!/float fog = mix\(1\.0, 0\.04 \+ 2\.6 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(text)) {
     fail('the wisp amount must reach the disc density');
   }
+  if (/float fbm3\(vec3/.test(text)) fail('the three-octave lattice fbm is not the field any more');
   if (!/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(text)) {
     fail('the discWisp knob must be written to the shader every frame');
   }
   if (/float grain = mix\(0\.25, 1\.75/.test(text)) fail('the old hashed-cell grain must be gone: it drew stretched dots, not fog');
   if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
+  // The lyric rows are arches of the orbit and inspiral physically: the curvature is the hole's
+  // radius, the fall is Keplerian and the row lives until the horizon.
+  if (!/function bhRowBend\(/.test(text) || !/function bhBendRowMesh\(/.test(text)) {
+    fail('the lyric rows have to be bent into the orbit, not flat billboards');
+  }
+  if (!/new THREE\.PlaneGeometry\(1, 1, 24, 1\)/.test(text)) fail('the bent row needs enough columns to stay smooth');
+  if (!/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(text)) fail('the placement must bend each row to its own radius');
+  if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
+  if (!/bhSwallowAlpha\(radius, horizonWorld\)/.test(text)) fail('the row has to live until the horizon, not fade at the shadow');
+  if (!/for \(var i = 0; i < 7; i\+\+\)/.test(text)) fail('seven row slots: an inspiral longer than a line needs its mesh kept');
+  if (!/Math\.max\(0, sung - 4\)/.test(text)) fail('the window has to keep four lines of history for the long falls');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');

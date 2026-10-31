@@ -66,6 +66,8 @@ var BH_TUNING_SCHEMA = {
   // Radial blur of the star field, in pixels: a little is depth, a lot is a smeared plate.
   softness: { def: 3, min: 0, max: 6, kind: 'px', rebuild: 'live' },
   cameraDrift: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  // Shards inside the disc: how many lattice cells carry one. They ride the Keplerian flow and are
+  // dimmed by the fog in front of them, so they are part of the disc rather than a screen overlay.
   debris: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
@@ -78,7 +80,9 @@ var BH_TUNING_SCHEMA = {
   sideSpread: { def: 6.2, min: 2.5, max: 14, kind: 'unit', rebuild: 'lyric' },
   startNear: { def: 1.6, min: 0.7, max: 4, kind: 'unit', rebuild: 'lyric' },
   flyIn: { def: 0.75, min: 0.15, max: 2.5, kind: 'sec', rebuild: 'live' },
-  swallow: { def: 1.4, min: 0.2, max: 3, kind: 'sec', rebuild: 'live' },
+  // Seconds from leaving the front to crossing the horizon, for a line of average length: a real
+  // inspiral takes a while, and the row is meant to be seen whirling in, not blinked away.
+  swallow: { def: 9, min: 0.5, max: 30, kind: 'sec', rebuild: 'live' },
   fallCurve: { def: 0.5, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
   passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
@@ -327,9 +331,11 @@ void main() {
 // Volumetric version of the pass. The disc is no longer a plane the ray crosses: every step that
 // finds itself inside a slab of thickness uDiscThick around the disc plane adds emission and eats
 // some transparency, so the disc has depth, the camera can be inside it, and the grain lives in the
-// volume. The galaxy is sampled with a *bounded* screen-space bend plus a few taps of blur - a
-// direction-based lookup squeezed the whole sky into vertical strips, which is what made the
-// background look like a tube.
+// volume. The density is a four-octave fractal around the orbit (seamless in azimuth, band-limited
+// by the ray's own step) and the shards are a lattice riding the Keplerian flow, looked up once per
+// ray at its closest approach to the plane. The galaxy is sampled with a *bounded* screen-space bend
+// plus a few taps of blur - a direction-based lookup squeezed the whole sky into vertical strips,
+// which is what made the background look like a tube.
 var BH_PASS_FS = shadertoyFragment(
   [
     'uniform float uTextLens;',
@@ -361,8 +367,10 @@ var BH_PASS_FS = shadertoyFragment(
     '',
     'float hash21(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }',
     '',
-    '// 3D value noise: the disc fog is sampled at the marched point, so the field has to exist in the',
-    '// third dimension or every step along a ray reads the same cell (streaks instead of wisps).',
+    '// 3D value noise, quintic-smooth: the disc fog is sampled at the marched point, so the field has',
+    '// to exist in the third dimension or every step along a ray reads the same cell (streaks instead',
+    '// of wisps). The quintic weights keep the second derivative continuous, so a stack of octaves',
+    '// does not show the lattice as a grid of kinks the way a cubic-smooth one does.',
     'float hash13(vec3 p3) {',
     '  p3 = fract(p3 * 0.1031);',
     '  p3 += dot(p3, p3.yzx + 33.33);',
@@ -371,7 +379,7 @@ var BH_PASS_FS = shadertoyFragment(
     'float noise3(vec3 x) {',
     '  vec3 i = floor(x);',
     '  vec3 f = fract(x);',
-    '  f = f * f * (3.0 - 2.0 * f);',
+    '  f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);',
     '  float n000 = hash13(i);',
     '  float n100 = hash13(i + vec3(1.0, 0.0, 0.0));',
     '  float n010 = hash13(i + vec3(0.0, 1.0, 0.0));',
@@ -383,41 +391,58 @@ var BH_PASS_FS = shadertoyFragment(
     '  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),',
     '             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);',
     '}',
-    'float fbm3(vec3 p) {',
+    '',
+    '// The cloud is a fractal sum around the orbit. The ring coordinate is a closed circle, so each',
+    '// octave stays seamless where the azimuth wraps; every octave also turns the ring by its own',
+    '// phase and shifts the radial coordinate, so no two octaves share a lattice and the sum cannot',
+    '// read as one repeated cell. The first octave is the cloud\'s shape, each later one adds detail',
+    '// at half the weight, and lod drops the fine octaves once the ray step is coarser than their',
+    '// wavelength - that is what turns the radial moire back into fog instead of leaving it on screen.',
+    'float discFbm(float flow, float ringR, float rad, float lod) {',
     '  float sum = 0.0;',
-    '  float amp = 0.55;',
-    '  for (int i = 0; i < 3; i++) {',
-    '    sum += amp * noise3(p);',
-    '    p = p * 2.07 + vec3(7.3, 1.9, 4.7);',
+    '  float amp = 0.5;',
+    '  float f = 1.0;',
+    '  for (int i = 0; i < 4; i++) {',
+    '    float keep = 1.0;',
+    '    if (i == 2) keep = 1.0 - 0.55 * lod;',
+    '    if (i == 3) keep = 1.0 - lod;',
+    '    float a = flow + 1.73 * float(i) + 0.37;',
+    '    vec2 ring = vec2(cos(a), sin(a)) * (ringR * f);',
+    '    float rz = rad * f + 5.17 * float(i);',
+    '    sum += amp * keep * noise3(vec3(ring, rz));',
+    '    f *= 2.02;',
     '    amp *= 0.5;',
     '  }',
-    '  return sum;',
+    '  return sum * 1.0667;',
     '}',
     '',
-    '// Near debris: sparse specks drifting across the frame, dark bodies with a lit rim on the side',
-    '// that faces the disc. They are the reference the eye needs: without something small and close,',
-    '// a black hole has no size.',
-    'vec4 nearDebris(vec2 uv, float t, float amount) {',
-    '  if (amount <= 0.001) return vec4(0.0);',
-    '  vec4 outColor = vec4(0.0);',
-    '  for (int layer = 0; layer < 2; layer++) {',
-    '    float fl = float(layer);',
-    '    float scale = mix(6.0, 13.0, fl);',
-    '    vec2 drift = vec2(t * (0.011 + 0.007 * fl), -t * (0.005 + 0.004 * fl));',
-    '    vec2 p = uv * vec2(iResolution.x / max(1.0, iResolution.y), 1.0) * scale + drift;',
-    '    vec2 cell = floor(p);',
-    '    float h = hash21(cell + fl * 37.0);',
-    '    if (h < 0.90) continue;',
-    '    vec2 centre = (vec2(hash21(cell + 1.7), hash21(cell + 4.3)) - 0.5) * 0.55;',
-    '    float d = length(fract(p) - 0.5 - centre);',
-    '    float size = 0.05 + 0.11 * hash21(cell + 9.1);',
-    '    float core = smoothstep(size, size * 0.5, d);',
-    '    float rim = max(0.0, smoothstep(size * 1.12, size * 0.78, d) - core);',
-    '    vec3 col = vec3(0.015, 0.017, 0.022) + rim * vec3(1.0, 0.62, 0.34);',
-    '    float alpha = (core * 0.92 + rim * 0.75) * amount * (0.55 + 0.45 * hash21(cell + 21.0));',
-    '    outColor = mix(outColor, vec4(col, alpha), clamp(alpha, 0.0, 1.0));',
-    '  }',
-    '  return outColor;',
+    '// Fragments in the disc. One sparse lattice cell is looked up at the marched point nearest the',
+    '// disc plane, so a shard is a crisp speck rather than a dot the step size can walk over. The',
+    '// lattice is keyed on the orbital phase - angle minus the local Keplerian rate times time - so a',
+    '// shard sits still in the disc while the disc turns under it. Cells are square in arc length, so',
+    '// a shard does not stretch with radius, and the silhouette is eased so it reads as a broken',
+    '// shard rather than a round grain.',
+    'float discFragment(vec3 p, float r, float rn, float amount) {',
+    '  if (amount <= 0.001 || r <= 0.0) return 0.0;',
+    '  float cells = max(8.0, floor(6.28318 * r / 0.20));',
+    '  float phase = atan(p.z, p.x) - uSpin * 1.6 * iTime / pow(max(r, 0.42), 1.5);',
+    '  float cu = phase * cells / 6.28318;',
+    '  float cr = r / 0.20;',
+    '  vec2 cell = vec2(floor(cu), floor(cr));',
+    '  float h = hash13(vec3(cell, 0.37));',
+    '  if (h > amount * 0.18) return 0.0;',
+    '  float hx = hash13(vec3(cell, 1.7));',
+    '  float hy = hash13(vec3(cell, 5.3));',
+    '  float hz = hash13(vec3(cell, 9.1));',
+    '  vec2 f = vec2(fract(cu), fract(cr));',
+    '  float arc = 6.28318 * r / cells;',
+    '  vec2 d = vec2((f.x - 0.5 - (hx - 0.5) * 0.30) * arc, (f.y - 0.5 - (hy - 0.5) * 0.30) * 0.20);',
+    '  d.x /= 0.75 + hz * 0.35;',
+    '  float size = 0.034 + 0.028 * hy;',
+    '  float body = max(0.0, 1.0 - dot(d, d) / (size * size));',
+    '  body *= body;',
+    '  float lobes = 0.70 + 0.30 * sin(5.0 * atan(d.y, d.x + 1e-4) + hz * 6.28318);',
+    '  return body * lobes * smoothstep(0.0, 0.10, rn) * (1.0 - smoothstep(0.90, 1.0, rn));',
     '}',
     '',
     '// The particle galaxy lives at the hole\'s own depth, so the far-field bend does not apply to it:',
@@ -478,6 +503,14 @@ var BH_PASS_FS = shadertoyFragment(
     '  vec3 emit = vec3(0.0);',
     '  float transmit = 1.0;',
     '  float lastR = length(pos);',
+    '  // The disc sample is offset along the step by this hash. A uniform march integrates the slab at',
+    '  // the same fraction of every step, and that regularity is the banding that ran across the disc.',
+    '  float jit = hash21(fragCoord + vec2(13.7, 5.1));',
+    '  float bestSide = 1e9;',
+    '  float bestR = 0.0;',
+    '  float bestRn = 0.0;',
+    '  float bestTransmit = 1.0;',
+    '  vec3 bestPos = vec3(0.0);',
     '  int steps = int(uSteps);',
     '  for (int i = 0; i < 256; i++) {',
     '    if (i >= steps) break;',
@@ -496,20 +529,27 @@ var BH_PASS_FS = shadertoyFragment(
     '    float side = dot(pos, discN);',
     '    float halfThick = max(0.002, uDiscThick * 0.5);',
     '    if (abs(side) < halfThick && r > uDiscInner && r < uDiscOuter) {',
-    '      float vert = 1.0 - abs(side) / halfThick;',
-    '      float rn = clamp((r - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
+    '      vec3 sp = pos + vel * (dt * (jit - 0.5));',
+    '      float sideJ = dot(sp, discN);',
+    '      float rJ = max(0.0001, length(sp));',
+    '      float vert = max(0.0, 1.0 - abs(sideJ) / halfThick);',
+    '      float rn = clamp((rJ - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
     '      float radial = smoothstep(0.0, 0.18, rn) * (1.0 - smoothstep(0.72, 1.0, rn));',
     '      float heat = pow(1.0 - rn, 1.7);',
-    // The fog is a point field sampled at the marched position, turned with the flow: a ray cuts
-    // through filaments instead of dragging one hashed cell along itself, which is what made the
-    // old grain read as stretched dots.
-    '      float flow = atan(pos.z, pos.x) - uSpin * iTime * 0.55 / (0.6 + r);',
-    '      vec3 q = vec3(cos(flow) * r, sin(flow) * r, side * 4.5) + vec3(0.0, 0.0, iTime * 0.04);',
-    '      float base = fbm3(q * 2.0);',
-    '      float warp = noise3(q * 1.1 + vec3(3.1, 7.7, 1.3));',
-    '      float field = smoothstep(0.34, 0.84, base + (warp - 0.5) * 0.38);',
-    '      field *= 0.30 + 1.15 * (1.0 - abs(2.0 * base - 1.0));',
-    '      float fog = mix(1.0, 0.10 + 1.9 * field, clamp(uWisp, 0.0, 2.0) * 0.7);',
+    // The fog is a point field sampled at the marched position, turned with the flow. Keplerian
+    // shear winds the filaments into a spiral over the first seconds and then eases off: an
+    // unbounded shear would wind the field into radial moire over a song. The rigid term keeps the
+    // pattern visibly turning once the shear has settled.
+    '      float omega = uSpin * 0.55 / pow(max(rJ, 0.42), 1.5);',
+    '      float wound = omega * iTime * 0.8;',
+    '      float shear = 1.8 * wound / (1.0 + abs(wound));',
+    '      float flow = atan(sp.z, sp.x) - shear - uSpin * 0.55 * iTime;',
+    '      float radCoord = rJ * 3.0 + sideJ * 7.0;',
+    '      float lod = smoothstep(0.015, 0.06, dt);',
+    '      float warp = noise3(vec3(cos(flow), sin(flow), 0.0) * 0.62 + vec3(3.1, 7.7, radCoord * 0.62 + 1.3)) - 0.5;',
+    '      float base = discFbm(flow + warp * 0.9, 2.6 * rJ, radCoord + warp * 0.6, lod);',
+    '      float field = smoothstep(0.30, 0.62, base);',
+    '      float fog = mix(1.0, 0.04 + 2.6 * field, clamp(uWisp, 0.0, 2.0) * 0.7);',
     '      vec2 tangent = normalize(vec2(-pos.z, pos.x));',
     '      vec2 motion = normalize(vec2(vel.x, vel.z));',
     '      float doppler = 1.0 + uSpin * 0.8 * dot(tangent, motion);',
@@ -517,6 +557,7 @@ var BH_PASS_FS = shadertoyFragment(
     '      vec3 tint = mix(vec3(1.0, 0.50, 0.18), vec3(1.0, 0.96, 0.88), heat);',
     '      emit += tint * (0.22 + 1.8 * heat) * max(0.10, doppler) * density * dt * uDiscGain * transmit;',
     '      transmit *= exp(-density * dt * 1.6 * (0.5 + uDiscGain));',
+    '      if (abs(side) < bestSide) { bestSide = abs(side); bestR = rJ; bestRn = rn; bestTransmit = transmit; bestPos = sp; }',
     '    }',
     '    pos += vel * dt;',
     '  }',
@@ -556,8 +597,14 @@ var BH_PASS_FS = shadertoyFragment(
     '  color += uRing * 0.05 * vec3(0.45, 0.62, 0.95) * exp(-pow((dUv - 0.34) / 0.22, 2.0));',
     '  color *= 1.0 - 0.28 * smoothstep(0.42, 1.05, dUv);',
     '',
-    '  vec4 debris = nearDebris(uv, iTime, uDebris);',
-  '  color = mix(color, debris.rgb, clamp(debris.a, 0.0, 1.0));',
+    '  // Shards inside the disc: one lookup where the ray came closest to the plane, dimmed by the fog',
+    '  // it passed on the way in. They belong to the cloud instead of being painted over it.',
+    '  if (bestR > uDiscInner && bestR < uDiscOuter) {',
+    '    float shard = discFragment(bestPos, bestR, bestRn, uDebris);',
+    '    float fheat = pow(1.0 - bestRn, 1.7);',
+    '    vec3 ftint = mix(vec3(1.0, 0.54, 0.24), vec3(1.0, 0.94, 0.86), fheat);',
+    '    color += ftint * shard * (0.9 + 1.8 * fheat) * bestTransmit * (0.45 + 0.55 * uDebris);',
+    '  }',
   '',
   // The near rows are in front of the hole, so they are pasted straight over the picture: the lens
   // belongs to what is behind the hole, and that is the scene channel above.
@@ -1674,15 +1721,60 @@ function bhCameraDrift(time, amount) {
   };
 }
 
-// How much of a row survives at a distance from the hole, in the hole's own shadow radius: it stays
-// whole outside, and is gone by the time it reaches the rim. This is what "gradually swallowed"
-// means now that the shadow does not paint over the text.
-function bhSwallowAlpha(distance, shadowRadius) {
-  if (!(shadowRadius > 1e-6)) return 1;
-  // Whole until 0.55 of the shadow radius and gone by 0.15: a row on its way in stays readable
-  // *over* the hole, which is the whole point of compositing it after the shadow, and only the
-  // last part of the fall - where it is down to a few pixels - is what fades out.
-  return bhClamp((distance / shadowRadius - 0.15) / 0.4, 0, 1);
+// How much of a row survives at a distance from the hole, in horizon radii. The row stays readable
+// all the way across the shadow - it is composited after the pass, so the shadow cannot eat it -
+// and is extinguished in the last third of a horizon radius, at the edge light cannot leave.
+function bhSwallowAlpha(distance, horizonRadius) {
+  if (!(horizonRadius > 1e-6)) return 1;
+  return bhClamp((distance / horizonRadius - 1.02) / 0.30, 0, 1);
+}
+
+// A row's mass is its own length: the user asked for the line's gravity to differ with the line, so
+// a long line falls faster than a short one. Bounded so neither end of a song is a stone or a
+// balloon.
+function bhLyricMass(item) {
+  var text = String((item && item.text) || '');
+  return bhClamp(0.85 + text.length / 18, 0.85, 1.9);
+}
+
+// One vertex of a row bent along the orbit: the row is an arc of the circle it stands on, so its
+// curvature is the hole's radius at that moment. `localX` is the flat plane's x in [-0.5, 0.5] and
+// the mesh's own x scale is `width`, so the returned (x, z) are local to that same scaled mesh.
+function bhRowBend(localX, width, radius) {
+  var w = Math.max(1e-4, Number(width) || 0);
+  var r = Math.max(1e-3, Number(radius) || 0);
+  var a = (Number(localX) || 0) * w / r;
+  return { x: (r / w) * Math.sin(a), z: r * (Math.cos(a) - 1), angle: a };
+}
+
+// A row's drift through the disc, in world units along the disc normal: two incommensurable sines
+// with a phase of their own, and a deeper swing while it is falling. Pure, so the "rows must not
+// bob in lockstep" can be checked as numbers instead of by eye.
+function bhLyricBob(index, time, fallAmount, drift) {
+  var phase = index * 1.73 + 0.37;
+  var u = bhClamp(Number(fallAmount) || 0, 0, 1);
+  var amp = (0.02 + bhClamp(Number(drift) || 0, 0, 2) * 0.12) * (1 + 0.9 * u);
+  var t = Number(time) || 0;
+  return (Math.sin(t * 0.83 + phase) * 0.55 + Math.sin(t * 1.67 + phase * 2.3) * 0.45) * amp;
+}
+
+// Writes the arch into a row's plane geometry. The plane is built once and its rest positions are
+// kept, so the same buffer is re-bent every frame without accumulating.
+function bhBendRowMesh(mesh, width, radius) {
+  var geometry = mesh && mesh.geometry;
+  var position = geometry && geometry.attributes ? geometry.attributes.position : null;
+  var base = mesh && mesh.userData ? mesh.userData.bhBasePositions : null;
+  if (!position || !position.array || !base) return false;
+  var array = position.array;
+  var count = Math.min(base.length, array.length);
+  for (var i = 0; i + 2 < count; i += 3) {
+    var bend = bhRowBend(base[i], width, radius);
+    array[i] = bend.x;
+    array[i + 1] = base[i + 1];
+    array[i + 2] = bend.z;
+  }
+  position.needsUpdate = true;
+  return true;
 }
 
 var BH_ORBIT_FRONT = -Math.PI / 2;
@@ -1827,17 +1919,39 @@ function bhLyricOrbitState(item, now, params, frontAngle, prevExitStart) {
   if (t <= exitStart) {
     return { phase: 'read', angle: frontAngle, radius: 1, alpha: 1, fall: 0 };
   }
-  var u = bhClamp((t - exitStart) / Math.max(0.1, Number(params.swallow) || 1.4), 0, 1);
-  if (u >= 1) return null;
-  var curve = bhClamp(Number(params.curve) || 0.66, 0.05, 3);
-  var turn = (Number(params.wind) || 0) + rate * Math.max(0.1, Number(params.swallow) || 1.4);
+  // The fall is a real inspiral, not a scripted swoop: the row is thrown sideways out of the front
+  // and then winds round the hole at the Keplerian rate of wherever it is, so it lazier at the
+  // outside and frantic as the radius closes. The heavier the line, the faster its fall.
+  var mass = bhLyricMass(item);
+  var span = Math.max(0.4, (Number(params.swallow) || 9) / mass);
+  var tau = t - exitStart;
+  if (tau >= span) return null;
+  var u = bhClamp(tau / span, 0, 1);
+  var curve = bhClamp(Number(params.curve) || 0.5, 0.05, 3);
+  var rho = Math.pow(Math.max(0, 1 - u), curve);
+  // dphi/dtau = rate / rho^1.5, integrated in closed form. The ramp is what turns "stopped at the
+  // front" into "thrown sideways": the angle leaves the front with zero speed and reaches the orbit
+  // rate within a third of a second.
+  var expo = 1 - 1.5 * curve;
+  var wound = Math.abs(expo) < 1e-3
+    ? -Math.log(Math.max(1e-4, 1 - u))
+    : (1 - Math.pow(Math.max(0, 1 - u), expo)) / expo;
+  wound = Math.min(wound, 12);
+  var kick = (function () {
+    var x = bhClamp(tau / 0.35, 0, 1);
+    return x * x * (3 - 2 * x);
+  })();
+  var turn = rate * span * wound * kick + (Number(params.wind) || 0) * u * kick;
   return {
     phase: 'fall',
-    // u^1.6 starts at zero angular speed, so the exit does not snap away from the front.
-    angle: frontAngle - turn * Math.pow(u, 1.6),
-    radius: Math.pow(Math.max(0, 1 - u), curve),
+    angle: frontAngle - turn,
+    radius: rho,
     alpha: 1,
-    fall: u
+    fall: u,
+    mass: mass,
+    // Radians per second right now: the tests read this as the spin-up, and so could a caller that
+    // wants to blur fast rows.
+    spin: rate / Math.pow(Math.max(1e-3, rho), 1.5)
   };
 }
 
@@ -1931,9 +2045,16 @@ function bhBuildLyricRow(width, height) {
     side: THREE.DoubleSide,
     opacity: 1
   });
-  var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+  // Segmented along x: the row is bent into the orbit's own arc every frame, so the plane needs
+  // enough columns to stay smooth when the radius closes in and the curvature grows.
+  var geometry = new THREE.PlaneGeometry(1, 1, 24, 1);
+  var mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 60;
+  // The rest positions are kept: the bend is written into the live buffer each frame, and reading a
+  // already-bent vertex back would make the arch creep instead of being a function of the radius.
+  var position = geometry && geometry.attributes ? geometry.attributes.position : null;
+  mesh.userData = { bhBasePositions: position && position.array ? new Float32Array(position.array) : null };
   return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, live: false, front: true };
 }
 
@@ -1961,7 +2082,9 @@ function bhBuildLyrics() {
   var rows = [];
   var fontPx = bhLyricFontPx();
   var worldHeight = fontPx * 0.045;
-  for (var i = 0; i < 5; i++) {
+  // Seven slots: a row keeps orbiting for its whole inspiral, so several lines are in the disc at
+  // once and the queue at the front is a queue of falls, not a single row being recycled.
+  for (var i = 0; i < 7; i++) {
     var row = bhBuildLyricRow(1024, 256);
     row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
     row.mesh.visible = false;
@@ -2021,11 +2144,13 @@ function bhPlaceLyrics(frame, dt) {
   var aspect = Math.max(0.2, Number(frame.aspect) || 1.78);
   var fwd = (frame.camera && frame.camera.fwd) || { x: 0, y: 0, z: -1 };
   var depth = Math.max(0.1, Number(frame.distance) || 1);
-  var shadowWorld = Math.max(1e-4, (Number(frame.uvShadow) || 0.3) * depth * tanHalf);
+  var horizonWorld = Math.max(1e-4, Number(frame.horizonWorld) || 0.3);
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
   var anchor = sung < 0 ? 0 : sung;
-  var lo = sung < 0 ? 0 : Math.max(0, sung - 2);
+  // Four lines of history: the inspiral is long by design, so a row that has left the front has to
+  // stay alive while it winds in - three lines behind is not enough.
+  var lo = sung < 0 ? 0 : Math.max(0, sung - 4);
   var hi = Math.min(items.length - 1, anchor + 2);
   var rows = bhLyrics.rows;
   var held = {};
@@ -2086,10 +2211,19 @@ function bhPlaceLyrics(frame, dt) {
       continue;
     }
     row.live = true;
-    var wobble = Math.sin(time * 0.6 + index * 0.9) * params.drift * 0.02;
+    // Every row has its own pair of incommensurable sines: one swings it a little along the orbit,
+    // the other lifts and drops it through the disc. A queue of falls must not read as a rail.
+    var phase = index * 1.73 + 0.37;
+    var wobble = params.drift * (Math.sin(time * 0.6 + phase) * 0.035 + Math.sin(time * 1.7 + phase * 2.1) * 0.018);
     var angle = state.angle + wobble;
     var radius = params.orbit * state.radius;
     var point = bhOrbitPoint(basis, radius, angle);
+    // Falling rows bob harder: they are bodies tumbling in the disc's volume, not stickers on a
+    // ring, and the vertical motion is what makes the disc read as thick.
+    var bob = bhLyricBob(index, time, state.phase === 'fall' ? state.fall : 0, params.drift);
+    point.x += basis.n.x * bob;
+    point.y += basis.n.y * bob;
+    point.z += basis.n.z * bob;
     row.mesh.position.set(point.x, point.y, point.z);
     // The panel is not billboarded: it faces outward from the hole and stands on the disc, so it
     // swings round as it comes past and only faces the eye near the front. The perspective of
@@ -2111,12 +2245,30 @@ function bhPlaceLyrics(frame, dt) {
     var rowAlong = Math.max(0.05, alongRow);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
-    row.mesh.scale.set(worldH * (row.widthRatio || 4) * fit, worldH * fit, 1);
+    var worldW = worldH * (row.widthRatio || 4) * fit;
+    var worldHH = worldH * fit;
+    // The arch is the orbit itself: its radius of curvature is the row's distance to the hole, so at
+    // the front it hugs the disc and, as it falls, it closes in with the hole. A short line is
+    // stretched along the orbit until the arch is actually visible (a 40 cm line on a 2.4 m orbit
+    // would otherwise be almost straight); the stretch is uniform, so the glyphs keep their shape.
+    // The target uses the *orbit* radius, not the row's current one, so the line keeps one size from
+  // the front all the way in; only the curvature tightens.
+    var arcTarget = params.orbit * 0.46;
+    var grow = Math.max(1, arcTarget / Math.max(1e-4, worldW));
+    worldW *= grow;
+    worldHH *= grow;
+    // Past about 117 degrees it would fold onto itself, so the row shrinks instead of wrapping.
+    var arcHalfMax = 1.02;
+    var arch = Math.min(1, (2 * arcHalfMax * radius) / Math.max(1e-4, worldW));
+    worldW *= arch;
+    worldHH *= arch;
+    row.mesh.scale.set(worldW, worldHH, 1);
+    bhBendRowMesh(row.mesh, worldW, radius);
     row.mesh.visible = true;
     var opacity = current ? 1 : 0.72;
     if (state.phase === 'read') opacity = current ? 1 : 0.85;
     if (state.phase === 'approach') opacity = state.alpha * (current ? 1 : 0.9);
-    if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, shadowWorld);
+    if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, horizonWorld);
     row.material.opacity = opacity;
   }
   return true;

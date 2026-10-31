@@ -166,19 +166,43 @@ function load(overrides) {
   const discAt = source.indexOf('emit += tint');
   assert(discAt > 0 && blurAt > 0 && discAt < blurAt, 'the disc is built before the backdrop is sampled, unblurred');
 
-  // The disc is a volume sampled in 3D, not hashed cells in (angle, radius): the cell grain drew
-  // stretched dots because every step along a ray read the same cell.
-  for (const pattern of [/float hash13\(vec3/, /float noise3\(vec3/, /float fbm3\(vec3/]) {
+  // The disc is a volume sampled in 3D, and its density is a fractal sum, not one hashed cell:
+  // four octaves around the ring, each turned and shifted so no two share a lattice, each at half
+  // the weight of the one before. The ring is a closed circle so the azimuth stays seamless.
+  for (const pattern of [/float hash13\(vec3/, /float noise3\(vec3/, /float discFbm\(float flow, float ringR, float rad, float lod\)/]) {
     assert(pattern.test(source), 'the disc fog needs a 3D noise field: ' + pattern);
   }
-  assert(/float base = fbm3\(q \* 2\.0\);/.test(source), 'the fog has to be sampled at the marched position');
-  assert(/vec3 q = vec3\(cos\(flow\) \* r, sin\(flow\) \* r, side \* 4\.5\)/.test(source),
+  assert(/vec2 ring = vec2\(cos\(a\), sin\(a\)\) \* \(ringR \* f\);/.test(source),
+    'each octave has to stay seamless where the azimuth wraps');
+  assert(/float a = flow \+ 1\.73 \* float\(i\) \+ 0\.37;/.test(source),
+    'every octave has to turn the ring by its own phase, or the octaves line up into a lattice');
+  assert(/float rz = rad \* f \+ 5\.17 \* float\(i\);/.test(source),
+    'and shift the radial coordinate by its own offset');
+  assert(/sum \+= amp \* keep \* noise3\(vec3\(ring, rz\)\);/.test(source), 'the octaves have to be summed with weights');
+  assert(/amp \*= 0\.5;/.test(source), 'each octave must carry half the weight of the one before it');
+  assert(/if \(i == 3\) keep = 1\.0 - lod;/.test(source),
+    'the finest octave has to be band-limited away once the ray step is coarser than its wavelength');
+  assert(/float lod = smoothstep\(0\.015, 0\.06, dt\);/.test(source),
+    'the band limit has to come from the step size, which is the aliasing scale');
+  assert(/float warp = noise3\(vec3\(cos\(flow\), sin\(flow\), 0\.0\) \* 0\.62/.test(source),
+    'with a low-frequency warp in the ring frame for the filaments');
+  assert(/float base = discFbm\(flow \+ warp \* 0\.9, 2\.6 \* rJ, radCoord \+ warp \* 0\.6, lod\);/.test(source),
+    'the ring scale has to follow the radius, or the features stretch into concentric arcs at the outside');
+  assert(/float field = smoothstep\(0\.30, 0\.62, base\);/.test(source), 'the fog needs its contrast');
+  assert(/float fog = mix\(1\.0, 0\.04 \+ 2\.6 \* field/.test(source),
+    'the field has to be what the fog reads');
+  assert(/float radCoord = rJ \* 3\.0 \+ sideJ \* 7\.0;/.test(source),
     'the sample has to carry the height inside the slab, or the ray reads one cell all the way through');
-  assert(/float warp = noise3\(q \* 1\.1/.test(source), 'with a low-frequency warp for the filaments');
-  assert(/float fog = mix\(1\.0, 0\.10 \+ 1\.9 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(source),
+  assert(/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(source),
+    'the slab sample has to be jittered along the step, or the integration lands on the same fractions every step');
+  assert(/float jit = hash21\(fragCoord \+ vec2\(13\.7, 5\.1\)\);/.test(source), 'and that jitter has to be per pixel');
+  assert(/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(source),
+    'the Keplerian shear has to be bounded: an unbounded one winds the field into radial moire over a song');
+  assert(/float fog = mix\(1\.0, 0\.04 \+ 2\.6 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(source),
     'and the wisp amount has to reach the density');
   assert(/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(source),
     'the discWisp knob has to be written to the shader every frame');
+  assert(!/float fbm3\(vec3/.test(source), 'the three-octave lattice fbm is not the field any more');
   assert(!/float grain = mix\(0\.25, 1\.75/.test(source), 'the old hashed-cell grain must be gone');
   console.log('backdrop: radial taps ' + JSON.stringify(taps) + ' at ' + sandbox.bhParam('softness') + 'px, four-point stars, no isotropic blur');
 }
@@ -206,16 +230,26 @@ function load(overrides) {
   }
   assert(moved, 'the drift has to actually move over a song');
 
-  // The shader applies the drift to the ray, carries the debris pass, and builds the disc from a
-  // 3D field sampled at the marched position.
+  // The shader applies the drift to the ray and puts the debris *inside* the disc: shards on a
+  // lattice keyed on the orbital phase, looked up at the point of the march nearest the disc plane,
+  // and dimmed by the fog the ray already crossed. Screen-space specks are not debris.
   assert(/vec2 ndc = \(uv - 0\.5\) \* 2\.0 \* \(1\.0 \+ uDolly\) \+ uShake;/.test(source),
     'the drift and dolly have to reach the ray');
-  assert(/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(source), 'the near debris pass must exist');
-  assert(/float base = fbm3\(q \* 2\.0\);/.test(source), 'the near fog needs its 3D field');
-  assert(/color = mix\(color, debris\.rgb, clamp\(debris\.a, 0\.0, 1\.0\)\)/.test(source),
-    'and the debris has to be composited in front');
+  assert(/float discFragment\(vec3 p, float r, float rn, float amount\)/.test(source),
+    'the disc fragments must exist');
+  assert(/float phase = atan\(p\.z, p\.x\) - uSpin \* 1\.6 \* iTime \/ pow\(max\(r, 0\.42\), 1\.5\);/.test(source),
+    'a shard has to be fixed in the orbital frame, turning at the local Keplerian rate');
+  assert(/float cells = max\(8\.0, floor\(6\.28318 \* r \/ 0\.20\)\);/.test(source),
+    'the lattice has to be square in arc length, or a shard stretches with radius');
+  assert(/if \(abs\(side\) < bestSide\) \{ bestSide = abs\(side\); bestR = rJ; bestRn = rn; bestTransmit = transmit; bestPos = sp; \}/.test(source),
+    'the ray has to remember where it came closest to the disc plane');
+  assert(/float shard = discFragment\(bestPos, bestR, bestRn, uDebris\);/.test(source),
+    'the shards have to be looked up there with the debris knob');
+  assert(/color \+= ftint \* shard \* \(0\.9 \+ 1\.8 \* fheat\) \* bestTransmit/.test(source),
+    'and dimmed by the fog in front of them, which is what embeds them in the disc');
+  assert(!/nearDebris\(/.test(source), 'the screen-space specks must be gone: the user asked for things inside the disc');
   console.log('epic: fov ' + sandbox.bhParam('fovDeg') + ' deg, drift ' + on.x.toFixed(5) + '/' + on.y.toFixed(5)
-    + ' dolly ' + on.dolly.toFixed(5) + ' (bounded, slow), debris and fine filaments present');
+    + ' dolly ' + on.dolly.toFixed(5) + ' (bounded, slow), disc shards in the fog');
 }
 
 // ------------------------------------------------------- the marched Schwarzschild field
@@ -365,22 +399,24 @@ function load(overrides) {
 // ---------------------------------------- swallowed by the row, not painted over by the hole
 {
   const sandbox = load({ fx: { preset: 15 } });
-  const centre = sandbox.bhSwallowAlpha(0.1, 1);
-  const outside = sandbox.bhSwallowAlpha(1.4, 1);
-  const middle = sandbox.bhSwallowAlpha(0.35, 1);
-  const deep = sandbox.bhSwallowAlpha(0.6, 1);
-  assert(outside === 1, 'a row outside the rim must be whole, got ' + outside);
-  assert(centre === 0, 'a row at the centre must be gone, got ' + centre);
-  assert(middle > 0 && middle < 1, 'a row partway in is fading, got ' + middle);
-  assert(deep === 1, 'a row over the hole but not yet at the centre must stay readable, got ' + deep);
+  const insideHorizon = sandbox.bhSwallowAlpha(0.9, 1);
+  const atHorizon = sandbox.bhSwallowAlpha(1.01, 1);
+  const outside = sandbox.bhSwallowAlpha(1.5, 1);
+  const middle = sandbox.bhSwallowAlpha(1.15, 1);
+  const overTheShadow = sandbox.bhSwallowAlpha(2.0, 1);
+  assert(outside === 1 && overTheShadow === 1,
+    'a row still outside the horizon must be whole, even when it is over the shadow: ' + outside + '/' + overTheShadow);
+  assert(atHorizon === 0 && insideHorizon === 0, 'at and inside the horizon the row is gone: ' + atHorizon + '/' + insideHorizon);
+  assert(middle > 0 && middle < 1, 'a row right at the rim is fading, got ' + middle);
   // Walked from the outside in: getting closer must never make a row brighter.
   let last = 2;
-  for (let d = 1.5; d >= 0; d -= 0.05) {
+  for (let d = 1.6; d >= 0.8; d -= 0.05) {
     const a = sandbox.bhSwallowAlpha(d, 1);
     assert(a <= last + 1e-12, 'the fade must be monotone on the way in');
     last = a;
   }
-  console.log('swallow: fade 1.4r=' + outside + ', 0.6r=' + deep + ', 0.35r=' + middle.toFixed(2) + ', 0.1r=' + centre);
+  console.log('swallow: 1.5r=' + outside + ', 2r over the shadow=' + overTheShadow
+    + ', 1.15r=' + middle.toFixed(2) + ', 1.01r=' + atHorizon);
 }
 
 // -------------------------------------- the shadow has to be reachable on the screen it bends
@@ -847,13 +883,26 @@ function load(overrides) {
   const gatedRead = sandbox.bhLyricOrbitState(item, 11.65, params, front, 11.2);
   assert(gatedRead.phase === 'read', 'and only then takes the front');
 
-  // After the exit: same direction round the circle plus the wind, radius on the free-fall law.
+  // After the exit: thrown sideways, then an inspiral. The spin is Keplerian, so it has to rise as
+  // the radius closes - that is the "whirling in" the user asked for - and the fall has to last long
+  // enough to watch, not a blink.
+  const mass = sandbox.bhLyricMass(item);
+  const span = params.swallow / mass;
+  assert(span > 6, 'a line has to take seconds to fall, not a few frames: ' + span);
   const fall = sandbox.bhLyricOrbitState(item, exitStart + 0.35, params, front, null);
   assert(fall.phase === 'fall' && fall.angle < front && fall.radius < 1, 'the fall keeps going the same way while it comes in');
   const later = sandbox.bhLyricOrbitState(item, exitStart + 0.9, params, front, null);
   assert(later.radius < fall.radius, 'the radius must only shrink: ' + fall.radius + ' -> ' + later.radius);
   assert(later.angle < fall.angle, 'and the angle keep advancing into the spiral');
-  assert(sandbox.bhLyricOrbitState(item, exitStart + params.swallow + 0.01, params, front, null) === null,
+  assert(later.spin > fall.spin, 'the row has to spin faster as it closes in: ' + fall.spin.toFixed(2) + ' -> ' + later.spin.toFixed(2));
+  // Gravity is per line: a longer line is heavier and falls sooner.
+  const light = sandbox.bhLyricMass({ text: '短' });
+  const heavy = sandbox.bhLyricMass({ text: '这一句歌词明显要长得多' });
+  assert(heavy > light, 'a longer line has to be the heavier one: ' + light + ' vs ' + heavy);
+  const lightSpan = params.swallow / light;
+  const heavySpan = params.swallow / heavy;
+  assert(heavySpan < lightSpan, 'the heavier line has to fall faster: ' + heavySpan.toFixed(2) + ' vs ' + lightSpan.toFixed(2));
+  assert(sandbox.bhLyricOrbitState(item, exitStart + span + 0.01, params, front, null) === null,
     'once the fall is over the line is gone');
   const noWind = sandbox.bhLyricOrbitState(item, exitStart + 0.9, {
     rate: params.rate, wind: 0, curve: params.curve, swallow: params.swallow,
@@ -867,7 +916,7 @@ function load(overrides) {
   let path = 0;
   let prev = sandbox.bhOrbitPoint(basis, params.orbit, front);
   for (let i = 1; i <= 60; i++) {
-    const t = exitStart + params.swallow * i / 60;
+    const t = exitStart + span * i / 60;
     const s = sandbox.bhLyricOrbitState(item, t, params, front, null);
     if (!s) break;
     const p = sandbox.bhOrbitPoint(basis, params.orbit * s.radius, s.angle);
@@ -897,12 +946,13 @@ function load(overrides) {
       }
     };
   }
+  // Short text on purpose: mass is text length, and this block is about the schedule, not gravity.
   const items = [
-    { index: 0, text: 'line 0', sub: '', startAt: 0, endAt: 6 },
-    { index: 1, text: 'line 1', sub: '', startAt: 6, endAt: 9 },
-    { index: 2, text: 'line 2', sub: '', startAt: 10, endAt: 13 },
-    { index: 3, text: 'line 3', sub: '', startAt: 14, endAt: 17 },
-    { index: 4, text: 'line 4', sub: '', startAt: 18, endAt: 21 }
+    { index: 0, text: 'l0', sub: '', startAt: 0, endAt: 6 },
+    { index: 1, text: 'l1', sub: '', startAt: 6, endAt: 9 },
+    { index: 2, text: 'l2', sub: '', startAt: 10, endAt: 13 },
+    { index: 3, text: 'l3', sub: '', startAt: 14, endAt: 17 },
+    { index: 4, text: 'l4', sub: '', startAt: 18, endAt: 21 }
   ];
   const rows = [fakeRow(0), fakeRow(1), fakeRow(2), fakeRow(3), fakeRow(4)];
   sandbox.bhLyrics.layer = { position: new V3(), quaternion: { copy() {} }, visible: true };
@@ -913,35 +963,97 @@ function load(overrides) {
   sandbox.bhLyrics.time = 0;
   sandbox.bhPlaceLyrics(frame, 0.016);
 
-  assert(rows[0].itemIndex === -1 && rows[1].itemIndex === -1, 'lines whose fall is over are dropped');
+  // At 13.7 the sung line has left the front and is falling; the next one is easing in; the one
+  // after is not in the air. The earlier lines are still in the disc: the inspiral is long on
+  // purpose, so a row is not recycled the moment the next one arrives.
+  assert(rows[0].live === true && rows[1].live === true && rows[2].live === true,
+    'a falling line must still be in the disc while the next lines arrive');
   assert(rows[3].live === true && rows[3].front === true, 'the next line has eased in on the near half');
   assert(rows[3].mesh.position.z > 1.5, 'it is between the eye and the hole: z=' + rows[3].mesh.position.z);
+  assert(rows[4].live === false && rows[4].mesh.visible === false, 'the line after next is not in the air yet');
   assert(rows[3].mesh.quaternion.value && Math.abs(Math.sqrt(
     rows[3].mesh.quaternion.value[0] ** 2 + rows[3].mesh.quaternion.value[1] ** 2
     + rows[3].mesh.quaternion.value[2] ** 2 + rows[3].mesh.quaternion.value[3] ** 2) - 1) < 1e-6,
     'the row gets a real rotation for its panel, not a camera copy');
   const placedQ = rows[3].mesh.quaternion.value;
   const placedFace = rotate({ x: placedQ[0], y: placedQ[1], z: placedQ[2], w: placedQ[3] }, { x: 0, y: 0, z: 1 });
-  const placedLen = Math.hypot(rows[3].mesh.position.x, rows[3].mesh.position.y, rows[3].mesh.position.z);
-  assert(Math.abs(placedFace.x - rows[3].mesh.position.x / placedLen) < 1e-6
-    && Math.abs(placedFace.y - rows[3].mesh.position.y / placedLen) < 1e-6
-    && Math.abs(placedFace.z - rows[3].mesh.position.z / placedLen) < 1e-6,
+  // The row also bobs through the disc, so the face is compared with the in-plane radial direction,
+  // not with the raw position: the bob must be motion along the disc normal, not a tilt.
+  const placedAt = rows[3].mesh.position;
+  const normalOffset = placedAt.x * basis.n.x + placedAt.y * basis.n.y + placedAt.z * basis.n.z;
+  const radial = {
+    x: placedAt.x - basis.n.x * normalOffset,
+    y: placedAt.y - basis.n.y * normalOffset,
+    z: placedAt.z - basis.n.z * normalOffset
+  };
+  const placedLen = Math.hypot(radial.x, radial.y, radial.z);
+  assert(Math.abs(placedFace.x - radial.x / placedLen) < 1e-6
+    && Math.abs(placedFace.y - radial.y / placedLen) < 1e-6
+    && Math.abs(placedFace.z - radial.z / placedLen) < 1e-6,
     'the placed panel face must point outward along its own radius');
-  assert(rows[2].live === true && rows[2].front === false, 'the line leaving has crossed behind the hole');
-  assert(rows[2].mesh.position.z < 0, 'and its panel is on the far side: z=' + rows[2].mesh.position.z);
-  assert(rows[4].live === false && rows[4].mesh.visible === false, 'the line after next is not in the air yet');
-  // The two visible lines are on opposite sides of the front, not on top of each other.
-  const angleOf = function (row) { return Math.atan2(row.mesh.position.x, row.mesh.position.z); };
-  assert(Math.abs(angleOf(rows[3]) - angleOf(rows[2])) > 0.8,
-    'a leaving line and an entering line must not overlap: ' + angleOf(rows[3]).toFixed(2) + ' vs ' + angleOf(rows[2]).toFixed(2));
+  assert(Math.abs(normalOffset) > 1e-4, 'a row has to bob through the disc, got ' + normalOffset);
+  const otherOffset = rows[2].mesh.position.x * basis.n.x + rows[2].mesh.position.y * basis.n.y
+    + rows[2].mesh.position.z * basis.n.z;
+  assert(Math.abs(normalOffset - otherOffset) > 1e-5, 'and the rows must not bob in lockstep');
+  // Four lines are in the air at once and each is at its own radius: they must not stack on one ring.
+  const liveRadii = rows.filter(function (r) { return r.live; })
+    .map(function (r) { return Math.hypot(r.mesh.position.x, r.mesh.position.y, r.mesh.position.z); });
+  let distinct = true;
+  for (let i = 1; i < liveRadii.length; i++) if (Math.abs(liveRadii[i] - liveRadii[i - 1]) < 0.05) distinct = false;
+  assert(distinct, 'the lines in the disc have to be at their own radii: '
+    + liveRadii.map(function (d) { return d.toFixed(2); }).join(' / '));
   assert(rows[2].sung === true && rows[3].sung === false, 'the line still being sung keeps the highlight');
 
-  // The split is exactly what the renderer uses to choose a target.
-  assert(sandbox.bhSetLyricSideVisibility(true) === 1 && rows[3].mesh.visible === true && rows[2].mesh.visible === false,
-    'near half: only the entering line');
-  assert(sandbox.bhSetLyricSideVisibility(false) === 1 && rows[2].mesh.visible === true,
-    'far half: only the line going behind');
-  assert(sandbox.bhSetLyricSideVisibility(null) === 2, 'the fallback render gets both halves back');
+  // The split is exactly what the renderer uses to choose a target, and it follows each row's own
+  // near/far flag rather than a fixed count.
+  const near = rows.filter(function (r) { return r.live && r.front; }).length;
+  const far = rows.filter(function (r) { return r.live && !r.front; }).length;
+  assert(near >= 2, 'the approaching and falling lines are on the near half at this moment: ' + near);
+  assert(sandbox.bhSetLyricSideVisibility(true) === near, 'near half: ' + near + ' rows');
+  assert(sandbox.bhSetLyricSideVisibility(false) === far, 'far half: ' + far + ' rows');
+  assert(sandbox.bhSetLyricSideVisibility(null) === near + far, 'the fallback render gets every live row back');
+
+  // The row is an arch of the orbit: its radius of curvature is its distance to the hole, so the
+  // middle is tangent, the ends bend inward, and a closer row bends harder.
+  const flat = sandbox.bhRowBend(0, 2, 2.4);
+  assert(Math.abs(flat.x) < 1e-12 && Math.abs(flat.z) < 1e-12, 'the middle of the row is on its own tangent');
+  const bend = sandbox.bhRowBend(0.5, 2, 2.4);
+  const bendWorldX = bend.x * 2;   // the mesh's own x scale is the row's world width
+  const bendWorldZ = bend.z;
+  const circle = bendWorldX * bendWorldX + (bendWorldZ + 2.4) * (bendWorldZ + 2.4);
+  assert(Math.abs(circle - 2.4 * 2.4) < 1e-9, 'the bent row has to lie on a circle of radius 2.4, got ' + circle);
+  assert(bendWorldZ < 0, 'the ends bend towards the hole, not away: ' + bendWorldZ);
+  assert(Math.abs(bendWorldX - 2.4 * Math.sin(1 / 2.4)) < 1e-9, 'the arc length has to be the row width');
+  const tight = sandbox.bhRowBend(0.5, 2, 0.9);
+  assert(tight.z < bend.z, 'a closer row has to bend harder: ' + tight.z.toFixed(3) + ' vs ' + bend.z.toFixed(3));
+  // The bend is written into the mesh's own buffer from the rest positions, so it can be re-bent
+  // every frame without the arch creeping.
+  const rest = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 0]);
+  const bentMesh = {
+    geometry: { attributes: { position: { array: rest.slice(), needsUpdate: false } } },
+    userData: { bhBasePositions: rest }
+  };
+  assert(sandbox.bhBendRowMesh(bentMesh, 2, 2.4) === true, 'the row buffer has to take the bend');
+  assert(bentMesh.geometry.attributes.position.needsUpdate === true, 'and has to be re-uploaded');
+  const arr = bentMesh.geometry.attributes.position.array;
+  assert(Math.abs(arr[6] - (-(2.4 / 2) * Math.sin(1 / 2.4))) < 1e-6,
+    'the left end has to move onto the arch: ' + arr[6]);
+  // The placement has to use that bend with the row's own radius, and the slot window has to keep
+  // four lines of history so a row is not cut off mid-inspiral.
+  assert(/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(source),
+    'the placement has to bend each row to its own radius');
+  assert(/var lo = sung < 0 \? 0 : Math\.max\(0, sung - 4\);/.test(source),
+    'the window has to keep four lines of history');
+  assert(/var arcTarget = params\.orbit \* 0\.46;/.test(source),
+    'the arch has to be wide enough to see, not a 40 cm line on a 2.4 m orbit');
+  // Rows drift through the disc out of step with each other, and falling rows swing harder.
+  const bobA = sandbox.bhLyricBob(0, 5, 0, 0.25);
+  const bobB = sandbox.bhLyricBob(1, 5, 0, 0.25);
+  assert(Math.abs(bobA - bobB) > 1e-5, 'rows must not bob in lockstep: ' + bobA + ' vs ' + bobB);
+  assert(Math.abs(bobA) <= 0.02 + 0.25 * 0.12 + 1e-9, 'an idle bob stays inside the disc: ' + bobA);
+  assert(Math.abs(sandbox.bhLyricBob(0, 5, 1, 0.25)) <= (0.02 + 0.25 * 0.12) * 1.9 + 1e-9,
+    'and even the falling swing is bounded');
+  assert(/for \(var i = 0; i < 7; i\+\+\)/.test(source), 'seven rows, so the older inspiral keeps its mesh');
 
   // While the previous line is still on the front, the next is not shown: the gap the user asked
   // for. Two tenths of a second later it starts to come in.
@@ -954,15 +1066,17 @@ function load(overrides) {
   sandbox.bhPlaceLyrics(frame, 0.016);
   assert(rows[3].live === true && rows[3].mesh.visible === true, 'and starts to come in once the front is free');
 
-  // Advancing: the highlight moves, and the falling line spirals in and goes out.
+  // Advancing: the highlight moves, and the falling line keeps spiralling in - for seconds, not
+  // frames. It stays readable all the way over the shadow (the text is composited after the pass)
+  // and only goes at the horizon.
   sandbox.bhLyrics.sung = 3;
-  sandbox.bhLyrics.now = 13.2;
+  sandbox.bhLyrics.now = 13.7;
   sandbox.bhPlaceLyrics(frame, 0.016);
   assert(rows[3].sung === true, 'the highlight moves to the new line');
   const fallingRow = rows[2];
   const distances = [];
   const opacities = [];
-  for (let step = 0; step < 14; step++) {
+  for (let step = 0; step < 140; step++) {
     sandbox.bhLyrics.now += 0.08;
     sandbox.bhPlaceLyrics(frame, 0.08);
     if (fallingRow.itemIndex < 0) break;
@@ -973,16 +1087,21 @@ function load(overrides) {
     assert(distances[i] <= distances[i - 1] + 1e-9,
       'the line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
   }
-  assert(distances.length >= 3 && distances[distances.length - 1] < distances[0] * 0.4,
-    'and be swallowed by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  assert(distances.length >= 20, 'the fall has to last seconds of frames, got ' + distances.length);
+  assert(distances[distances.length - 1] < distances[0] * 0.3,
+    'and reach the horizon by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  const readable = opacities.filter(function (o) { return o > 0.99; }).length;
+  assert(readable > opacities.length * 0.7,
+    'the row has to stay readable over the shadow and fade only at the horizon: ' + readable + '/' + opacities.length);
   assert(opacities[opacities.length - 1] < 0.9,
-    'and fade as it crosses the shadow radius, not stay opaque until the frame it disappears: '
-    + opacities.map(function (o) { return o.toFixed(2); }).join(' -> '));
+    'and fade at the rim, not pop at the frame it disappears: '
+    + opacities.slice(-4).map(function (o) { return o.toFixed(2); }).join(' -> '));
   assert(fallingRow.mesh.visible === false && fallingRow.material.opacity === 0,
     'a swallowed row is hidden and fully transparent');
   console.log('orbit: radius ' + params.orbit + ', rate ' + params.rate + ' rad/s, wind ' + params.wind
     + '; front ' + front.toFixed(2) + ', spiral ' + path.toFixed(2) + ' vs radius ' + params.orbit
-    + ', exit at ' + exitStart + ', fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+    + ', exit at ' + exitStart + ', span ' + span.toFixed(2) + 's, fall '
+    + distances[0].toFixed(2) + ' -> ' + distances[distances.length - 1].toFixed(2));
   sandbox.bhLyrics.layer = null;
 
   // One owner for the text: the row flight runs on its own, and stands down the moment the orbit
@@ -1066,7 +1185,8 @@ function load(overrides) {
   const holdAtExit = { x: sungRow.mesh.position.x, y: sungRow.mesh.position.y, z: sungRow.mesh.position.z };
   const swallowed = [];
   sungRow.isActive = false;
-  for (let step = 0; step < 18; step++) {
+  // The fallback flight reads the same swallow knob, so it also takes seconds now: walk it out.
+  for (let step = 0; step < 90; step++) {
     sandbox.blackHoleApplyCamera(0.12);
     sandbox.updateBlackHoleLyricFlight(0.12);
     swallowed.push(Math.hypot(
