@@ -1582,6 +1582,13 @@ function runBlackHolePresetCheck() {
   if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
   if (!/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader)) fail('a ray inside the horizon has to be captured');
   if (!/abs\(side\) < halfThick/.test(shader)) fail('the disc has to be a volume: a plane crossing has no thickness to see through');
+  // The backdrop is blurred radially by a few pixels, not soft-focused: five taps along the
+  // direction from the hole, and the distant stars are four-point glints rather than dots.
+  if (!/vec2 away = uv - uCenter;/.test(shader)) fail('the backdrop blur has to be radial');
+  if (!/dir \* \(float\(i\) \* 0\.5 \* blurPx\)/.test(shader)) fail('the blur taps must be in pixels along that direction');
+  if (!/float glint = exp\(-ad\.x/.test(shader)) fail('distant stars need their four-point glint');
+  if (!/starField\(uv \+ bend, iTime\)/.test(shader)) fail('the star field has to be part of the backdrop');
+  if (/texel\.x \* r \* 2\.4/.test(shader)) fail('the isotropic soft focus must not come back: the subject stays sharp');
   // The weight of the shot: the drift has to move the ray, the near debris has to exist and be
   // composited in front, and the near fog needs its second octave or it reads as a smooth sheet.
   if (!/function bhCameraDrift\(/.test(text)) fail('the shot needs its slow camera drift');

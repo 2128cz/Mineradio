@@ -60,7 +60,8 @@ var BH_TUNING_SCHEMA = {
   // The disc is a volume of this world thickness: the camera can be inside it and still see it.
   discThickness: { def: 0.12, min: 0.01, max: 6, kind: 'unit', rebuild: 'live' },
   // One softness for the whole backdrop: the galaxy, the streaks and the glow move together.
-  softness: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  // Radial blur of the star field, in pixels: a little is depth, a lot is a smeared plate.
+  softness: { def: 3, min: 0, max: 6, kind: 'px', rebuild: 'live' },
   cameraDrift: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   debris: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
@@ -379,19 +380,45 @@ var BH_PASS_FS = shadertoyFragment(
     '  return outColor;',
     '}',
     '',
-    '// The galaxy, bent by the field and softened: `bend` is how far the marched direction is from the',
-    '// straight one, clamped so the sky cannot be squeezed into strips, and the lookup is blurred so',
-    '// the background sits at the same softness as the disc instead of looking pin-sharp beside it.',
+    '// Radial blur for the backdrop only: five taps along the direction away from the hole, a few',
+    '// pixels apart, so the sky is smeared the way a long lens smears it while the disc, the shadow',
+    '// and the ring stay sharp.',
     'vec3 sampleSky(vec2 uv, vec2 bend, float blurPx) {',
-    '  vec2 base = clamp(uv + bend, vec2(0.0), vec2(1.0));',
+    '  vec2 away = uv - uCenter;',
+    '  float len = length(away);',
+    '  vec2 dir = len > 1e-5 ? away / len : vec2(1.0, 0.0);',
     '  vec2 texel = 1.0 / max(iResolution.xy, vec2(1.0));',
-    '  float r = (0.75 + blurPx) * 1.0;',
-    '  vec3 sum = texture2D(iChannel0, base).rgb;',
-    '  sum += texture2D(iChannel0, clamp(base + vec2(texel.x * r * 2.4, 0.0), 0.0, 1.0)).rgb;',
-    '  sum += texture2D(iChannel0, clamp(base - vec2(texel.x * r * 2.4, 0.0), 0.0, 1.0)).rgb;',
-    '  sum += texture2D(iChannel0, clamp(base + vec2(0.0, texel.y * r * 2.4), 0.0, 1.0)).rgb;',
-    '  sum += texture2D(iChannel0, clamp(base - vec2(0.0, texel.y * r * 2.4), 0.0, 1.0)).rgb;',
+    '  vec3 sum = vec3(0.0);',
+    '  for (int i = -2; i <= 2; i++) {',
+    '    vec2 o = dir * (float(i) * 0.5 * blurPx) * texel;',
+    '    sum += texture2D(iChannel0, clamp(clamp(uv + bend, 0.0, 1.0) + o, 0.0, 1.0)).rgb;',
+    '  }',
     '  return sum / 5.0;',
+    '}',
+    '',
+    '// Distant stars as particles would be drawn: a core plus a four-point glint, twinkling slowly.',
+    '// Analytic, so they cost one hash each and stay crisp inside the radial blur that smears the',
+    '// galaxy behind them.',
+    'vec3 starField(vec2 uv, float t) {',
+    '  vec3 col = vec3(0.0);',
+    '  for (int layer = 0; layer < 2; layer++) {',
+    '    float fl = float(layer);',
+    '    float scale = mix(80.0, 160.0, fl);',
+    '    vec2 p = uv * vec2(iResolution.x / max(1.0, iResolution.y), 1.0) * scale;',
+    '    vec2 cell = floor(p);',
+    '    float h = hash21(cell + fl * 13.0);',
+    '    if (h < 0.984) continue;',
+    '    vec2 centre = (vec2(hash21(cell + 2.3), hash21(cell + 8.1)) - 0.5) * 0.6;',
+    '    vec2 d = fract(p) - 0.5 - centre;',
+    '    vec2 ad = abs(d);',
+    '    float core = exp(-dot(d, d) * 900.0);',
+    '    float glint = exp(-ad.x * 240.0) * exp(-ad.y * 22.0)',
+    '                + exp(-ad.y * 240.0) * exp(-ad.x * 22.0);',
+    '    float twinkle = 0.5 + 0.5 * sin(t * (1.1 + h * 2.6) + h * 31.0);',
+    '    col += (vec3(0.86, 0.91, 1.0) * core + vec3(0.62, 0.76, 1.0) * glint * 0.30)',
+    '         * (0.45 + 0.75 * hash21(cell + 5.0)) * (0.35 + 0.65 * twinkle);',
+    '  }',
+    '  return col;',
     '}',
     '',
     'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
@@ -460,7 +487,7 @@ var BH_PASS_FS = shadertoyFragment(
     '    vec2 lensedUv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
     '    // Bounded: the sky can bend, not fold into a tube.',
     '    bend = clamp(lensedUv - uv, vec2(-0.28), vec2(0.28));',
-    '    bg = sampleSky(uv, bend, uSoft * 5.0);',
+    '    bg = sampleSky(uv, bend, uSoft) + starField(uv + bend, iTime) * 0.85;',
     '  }',
     '',
     '  float rFinal = lastR;',
@@ -684,7 +711,7 @@ function bhSyncLens(frame) {
   u.uDiscInner.value = Math.max(1.02, bhClamp(bhParam('discInner'), 0.2, 40) / rs);
   u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
   if (u.uDiscThick) u.uDiscThick.value = Math.max(0.01, bhClamp(bhParam('discThickness'), 0.02, 8) / rs);
-  if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 1);
+  if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 6);
   if (u.uDebris) u.uDebris.value = bhClamp(bhParam('debris'), 0, 1);
   var drift = bhCameraDrift(blackHoleFlight.time, bhClamp(bhParam('cameraDrift'), 0, 1));
   if (u.uShake) u.uShake.value.set(drift.x, drift.y);
@@ -1589,6 +1616,17 @@ function bhArcGlyphs(widths, radius, cx, cy) {
     travelled += widths[g] / 2;
   }
   return { glyphs: placed, total: total, span: total / Math.max(1, radius) };
+}
+
+// The radial blur's five taps, as offsets in the direction away from the hole (pixels). Mirrored
+// here so the test can check the shape instead of reading the GLSL: symmetric, a zero tap in the
+// middle, and nothing at all when the radius is zero.
+function bhRadialBlurOffsets(blurPx) {
+  var px = bhClamp(Number(blurPx) || 0, 0, 12);
+  var out = [];
+  // || 0 keeps a zero radius from producing -0, which deep equality treats as a different number.
+  for (var i = -2; i <= 2; i++) out.push((i * 0.5 * px) || 0);
+  return out;
 }
 
 // Slow camera drift, as an offset in ndc plus a small dolly. Two incommensurable sines per axis, so

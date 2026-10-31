@@ -41,6 +41,7 @@ function bhTuningFormat(key) {
   if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'deg') return Math.round(value) + '°';
   if (spec.kind === 'sec') return (Math.round(value * 100) / 100) + 's';
+  if (spec.kind === 'px') return Math.round(value) + 'px';
   // World-unit knobs are distances in the scene's own scale, not percentages of anything.
   if (spec.kind === 'unit') return (Math.round(value * 100) / 100) + 'u';
   if (spec.kind === 'count') return String(Math.round(value));

@@ -137,6 +137,36 @@ function load(overrides) {
   return sandbox;
 }
 
+// ------------------------------------------ the backdrop is smeared *radially*, the stars sparkle
+{
+  const sandbox = load({ fx: { preset: 15 } });
+
+  // The blur taps: symmetric around the sample point, a zero tap in the middle, and a radius in
+  // pixels - this is the "one to five pixels" the user asked for, not an isotropic soft focus.
+  // JSON, not deepStrictEqual: an array built inside the vm has that realm's Array prototype.
+  assert.strictEqual(JSON.stringify(sandbox.bhRadialBlurOffsets(0)), '[0,0,0,0,0]', 'a zero radius is no blur at all');
+  const taps = sandbox.bhRadialBlurOffsets(4);
+  assert.strictEqual(JSON.stringify(taps), '[-4,-2,0,2,4]', 'five taps at a radius of four pixels: ' + JSON.stringify(taps));
+  assert(taps[0] === -taps[4] && taps[1] === -taps[3], 'the taps must be symmetric');
+  assert(sandbox.bhParam('softness') >= 1 && sandbox.bhParam('softness') <= 5,
+    'the default blur has to stay in the one-to-five pixel range, got ' + sandbox.bhParam('softness'));
+
+  // The shader: taps along the radial direction, a four-point glint on the stars, and no isotropic
+  // soft-focus left behind (that is what made the backdrop look cheap).
+  assert(/vec2 away = uv - uCenter;/.test(source), 'the blur direction has to come from the hole');
+  assert(/vec2 o = dir \* \(float\(i\) \* 0\.5 \* blurPx\) \* texel;/.test(source),
+    'the taps must be radial and scaled in pixels');
+  assert(/float glint = exp\(-ad\.x \* 240\.0\) \* exp\(-ad\.y \* 22\.0\)/.test(source),
+    'distant stars have to carry a four-point glint');
+  assert(/starField\(uv \+ bend, iTime\)/.test(source), 'the stars have to be added to the backdrop');
+  assert(!/texel\.x \* r \* 2\.4/.test(source), 'the old isotropic five-tap soft focus must be gone');
+  // The subject stays sharp: everything that builds the disc and the ring is added after the blur.
+  const blurAt = source.indexOf('sampleSky(uv, bend, uSoft)');
+  const discAt = source.indexOf('emit += tint');
+  assert(discAt > 0 && blurAt > 0 && discAt < blurAt, 'the disc is built before the backdrop is sampled, unblurred');
+  console.log('backdrop: radial taps ' + JSON.stringify(taps) + ' at ' + sandbox.bhParam('softness') + 'px, four-point stars, no isotropic blur');
+}
+
 // ---------------------------------------- the weight of the shot: long lens, drift, debris
 {
   const sandbox = load({ fx: { preset: 15 } });
