@@ -202,6 +202,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhflyIn', '歌词入场时长', '银河黑洞 歌词 入场 时长 速度'),
         fxConsoleItem('fx-bhswallow', '旋入时长', '银河黑洞 歌词 吸入 旋入 轨道 衰减 消失 时长'),
         fxConsoleItem('fx-bhfallCurve', '落入指数', '银河黑洞 落入 指数 幂 加速 欻'),
+        fxConsoleItem('fx-bhlyricRows', '同时存在的歌词行数', '银河黑洞 歌词 行数 上限 快歌 窗口 旋入 数量'),
         fxConsoleItem('fx-bhpassScale', '后处理分辨率', '银河黑洞 后处理 分辨率 性能 清晰'),
         fxConsoleItem('fx-bhgalaxyDensity', '星系星点数', '银河黑洞 星系 星点 数量 粒子 银河'),
         fxConsoleItem('fx-bhgalaxyRadius', '星系半径', '银河黑洞 星系 半径 大小 范围 银河'),

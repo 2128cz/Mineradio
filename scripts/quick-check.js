@@ -1781,8 +1781,12 @@ function runBlackHolePresetCheck() {
   if (!/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(text)) fail('the placement must use the tidal width, not shrink the row');
   if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
   if (!/bhSwallowAlpha\(radius, horizonWorld\)/.test(text)) fail('the row has to live until the horizon, not fade at the shadow');
-  if (!/for \(var i = 0; i < 9; i\+\+\)/.test(text)) fail('nine row slots: an inspiral longer than a line needs its mesh kept');
-  if (!/Math\.max\(0, sung - 6\)/.test(text)) fail('the window has to keep six lines of history for the long falls and fast songs');
+  if (!/lyricRows: \{ def: 24, min: 9, max: 48/.test(text)) fail('the lyric row cap has to be a knob: fast songs outrun a fixed window');
+  if (!/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(text)) fail('the row pool has to be built from the lyricRows knob');
+  if (!/function bhLyricWindowRange\(/.test(text)) fail('the window has to be derived from the pool size, not hard-coded');
+  // The sign is displayed 2-3x its layout size; rasterising at the layout size is what blurred it.
+  if (!/var superSample = 2\.5;/.test(text)) fail('the lyric canvas has to be supersampled above its display size');
+  if (!/row\.textureScale = superSample;/.test(text)) fail('the row has to report its supersample factor');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');

@@ -84,6 +84,10 @@ var BH_TUNING_SCHEMA = {
   // inspiral takes a while, and the row is meant to be seen whirling in, not blinked away.
   swallow: { def: 9, min: 0.5, max: 30, kind: 'sec', rebuild: 'live' },
   fallCurve: { def: 0.5, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
+  // The hard cap on how many lines can be alive at once. Every line keeps its own sign for its
+  // whole inspiral, so a fast song needs more of them; this is also what bounds "how long after
+  // leaving the front a line is still visible" (a line is dropped only when the window passes it).
+  lyricRows: { def: 24, min: 9, max: 48, kind: 'count', rebuild: 'rows' },
   passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
   // branch count rebuild the buffer, brightness / spin / haze are read every frame.
@@ -2076,7 +2080,11 @@ function bhWrapText(ctx, text, maxWidth, maxLines) {
 // Rasterises one row onto its own canvas: the line and, under it, its translation. The canvas is
 // sized to the measured text so the plane carries no empty margin that would shrink the letters.
 function bhDrawRowCanvas(row, item, sung, palette, motion) {
-  var fontPx = bhLyricFontPx();
+  // The sign is displayed at roughly two to three times the layout typographic size (the plane's
+  // height is a fraction of the view), so the canvas is rendered at that multiple. Drawing at the
+  // layout size and letting the GPU magnify was exactly the blur.
+  var superSample = 2.5;
+  var fontPx = bhLyricFontPx() * superSample;
   var subPx = Math.round(fontPx * 0.62);
   var font = '700 ' + fontPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : '"JetBrains Mono","Microsoft YaHei",monospace');
   var subFont = '400 ' + subPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : 'monospace');
@@ -2084,7 +2092,7 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   var pad = Math.max(4, fontPx * 0.35);
   var mainH = fontPx * 1.35;
   var subH = subPx * 1.6;
-  var maxWidth = Math.min(1900, Math.max(fontPx * 10, 900));
+  var maxWidth = Math.min(1900, Math.max(fontPx * 10, 900 * superSample));
   measure.font = font;
   var mainLines = bhWrapText(measure, item.text, maxWidth, 4);
   measure.font = subFont;
@@ -2105,6 +2113,7 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   var singleHeight = Math.ceil(mainH + subH + pad * 2);
   var canvasHeight = Math.ceil(mainLines.length * mainH + subBands * subH + pad * 2);
   row.lineScale = bhClamp(canvasHeight / singleHeight, 1, 2.8);
+  row.textureScale = superSample;
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
     row.canvas.width = canvasWidth;
     row.canvas.height = canvasHeight;
@@ -2186,27 +2195,53 @@ function bhDisposeLyrics() {
   bhLyrics.now = 0;
 }
 
+// The row pool is sized by the lyricRows knob. Slots are cheap until used: each starts with a tiny
+// canvas and only takes a real texture when a line lands on it, so a fast song can keep forty rows
+// alive without forty full-size buffers sitting around.
+var BH_MAX_LYRIC_ROWS = 48;
+
+function bhEnsureLyricRowCount(count) {
+  if (typeof THREE === 'undefined' || !bhLyrics || !bhLyrics.layer) return 0;
+  var want = Math.max(3, Math.min(BH_MAX_LYRIC_ROWS, Math.round(Number(count) || 9)));
+  while (bhLyrics.rows.length < want) {
+    var row = bhBuildLyricRow(64, 32);
+    row.mesh.scale.set(1, 1, 1);
+    row.mesh.visible = false;
+    bhLyrics.layer.add(row.mesh);
+    bhLyrics.rows.push(row);
+  }
+  while (bhLyrics.rows.length > want) {
+    var extra = bhLyrics.rows.pop();
+    if (extra.mesh && extra.mesh.parent) extra.mesh.parent.remove(extra.mesh);
+    if (extra.texture && extra.texture.dispose) extra.texture.dispose();
+    if (extra.material && extra.material.dispose) extra.material.dispose();
+    if (extra.mesh && extra.mesh.geometry && extra.mesh.geometry.dispose) extra.mesh.geometry.dispose();
+  }
+  return bhLyrics.rows.length;
+}
+
+// Which lines can be alive at once, from the row count: the current line, two ahead (so the next
+// one can already be easing in) and the rest behind, still falling. Pure, so the fast-song behaviour
+// can be checked without a scene.
+function bhLyricWindowRange(sung, itemCount, rowCount) {
+  var n = Math.max(0, Math.round(Number(itemCount) || 0));
+  var rows = Math.max(3, Math.round(Number(rowCount) || 3));
+  if (!n) return { lo: 0, hi: -1 };
+  var anchor = sung < 0 ? 0 : Math.round(Number(sung) || 0);
+  var keep = Math.max(1, rows - 3);
+  return { lo: sung < 0 ? 0 : Math.max(0, anchor - keep), hi: Math.min(n - 1, anchor + 2) };
+}
+
 function bhBuildLyrics() {
   if (typeof THREE === 'undefined' || typeof scene === 'undefined' || !scene) return false;
   var items = bhLyricItems();
   var layer = new THREE.Group();
   layer.frustumCulled = false;
-  var rows = [];
   var fontPx = bhLyricFontPx();
-  var worldHeight = fontPx * 0.045;
-  // Nine slots: a row keeps orbiting for its whole inspiral, so several lines are in the disc at
-  // once. Fast songs need the wider window (six lines of history) or a row that is still visibly
-  // falling is dropped when the window moves on.
-  for (var i = 0; i < 9; i++) {
-    var row = bhBuildLyricRow(1024, 256);
-    row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
-    row.mesh.visible = false;
-    layer.add(row.mesh);
-    rows.push(row);
-  }
   scene.add(layer);
   bhLyrics.layer = layer;
-  bhLyrics.rows = rows;
+  bhLyrics.rows = [];
+  bhEnsureLyricRowCount(bhParam('lyricRows'));
   bhLyrics.items = items;
   bhLyrics.listKey = bhLyricListKey(items);
   bhLyrics.builtKey = bhLyrics.listKey + '|' + fontPx;
@@ -2261,11 +2296,11 @@ function bhPlaceLyrics(frame, dt) {
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
   var anchor = sung < 0 ? 0 : sung;
-  // Six lines of history: the inspiral is long by design and fast songs can put a line every second,
-  // so a row that has left the front has to stay alive while it winds in - four lines behind cut
-  // rows mid-fall on the fast sections.
-  var lo = sung < 0 ? 0 : Math.max(0, sung - 6);
-  var hi = Math.min(items.length - 1, anchor + 2);
+  // The window is the row pool: a fast song needs every slot to keep the older inspiral alive, so
+// the history is rows - 3 lines (the current one and two ahead take the rest).
+  var range = bhLyricWindowRange(sung, items.length, bhLyrics.rows.length);
+  var lo = range.lo;
+  var hi = range.hi;
   var rows = bhLyrics.rows;
   var held = {};
   for (var b = 0; b < rows.length; b++) {

@@ -1096,8 +1096,19 @@ function load(overrides) {
   // four lines of history so a row is not cut off mid-inspiral.
   assert(/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(source),
     'the placement has to bend each row to its own radius');
-  assert(/var lo = sung < 0 \? 0 : Math\.max\(0, sung - 6\);/.test(source),
-    'the window has to keep six lines of history for the long falls');
+  assert(/function bhLyricWindowRange\(/.test(source) && /bhLyricWindowRange\(sung, items\.length, bhLyrics\.rows\.length\)/.test(source),
+    'the window has to come from the row count, not a fixed six lines');
+  // The row cap is the answer to "why do fast lyrics vanish before the 30 s inspiral": with 24 rows
+  // a line stays for 21 lines of history; with the old 9 it was six.
+  const wideWindow = sandbox.bhLyricWindowRange(10, 20, 24);
+  const narrowWindow = sandbox.bhLyricWindowRange(10, 20, 9);
+  assert(wideWindow.lo === 0 && wideWindow.hi === 12, '24 rows must reach 21 lines back: ' + JSON.stringify(wideWindow));
+  assert(narrowWindow.lo === 4 && narrowWindow.hi === 12, '9 rows reach six lines back: ' + JSON.stringify(narrowWindow));
+  assert(sandbox.bhLyricWindowRange(-1, 5, 9).lo === 0, 'before the song the window starts at the first line');
+  assert(sandbox.bhLyricWindowRange(0, 0, 9).hi === -1, 'no lines means no window');
+  assert(/lyricRows: \{ def: 24, min: 9, max: 48/.test(source), 'the row cap has to be a knob');
+  assert(/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(source),
+    'the pool has to be built from the knob');
   // A long line is wrapped into a block instead of being fitted to the screen width, which made it
   // a two-pixel strip (and read as "the lyrics stopped showing").
   const measurer = { measureText: function (s) { return { width: String(s).length * 10 }; } };
@@ -1112,9 +1123,13 @@ function load(overrides) {
     clearRect: function () {}, fillText: function () {}
   };
   const wrapRow = { canvas: { width: 8, height: 8, getContext: function () { return wrapCtx; } }, ctx: wrapCtx };
-  sandbox.bhDrawRowCanvas(wrapRow, { text: 'x'.repeat(100), sub: '' }, false, sandbox.bhLyricPaletteState(), { floatAmp: 0.4, enter: 0.28 });
+  sandbox.bhDrawRowCanvas(wrapRow, { text: 'x'.repeat(500), sub: '' }, false, sandbox.bhLyricPaletteState(), { floatAmp: 0.4, enter: 0.28 });
   assert(wrapRow.lineScale > 1.2, 'a wrapped row has to grow in height: ' + wrapRow.lineScale);
   assert(wrapRow.canvas.width <= 2048, 'and the canvas has to stay inside a texture: ' + wrapRow.canvas.width);
+  // The sign is displayed 2-3x larger than the layout font, so it has to be rasterised above that
+  // size; at the layout size the GPU magnifies it and everything reads blurry.
+  assert(wrapRow.textureScale >= 2, 'the row canvas has to be supersampled: ' + wrapRow.textureScale);
+  assert(wrapRow.canvas.height > 120, 'a supersampled single line is taller than the old 58px strip: ' + wrapRow.canvas.height);
   assert(/\* \(row\.lineScale \|\| 1\)/.test(source), 'the placement has to use the wrapped-row height');
   assert(/var arcTarget = params\.orbit \* 0\.46;/.test(source),
     'the arch has to be wide enough to see, not a 40 cm line on a 2.4 m orbit');
@@ -1125,7 +1140,7 @@ function load(overrides) {
   assert(Math.abs(bobA) <= 0.02 + 0.25 * 0.12 + 1e-9, 'an idle bob stays inside the disc: ' + bobA);
   assert(Math.abs(sandbox.bhLyricBob(0, 5, 1, 0.25)) <= (0.02 + 0.25 * 0.12) * 1.9 + 1e-9,
     'and even the falling swing is bounded');
-  assert(/for \(var i = 0; i < 9; i\+\+\)/.test(source), 'nine rows, so the older inspiral keeps its mesh on fast songs');
+  assert(/var BH_MAX_LYRIC_ROWS = 48;/.test(source), 'the pool has a hard ceiling');
 
   // While the previous line is still on the front, the next is not shown: the gap the user asked
   // for. Two tenths of a second later it starts to come in.

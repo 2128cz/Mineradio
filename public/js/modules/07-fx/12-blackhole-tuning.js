@@ -74,6 +74,9 @@ function bhTuningApply(key) {
   // 'field' is a structural change to the galaxy: the buffer is rebuilt here rather than waiting
   // for the frame loop, so a knob drag does not leave the old star count on screen for a frame.
   if (spec.rebuild === 'field' && typeof bhBuildGalaxy === 'function') bhBuildGalaxy(false);
+  // The row pool is a structural change: add or drop whole sign slots rather than waiting for the
+  // next lyric rebuild, so the cap answers the knob immediately.
+  if (spec.rebuild === 'rows' && typeof bhEnsureLyricRowCount === 'function') bhEnsureLyricRowCount(bhParam('lyricRows'));
   if (spec.rebuild === 'lyric' && typeof blackHoleFlight !== 'undefined') blackHoleFlight.time = 0;
   if (typeof markRenderInteraction === 'function') markRenderInteraction('blackhole-tuning');
   return true;
