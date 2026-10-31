@@ -90,10 +90,13 @@ var BH_TUNING_SCHEMA = {
   galaxySpin: { def: 0.55, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   galaxyGlow: { def: 0.7, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  // The lyrics run along the galaxy's outer rim; the radius has to stay outside the field, which
-  // the test pins against galaxyRadius.
-  lyricRadius: { def: 3.3, min: 0.5, max: 12, kind: 'unit', rebuild: 'live' },
-  lyricSpread: { def: 0.16, min: 0.02, max: 0.9, kind: 'ratio', rebuild: 'live' },
+  // The lyric rows hang beside the hole in the viewer's own frame: odd lines on the left, even on
+  // the right. These are fractions of the half-width / half-height, not world lengths, because "my
+  // left and right" is a screen direction - a world offset would drift off the frame as the camera
+  // moves. lyricWind is how far round the hole a row winds on its way in.
+  lyricSide: { def: 0.62, min: 0.25, max: 0.95, kind: 'ratio', rebuild: 'live' },
+  lyricGap: { def: 0.16, min: 0.04, max: 0.5, kind: 'ratio', rebuild: 'live' },
+  lyricWind: { def: 0.9, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
@@ -514,7 +517,17 @@ var BH_PASS_FS = shadertoyFragment(
   '  color = mix(color, debris.rgb, clamp(debris.a, 0.0, 1.0));',
   '',
   '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
-    '  vec2 textUv = clamp(mix(uv, uv + bend, clamp(uTextLens, 0.0, 1.0) * closeness), 0.0, 1.0);',
+    // The text bends only near the shadow. Away from it the pull is small but its gradient is not,
+    // and shearing a resting row by it is what made the letters comb; as a row falls in, the bend
+    // grows and takes the whole line with it.
+    '  float textGravity = 1.0 - smoothstep(uShadowUv * 1.25, uShadowUv * 3.2, qlen);',
+    // The full backdrop pull is more than a third of the frame at the rim: applied to the text it
+    // would sample past the row entirely and the line would vanish before it is swallowed. The
+    // bend is therefore capped at a fraction of the shadow radius - enough to drag the line round
+    // with the field, small enough that it is still a line while it goes in.
+    '  float textBendLen = length(bend) * clamp(uTextLens, 0.0, 1.0) * closeness * textGravity;',
+    '  float textBendCap = uShadowUv * 0.12;',
+    '  vec2 textUv = clamp(uv + (qv / qlen) * min(textBendLen, textBendCap), 0.0, 1.0);',
     '  vec4 text = texture2D(iChannel1, textUv);',
     '  color = color * (1.0 - text.a) + text.rgb;',
     '  fragColor = vec4(color, 1.0);',
@@ -1607,28 +1620,6 @@ function bhLyricSungIndex(items, t) {
   return found;
 }
 
-// Per-glyph placement along a circular arc, in canvas pixels with y pointing down. Radius is the
-// arc's radius; the glyphs sit on the circle of that radius whose centre is `radius` below the
-// baseline. Each glyph is rotated by its own angle, so the letters stay upright on the curve
-// instead of being turned by the plane.
-function bhArcGlyphs(widths, radius, cx, cy) {
-  var total = 0;
-  for (var i = 0; i < widths.length; i++) total += widths[i];
-  var placed = [];
-  var travelled = -total / 2;
-  for (var g = 0; g < widths.length; g++) {
-    travelled += widths[g] / 2;
-    var angle = travelled / Math.max(1, radius);
-    placed.push({
-      x: cx + Math.sin(angle) * radius,
-      y: cy + radius - Math.cos(angle) * radius,
-      angle: angle
-    });
-    travelled += widths[g] / 2;
-  }
-  return { glyphs: placed, total: total, span: total / Math.max(1, radius) };
-}
-
 // The radial blur's five taps, as offsets in the direction away from the hole (pixels). Mirrored
 // here so the test can check the shape instead of reading the GLSL: symmetric, a zero tap in the
 // middle, and nothing at all when the radius is zero.
@@ -1664,16 +1655,56 @@ function bhSwallowAlpha(distance, shadowRadius) {
   return bhClamp((distance / shadowRadius - 0.15) / 0.4, 0, 1);
 }
 
-// Where a row sits in the disc, given how far it is from the sung line. Rotation is signed so the
-// rows advance the same way round the rim, and each row keeps a small radial offset so the text
-// looks scattered around the galaxy instead of ruled onto a circle.
-function bhArcRowPlacement(offset, params) {
-  var step = params.spread;
+// Which side of the hole a line hangs on, as the viewer sees it: the first line on the left, then
+// alternating. The row layer is camera-aligned, so local -x is the viewer's left.
+function bhLyricSide(itemIndex) {
+  return Math.abs(Math.round(Number(itemIndex) || 0)) % 2 === 0 ? -1 : 1;
+}
+
+// The rows live in a camera-facing plane at the hole's world point, so local x/y are screen
+// right/up. Everything is given in fractions of the visible half-frame and converted here, which
+// is what keeps "beside the hole" meaning the same pixel at any camera distance or fov.
+function bhLyricFrame(frame, params) {
+  var unit = Math.max(1e-4, (Number(frame.distance) || 1) * ((frame.camera && frame.camera.tanHalf) || 0.55));
+  var aspect = Math.max(0.2, Number(frame.aspect) || 1.78);
   return {
-    angle: -offset * step,
-    radius: params.radius * (1 + (offset % 2 === 0 ? 0.035 : -0.045) * (Math.abs(offset) > 0 ? 1 : 0)),
-    opacity: offset === 0 ? 1 : Math.max(0.18, 0.62 - Math.abs(offset) * 0.14),
-    scale: offset === 0 ? 1.18 : 1
+    unit: unit,
+    aspect: aspect,
+    side: bhClamp(Number(params.side) || 0.62, 0.18, 0.98),
+    holdX: bhClamp(Number(params.side) || 0.62, 0.18, 0.98) * unit * aspect,
+    stepY: bhClamp(Number(params.gap) || 0.16, 0.02, 0.5) * unit,
+    rowH: bhClamp(Number(params.height) || 0.15, 0.03, 0.4) * unit,
+    // The shadow's radius on the same scale: a row has been swallowed once its centre is inside it.
+    shadow: Math.max(1e-4, (Number(frame.uvShadow) || 0.3) * unit)
+  };
+}
+
+// A row slides in from just off its own side of the frame: fast at first and settling, an
+// exponential approach rather than a constant-speed slide.
+function bhLyricEnter(holdX, progress, overshoot) {
+  var u = bhClamp(Number(progress) || 0, 0, 1);
+  var side = holdX < 0 ? -1 : 1;
+  var start = holdX + side * Math.abs(holdX) * Math.max(0.05, Number(overshoot) || 0.55);
+  var k = u >= 1 ? 1 : 1 - Math.pow(2, -10 * u);
+  return { x: start + (holdX - start) * k, alpha: bhClamp(u * 3, 0, 1), scale: 1.2 - 0.2 * k };
+}
+
+// The plunge: the same radial free-fall law the row distance always used, d = d0 * (1-u)^curve,
+// with the bearing winding by u^2.5 at the same time. The bearing term has zero slope at the start
+// and its maximum at the end, so the row hangs for a moment and then whips round the hole: the
+// path is longer than the chord, which is the difference between being pulled in and sliding in.
+function bhSuckPoint(holdX, holdY, progress, curve, wind) {
+  var u = bhClamp(Number(progress) || 0, 0, 1);
+  var r0 = Math.sqrt(holdX * holdX + holdY * holdY);
+  var bearing = Math.atan2(holdY, holdX);
+  var k = bhClamp(Number(curve) || 0.66, 0.05, 3);
+  var radius = r0 * Math.pow(Math.max(0, 1 - u), k);
+  var turned = (Number(wind) || 0) * Math.pow(u, 2.5);
+  return {
+    x: Math.cos(bearing + turned) * radius,
+    y: Math.sin(bearing + turned) * radius,
+    radius: radius,
+    turned: turned
   };
 }
 
@@ -1697,8 +1728,10 @@ function bhLyricMotionState() {
   return { floatAmp: 0.4, enter: 0.28 };
 }
 
-// Rasterises one row onto its own canvas: the line on the upper arc, the translation under it on a
-// slightly wider one, both bent by the same maths.
+// Rasterises one row onto its own canvas: the line and, under it, its translation. The text is
+// straight in the viewer's frame - the rows hang beside the hole, so an arc would only make them
+// harder to read - and the canvas is sized to the measured text so the plane carries no empty
+// margin that would shrink the letters.
 function bhDrawRowCanvas(row, item, sung, palette, motion) {
   var fontPx = bhLyricFontPx();
   var subPx = Math.round(fontPx * 0.62);
@@ -1708,25 +1741,16 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   // puts the letters about a pixel tall on screen.
   var measure = row.ctx;
   measure.font = font;
-  var widths = [];
-  var chars = item.text.split('');
-  var mainWidth = 0;
-  for (var i = 0; i < chars.length; i++) {
-    var w = measure.measureText(chars[i]).width;
-    widths.push(w > 0 ? w : fontPx * 0.6);
-    mainWidth += widths[i];
-  }
-  var subWidths = [];
-  var subChars = item.sub ? item.sub.split('') : [];
+  var mainWidth = Math.max(fontPx * 2, measure.measureText(item.text).width || 0);
   measure.font = subFont;
-  var subWidth = 0;
-  for (var s0 = 0; s0 < subChars.length; s0++) {
-    var sw = measure.measureText(subChars[s0]).width;
-    subWidths.push(sw > 0 ? sw : subPx * 0.6);
-    subWidth += subWidths[s0];
-  }
-  var canvasWidth = Math.max(fontPx * 4, Math.min(2048, Math.ceil(Math.max(mainWidth, subWidth) + fontPx * 1.4)));
-  var canvasHeight = Math.ceil((fontPx + (item.sub ? subPx * 1.9 : 0)) * 1.9);
+  var subWidth = item.sub ? Math.max(0, measure.measureText(item.sub).width || 0) : 0;
+  var pad = Math.max(4, fontPx * 0.35);
+  var canvasWidth = Math.max(fontPx * 4, Math.min(2048, Math.ceil(Math.max(mainWidth, subWidth) + pad * 2)));
+  // The translation band is reserved on every row, so the glyphs occupy the same share of the
+  // plane whether or not the line has a translation and the text does not change size line to line.
+  var mainH = fontPx * 1.35;
+  var subH = subPx * 1.6;
+  var canvasHeight = Math.ceil(mainH + subH + pad * 2);
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
     row.canvas.width = canvasWidth;
     row.canvas.height = canvasHeight;
@@ -1735,41 +1759,18 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   row.ctx = ctx;
   row.widthRatio = canvasWidth / canvasHeight;
   var width = canvasWidth;
-  var height = canvasHeight;
-  ctx.clearRect(0, 0, width, height);
+  ctx.clearRect(0, 0, width, canvasHeight);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   var colour = sung ? palette.highlight : palette.primary;
   var alpha = sung ? 1 : 0.72;
   ctx.font = font;
-  var radius = width * 1.6;
-  var main = bhArcGlyphs(widths, radius, width / 2, fontPx * 0.75);
-  var clip = Math.min(main.total / 2, width / 2 - 4);
-  for (var g = 0; g < main.glyphs.length; g++) {
-    var spot = main.glyphs[g];
-    if (Math.abs(spot.x - width / 2) > clip) continue;
-    ctx.save();
-    ctx.translate(spot.x, spot.y);
-    ctx.rotate(spot.angle);
-    ctx.font = font;
-    ctx.fillStyle = bhLyricCss(colour, alpha);
-    ctx.fillText(chars[g], 0, 0);
-    ctx.restore();
-  }
+  ctx.fillStyle = bhLyricCss(colour, alpha);
+  ctx.fillText(item.text, width / 2, pad + mainH / 2);
   if (item.sub) {
     ctx.font = subFont;
-    var subArc = bhArcGlyphs(subWidths, radius * 1.12, width / 2, fontPx * 0.75 + subPx * 1.7);
-    for (var t2 = 0; t2 < subArc.glyphs.length; t2++) {
-      var subSpot = subArc.glyphs[t2];
-      if (Math.abs(subSpot.x - width / 2) > clip) continue;
-      ctx.save();
-      ctx.translate(subSpot.x, subSpot.y);
-      ctx.rotate(subSpot.angle);
-      ctx.font = subFont;
-      ctx.fillStyle = bhLyricCss(palette.context, alpha * 0.72);
-      ctx.fillText(subChars[t2], 0, 0);
-      ctx.restore();
-    }
+    ctx.fillStyle = bhLyricCss(palette.context, alpha * 0.72);
+    ctx.fillText(item.sub, width / 2, pad + mainH + subH / 2);
   }
   row.sung = sung;
 }
@@ -1797,7 +1798,7 @@ function bhBuildLyricRow(width, height) {
   var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 60;
-  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, exitAt: 0 };
+  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, enterAt: 0, exitAt: -1, exitY: 0, y: 0 };
 }
 
 function bhDisposeLyrics() {
@@ -1820,13 +1821,13 @@ function bhBuildLyrics() {
   var items = bhLyricItems();
   var layer = new THREE.Group();
   layer.frustumCulled = false;
-  var params = bhLyricParams();
   var rows = [];
   var fontPx = bhLyricFontPx();
   var worldHeight = fontPx * 0.045;
   for (var i = 0; i < 5; i++) {
     var row = bhBuildLyricRow(1024, 256);
     row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
+    row.mesh.visible = false;
     layer.add(row.mesh);
     rows.push(row);
   }
@@ -1841,65 +1842,134 @@ function bhBuildLyrics() {
 
 function bhLyricParams() {
   return {
-    radius: bhClamp(bhParam('lyricRadius'), 0.5, 12),
-    spread: bhClamp(bhParam('lyricSpread'), 0.02, 0.9),
-    drift: bhClamp(bhParam('lyricDrift'), 0, 1.5)
+    side: bhClamp(bhParam('lyricSide'), 0.18, 0.98),
+    gap: bhClamp(bhParam('lyricGap'), 0.02, 0.5),
+    wind: bhClamp(bhParam('lyricWind'), 0, 3),
+    curve: bhClamp(bhParam('fallCurve'), 0.05, 3),
+    drift: bhClamp(bhParam('lyricDrift'), 0, 1.5),
+    // The plane's height, as a fraction of the visible half-height: the glyphs then occupy the
+    // same share of the frame at any fov or camera distance, while the app's own lyric scale still
+    // sets the base size through bhLyricFontPx.
+    height: bhClamp(bhLyricFontPx() * 0.008, 0.03, 0.4)
   };
 }
 
-// The rows ride the same layer transform as the galaxy, so they stay on its rim from any camera
-// angle; the swallow keeps the power law the flight had.
+// The rows hang beside the hole in the viewer's own frame - odd lines left, even right - and once a
+// line has been sung it spirals into the hole. The layer is camera-aligned at the hole's world
+// point, so its local x/y are screen right/up: "my left and right", not the galaxy's.
 function bhPlaceLyrics(frame, dt) {
   if (!bhLyrics.layer) return false;
   var params = bhLyricParams();
   bhLyrics.time += Math.max(0, Number(dt) || 0);
   var time = bhLyrics.time;
+  var dtStep = Math.max(0, Math.min(0.2, Number(dt) || 0));
   var motion = bhLyricMotionState();
   bhLyrics.layer.position.set(frame.world.x, frame.world.y, frame.world.z);
   if (typeof camera !== 'undefined' && camera) bhLyrics.layer.quaternion.copy(camera.quaternion);
-  var drift = Math.sin(time * 0.18) * params.drift * 0.35;
-  for (var i = 0; i < bhLyrics.rows.length; i++) {
-    var row = bhLyrics.rows[i];
-    var itemIndex = bhLyrics.sung < 0 ? i : bhLyrics.sung + (i - 2);
-    if (itemIndex < 0 || itemIndex >= bhLyrics.items.length) {
-      row.mesh.visible = false;
-      continue;
+  var view = bhLyricFrame(frame, params);
+  var items = bhLyrics.items;
+  var sung = bhLyrics.sung;
+  var anchor = sung < 0 ? 0 : sung;
+  var lo = sung < 0 ? 0 : Math.max(0, sung - 2);
+  var hi = Math.min(items.length - 1, anchor + 2);
+  var rows = bhLyrics.rows;
+  var held = {};
+  for (var b = 0; b < rows.length; b++) {
+    var bound = rows[b];
+    if (bound.itemIndex >= lo && bound.itemIndex <= hi && bound.itemIndex >= 0 && !held[bound.itemIndex]) {
+      held[bound.itemIndex] = bound;
+    } else {
+      bound.itemIndex = -1;
+      bound.mesh.visible = false;
     }
-    if (row.itemIndex !== itemIndex) {
-      row.itemIndex = itemIndex;
-      row.exitAt = 0;
-      bhDrawRowCanvas(row, bhLyrics.items[itemIndex], itemIndex === bhLyrics.sung, bhLyricPaletteState(), motion);
+  }
+  // A line keeps its own row while it is in the window, so advancing the song slides a row up a
+  // slot instead of re-entering it - and a row never flips sides halfway through a line.
+  for (var idx = lo; idx <= hi; idx++) {
+    if (held[idx] || !items.length) continue;
+    var free = null;
+    for (var f = 0; f < rows.length; f++) if (rows[f].itemIndex < 0) { free = rows[f]; break; }
+    if (!free) continue;
+    free.itemIndex = idx;
+    free.exitAt = -1;
+    free.exitY = 0;
+    free.enterAt = time;
+    free.y = (idx - anchor) * view.stepY;
+    // A line that is already behind the playhead when the preset comes up is on its way in from
+    // the start, not sliding in: it was sung before there was a row to show it.
+    if (sung >= 0 && idx < sung) {
+      free.enterAt = time - Math.max(0.05, bhParam('flyIn'));
+      free.exitAt = time;
+      free.exitY = free.y;
+    }
+    bhDrawRowCanvas(free, items[idx], idx === sung, bhLyricPaletteState(), motion);
+    free.texture.needsUpdate = true;
+  }
+  var flyIn = Math.max(0.05, bhParam('flyIn'));
+  var swallowDur = Math.max(0.05, bhParam('swallow'));
+  var wobble = params.drift * 0.02 * view.unit;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (row.itemIndex < 0) continue;
+    var index = row.itemIndex;
+    var current = index === sung;
+    // The row keeps its line, so the canvas has to be redrawn when that line becomes (or stops
+    // being) the one being sung: otherwise the highlight stays on whichever line it was drawn for.
+    if (row.sung !== current) {
+      bhDrawRowCanvas(row, items[index], current, bhLyricPaletteState(), motion);
       row.texture.needsUpdate = true;
     }
-    var offset = itemIndex - bhLyrics.sung;
-    var place = bhArcRowPlacement(offset, params);
-    var angle = place.angle + drift;
-    var radius = place.radius;
-    var floatPx = Math.sin(time * 0.6 + itemIndex * 0.9) * (motion.floatAmp || 0) * 0.02;
-    var x = Math.cos(angle) * radius;
-    var y = Math.sin(angle) * radius + floatPx;
-    // Leaving the sung line: the row falls into the hole on the same power law the rows used
-    // before the arc - the last stretch is the quick one.
-    if (itemIndex !== bhLyrics.sung) {
-      if (!row.exitAt) row.exitAt = time;
-      var u = bhClamp((time - row.exitAt) / Math.max(0.05, bhParam('swallow')), 0, 1);
-      var keep = Math.pow(Math.max(0, 1 - u), bhClamp(bhParam('fallCurve'), 0.05, 3));
-      x *= keep;
-      y *= keep;
+    var side = bhLyricSide(index);
+    var holdX = side * view.holdX;
+    var holdY = bhClamp((index - anchor) * view.stepY, -0.82 * view.unit, 0.82 * view.unit);
+    if (current && row.exitAt >= 0) {
+      // The playhead was moved back onto a row that had already started falling.
+      row.exitAt = -1;
+      row.exitY = 0;
+      row.enterAt = time - flyIn;
+      row.y = holdY;
+    }
+    if (!current && sung >= 0 && index < sung && row.exitAt < 0) {
+      row.exitAt = time;
+      row.exitY = row.y;
+    }
+    // Rows ease between slots; only the fall is driven directly.
+    row.y += (holdY - row.y) * Math.min(1, dtStep * 9);
+    var x, y, opacity = 1, scale = current ? 1.12 : 0.92;
+    var enterU = bhClamp((time - row.enterAt) / flyIn, 0, 1);
+    if (row.exitAt >= 0) {
+      var u = bhClamp((time - row.exitAt) / swallowDur, 0, 1);
+      var fall = bhSuckPoint(holdX, row.exitY, u, params.curve, params.wind);
+      x = fall.x;
+      y = fall.y;
+      opacity = bhSwallowAlpha(fall.radius, view.shadow);
+      scale *= 1 - 0.35 * u;
       row.mesh.visible = u < 1;
+    } else if (enterU < 1) {
+      var enter = bhLyricEnter(holdX, enterU, 0.55);
+      x = enter.x;
+      y = row.y + Math.sin(time * 0.6 + index * 0.9) * wobble;
+      opacity = enter.alpha;
+      scale *= enter.scale;
+      row.mesh.visible = true;
     } else {
+      x = holdX;
+      y = row.y + Math.sin(time * 0.6 + index * 0.9) * wobble;
       row.mesh.visible = true;
     }
     row.mesh.position.set(x, y, 0.02);
-    // The plane's local +x is its width, so a tangent strip is the angle itself; +PI/2 stood
-    // the text on end (a column of vertical lines beside the hole).
-    row.mesh.rotation.z = angle;
-    var worldH = bhLyricFontPx() * 0.045;
-    row.mesh.scale.set(worldH * (row.widthRatio || 4), worldH, 1);
-    // The shadow never covers the text any more, so being swallowed has to come from the row: it
-    // fades out as it crosses the shadow radius on its way in.
-    var shadowWorld = (frame.horizonWorld || 1) * bhClamp(bhParam('shadowScale'), 1, 2);
-    row.material.opacity = place.opacity * bhSwallowAlpha(Math.sqrt(x * x + y * y), shadowWorld);
+    // The line reads horizontally in the viewer's frame: the row is never turned onto an arc.
+    row.mesh.rotation.z = 0;
+    row.mesh.renderOrder = current ? 62 : 60;
+    // A long line is scaled to the margin it hangs in rather than allowed to run off the frame.
+    var worldH = view.rowH * scale;
+    var widthNdc = worldH * (row.widthRatio || 4) / (view.unit * view.aspect);
+    var limitNdc = 2 * Math.max(0.12, 0.94 - view.side);
+    var fit = widthNdc > limitNdc ? limitNdc / widthNdc : 1;
+    row.mesh.scale.set(worldH * (row.widthRatio || 4) * fit, worldH * fit, 1);
+    // The shadow never paints over the text, so being swallowed has to come from the row: it fades
+    // out as its centre crosses the shadow radius on the way in.
+    row.material.opacity = opacity * (current ? 1 : Math.max(0.3, 0.72 - Math.abs(index - anchor) * 0.14));
   }
   return true;
 }
@@ -1910,7 +1980,7 @@ function bhLyricStatus() {
     rows: bhLyrics.rows.length,
     items: bhLyrics.items.length,
     sung: bhLyrics.sung,
-    radius: Math.round(bhParam('lyricRadius') * 100) / 100,
+    side: Math.round(bhParam('lyricSide') * 100) / 100,
     text: bhLyrics.sung >= 0 && bhLyrics.items[bhLyrics.sung] ? bhLyrics.items[bhLyrics.sung].text.slice(0, 20) : ''
   };
 }

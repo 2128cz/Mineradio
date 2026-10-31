@@ -323,6 +323,12 @@ function load(overrides) {
     'the lyric channel must be composited inside the pass, over the shadowed picture');
   assert(/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(source),
     'the text bend must fade at the rim, or a row crossing the hole is torn off its own spot');
+  // And it is local to the shadow: the stars take the full pull everywhere, but a resting row at
+  // the side must not be sheared by the gradient of a field that is weak there but not flat.
+  assert(/float textGravity = 1\.0 - smoothstep\(uShadowUv \* 1\.25, uShadowUv \* 3\.2, qlen\);/.test(source),
+    'the text bend has to be local to the shadow');
+  assert(/float textBendCap = uShadowUv \* 0\.12;/.test(source) && /min\(textBendLen, textBendCap\)/.test(source),
+    'and capped, or the rim pull samples past the row and the line vanishes before it is swallowed');
   // Without a lyric layer the text target is cleared rather than left holding last frame.
   sandbox.bhLyrics.layer = null;
   record.draws.length = 0;
@@ -542,8 +548,8 @@ function load(overrides) {
   // The straight rows are replaced by this preset's own arc rows, which are meshes inside the
   // render target - suppressing the app's layer is what stops two copies of the text fighting.
   assert(/stageLyrics: true/.test(ownerBlock), "the app's straight lyric rows must be taken over by the arc layer");
-  assert(/function bhArcGlyphs\(/.test(source) && /function bhDrawRowCanvas\(/.test(source),
-    'the arc rows have to be rasterised with the per-glyph arc maths');
+  assert(/function bhLyricSide\(/.test(source) && /function bhDrawRowCanvas\(/.test(source),
+    'the rows have to be laid out beside the hole and rasterised');
   assert(/new THREE\.CanvasTexture\(canvas\)/.test(source) && /THREE\.MeshBasicMaterial\(/.test(source),
     'and uploaded as textures on planes, which is what lets the lens bend them');
   assert(/particles: true/.test(ownerBlock), "the app's cover-particle field belongs to the other presets; this one paints its own galaxy");
@@ -703,68 +709,163 @@ function load(overrides) {
     'and dispose it: ' + JSON.stringify(record3.disposed));
 }
 
-// ------------------------------------------- the text runs on an arc around the galaxy's rim
+// ------------------------------- the rows hang beside the hole and spiral in when sung
+//
+// "Left and right of the hole as I see it" is a screen direction, not a galaxy radius: the rows
+// live in a camera-facing layer at the hole's point, so local x is the viewer's right. Odd lines
+// hang on the left, even on the right, and a line that has been sung winds into the hole rather
+// than sliding in a straight line toward it.
 {
   const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
   const sandbox = load({ camera: camera, fx: { preset: 15 } });
-  // A stage that would let the app-row flight run, so the takeover check below is an A/B and not
-  // two unrelated reasons to return false.
-  sandbox.stageLyrics = { group: { updateMatrixWorld: function () {}, children: [] }, current: null, outgoing: [] };
-  sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
+  const frame = sandbox.bhComputeFrame();
+  assert(frame && frame.world, 'the hole must be placed before the rows can hang beside it');
 
-  // Per-glyph placement: positions advance across the canvas, the angles are symmetric about the
-  // run's middle, and the run's arc length is the text width.
-  const widths = [10, 10, 10, 10, 10];
-  const arc = sandbox.bhArcGlyphs(widths, 800, 500, 100);
-  assert(arc.glyphs.length === 5, 'one glyph per character');
-  for (let i = 1; i < arc.glyphs.length; i++) {
-    assert(arc.glyphs[i].x > arc.glyphs[i - 1].x, 'glyphs must advance across the arc');
+  // Sides: line 1 (index 0) on the left, line 2 on the right, alternating.
+  assert(sandbox.bhLyricSide(0) === -1, 'line 1 must hang on the viewer left');
+  assert(sandbox.bhLyricSide(1) === 1 && sandbox.bhLyricSide(2) === -1 && sandbox.bhLyricSide(3) === 1,
+    'lines must alternate sides: left, right, left, right');
+
+  // The hold is measured in screen fractions, so it is beside the hole at any distance or fov.
+  const params = sandbox.bhLyricParams();
+  const view = sandbox.bhLyricFrame(frame, params);
+  const unit = frame.distance * Math.tan((frame.fovDeg * Math.PI / 180) * 0.5);
+  assert(Math.abs(view.unit - unit) < 1e-9, 'one screen half-height in world units: ' + view.unit);
+  assert(Math.abs(view.holdX - params.side * unit * frame.aspect) < 1e-9,
+    'the hold must be the side fraction of the visible half-width');
+  // In half-width units the shadow is uvShadow/aspect; the hold must sit outside it.
+  assert(params.side > frame.uvShadow / frame.aspect,
+    'the rows must hang outside the shadow: ' + params.side + ' vs ' + (frame.uvShadow / frame.aspect).toFixed(2));
+  // The row plane is sized in screen fractions too, so a dollied camera does not make it huge.
+  assert(view.rowH > 0.03 * unit && view.rowH < 0.4 * unit, 'the row height must stay a readable fraction of the frame');
+
+  // Entry: from just off its own side of the frame, settling onto the hold, fading in.
+  const enterStart = sandbox.bhLyricEnter(view.holdX, 0, 0.55);
+  const enterEnd = sandbox.bhLyricEnter(view.holdX, 1, 0.55);
+  assert(enterStart.x > view.holdX && enterStart.alpha === 0, 'the row starts outside and invisible');
+  assert(Math.abs(enterEnd.x - view.holdX) < 1e-9 && enterEnd.alpha === 1, 'and settles exactly on the hold');
+  let away = true;
+  let prevEnter = enterStart.x;
+  for (let u = 0.1; u <= 1; u += 0.1) {
+    const at = sandbox.bhLyricEnter(view.holdX, u, 0.55);
+    if (at.x > prevEnter) away = false;
+    prevEnter = at.x;
   }
-  assert(Math.abs(arc.glyphs[0].angle + arc.glyphs[4].angle) < 1e-12, 'the run must be centred on the arc');
-  assert(Math.abs(arc.span - arc.total / 800) < 1e-12, 'the span must be the arc length over the radius');
-  assert(Math.abs(arc.glyphs[2].x - 500) < 1e-9, 'the middle glyph must sit on the centre line');
-  // Wider glyphs travel further along the arc: the width is the advance, not a fixed step.
-  const uneven = sandbox.bhArcGlyphs([4, 20, 4], 600, 0, 0);
-  assert(uneven.glyphs[1].angle > uneven.glyphs[0].angle * 2, 'advance must follow each glyph width');
+  assert(away, 'the entrance must only ever approach the hold');
 
-  // The sung line is the last one whose start has passed; a seek backwards lands on the right one.
-  const items = [{ startAt: 0 }, { startAt: 2 }, { startAt: 4 }];
-  assert(sandbox.bhLyricSungIndex(items, -1) === -1, 'before the first line nothing is sung');
-  assert(sandbox.bhLyricSungIndex(items, 0) === 0, 'at its start a line is already sung');
-  assert(sandbox.bhLyricSungIndex(items, 1.9) === 0, 'and stays sung until the next one');
-  assert(sandbox.bhLyricSungIndex(items, 2) === 1, 'the next line takes over at its start');
-  assert(sandbox.bhLyricSungIndex(items, 99) === 2, 'and the last line is sung to the end');
+  // The plunge: starts at the hold, ends at the hole, and winds round it on the way in. A straight
+  // translation would keep the bearing fixed and the path equal to the chord.
+  const holdY = 0;
+  const start = sandbox.bhSuckPoint(view.holdX, holdY, 0, params.curve, params.wind);
+  const end = sandbox.bhSuckPoint(view.holdX, holdY, 1, params.curve, params.wind);
+  assert(Math.abs(start.x - view.holdX) < 1e-9 && Math.abs(start.y - holdY) < 1e-9, 'the fall starts at the hold');
+  assert(Math.abs(end.x) < 1e-9 && Math.abs(end.y) < 1e-9, 'and ends in the hole');
+  let path = 0;
+  let prev = start;
+  let lastRadius = Math.hypot(start.x, start.y);
+  for (let s = 1; s <= 60; s++) {
+    const p = sandbox.bhSuckPoint(view.holdX, holdY, s / 60, params.curve, params.wind);
+    const radius = Math.hypot(p.x, p.y);
+    assert(radius <= lastRadius + 1e-9, 'the row must only get closer to the hole (u=' + (s / 60).toFixed(2) + ')');
+    lastRadius = radius;
+    path += Math.hypot(p.x - prev.x, p.y - prev.y);
+    prev = p;
+  }
+  assert(path > Math.hypot(view.holdX, holdY) * 1.05,
+    'the spiral path must be longer than the straight chord: ' + path.toFixed(3) + ' vs '
+    + Math.hypot(view.holdX, holdY).toFixed(3));
+  const mid = sandbox.bhSuckPoint(view.holdX, holdY, 0.5, params.curve, params.wind);
+  assert(mid.turned > 0 && mid.turned < params.wind, 'the bearing has to wind between the hold and the hole');
+  const straight = sandbox.bhSuckPoint(view.holdX, holdY, 0.5, params.curve, 0);
+  assert(straight.turned === 0 && Math.abs(straight.y) < 1e-9, 'wind 0 is a straight radial approach');
+  // Free fall: the last stretch is the fast one. Compare speeds (distance per unit progress), so
+  // the unequal window widths do not decide the result.
+  const at05 = sandbox.bhSuckPoint(view.holdX, holdY, 0.05, params.curve, params.wind);
+  const at95 = sandbox.bhSuckPoint(view.holdX, holdY, 0.95, params.curve, params.wind);
+  const earlySpeed = (Math.hypot(at05.x, at05.y) - Math.hypot(mid.x, mid.y)) / 0.45;
+  const lateSpeed = Math.hypot(at95.x, at95.y) / 0.05;
+  assert(lateSpeed > earlySpeed * 1.5,
+    'the plunge must accelerate: ' + earlySpeed.toFixed(2) + ' -> ' + lateSpeed.toFixed(2) + ' per unit');
+  console.log('lyric hold: side ' + params.side + ' of the half-width, gap ' + params.gap + ', wind ' + params.wind
+    + ' rad; spiral path ' + path.toFixed(2) + ' vs chord ' + Math.hypot(view.holdX, holdY).toFixed(2));
 
-  // Where a row sits: the sung one in front and full size, the rest fading with distance.
-  const params = { radius: sandbox.bhParam('lyricRadius'), spread: sandbox.bhParam('lyricSpread') };
-  const front = sandbox.bhArcRowPlacement(0, params);
-  const back = sandbox.bhArcRowPlacement(2, params);
-  assert(front.opacity === 1 && back.opacity < front.opacity, 'rows behind the sung one must fade');
-  assert(front.scale > back.scale, 'and shrink');
-  assert(Math.abs(back.angle) > Math.abs(front.angle), 'and fan out along the rim');
-  assert(Math.abs(front.radius - params.radius) < 1e-9, 'the sung row sits on the arc radius');
+  // Placement: rows hang on the side their line belongs to, stay horizontal, and a line that has
+  // been sung visibly converges on the hole and then disappears.
+  function fakeRow(index) {
+    const ctx = {
+      font: '', textAlign: '', textBaseline: '', fillStyle: '',
+      measureText(text) { return { width: String(text).length * 10 }; },
+      clearRect() {}, fillText() {}
+    };
+    return {
+      itemIndex: index, enterAt: -10, exitAt: 0, exitY: 0, y: 0, widthRatio: 4, sung: null,
+      canvas: { width: 512, height: 128, getContext() { return ctx; } },
+      ctx: ctx,
+      texture: { needsUpdate: false, dispose() {} },
+      material: { opacity: 1, dispose() {} },
+      mesh: {
+        position: new V3(), scale: new V3(1, 1, 1), rotation: { z: 9 }, renderOrder: 0, visible: true,
+        geometry: { dispose() {} }
+      }
+    };
+  }
+  const items = [0, 1, 2, 3, 4].map(function (i) {
+    return { index: i, text: 'line ' + i, sub: '', startAt: i, endAt: i + 1 };
+  });
+  const rows = [fakeRow(0), fakeRow(1), fakeRow(2), fakeRow(3), fakeRow(4)];
+  sandbox.bhLyrics.layer = { position: new V3(), quaternion: { copy() {} }, visible: true };
+  sandbox.bhLyrics.rows = rows;
+  sandbox.bhLyrics.items = items;
+  sandbox.bhLyrics.sung = 1;
+  sandbox.bhLyrics.time = 0;
+  sandbox.bhPlaceLyrics(frame, 0.016);
+  const heldX = [rows[0].mesh.position.x, rows[1].mesh.position.x];
+  assert(rows[0].mesh.position.x < -1e-6, 'line 0 is on the left: ' + rows[0].mesh.position.x);
+  assert(rows[1].mesh.position.x > 1e-6, 'line 1 is on the right: ' + rows[1].mesh.position.x);
+  assert(rows[2].mesh.position.x < -1e-6, 'line 2 is back on the left');
+  assert(Math.abs(rows[1].mesh.position.y) < view.stepY * 0.2, 'the sung line sits level with the hole');
+  assert(rows[2].mesh.position.y < 0, 'the line after it hangs below');
+  assert(rows[1].sung === true, 'the sung row is rasterised in its highlight colour');
+  assert(rows[2].sung === false, 'and its neighbours are not');
+  for (const row of rows) {
+    if (row.itemIndex < 0) continue;
+    assert(row.mesh.rotation.z === 0, 'rows are horizontal in the viewer frame');
+  }
+  assert(rows[4].itemIndex === 4 || rows[4].itemIndex === -1, 'a line outside the window is dropped');
 
-  // The arc has to sit outside the shadow (or the rows are placed already eaten) and inside the
-  // frame (or nothing is on screen). The galaxy is wider than the frame now, so "outside the field"
-  // is not the invariant that matters.
-  const arcFrame = sandbox.bhComputeFrame();
-  const shadowWorld = arcFrame.horizonWorld * sandbox.bhParam('shadowScale');
-  assert(params.radius > shadowWorld, 'the lyric arc must sit outside the shadow (' + params.radius + ' against ' + shadowWorld + ')');
-  assert(params.radius < arcFrame.distance * Math.tan((arcFrame.fovDeg * Math.PI / 180) * 0.5) * arcFrame.aspect,
-    'and inside the frame');
+  // Advance the playhead: the line that was sung starts winding in and is gone after swallow.
+  sandbox.bhLyrics.sung = 2;
+  const falling = rows[1];
+  const distances = [];
+  for (let step = 0; step < 8; step++) {
+    sandbox.bhPlaceLyrics(frame, 0.1);
+    distances.push(Math.hypot(falling.mesh.position.x, falling.mesh.position.y));
+  }
+  assert(rows[2].sung === true && rows[1].sung === false,
+    'the highlight must move to the new line, not stay on the row it was drawn for');
+  for (let i = 1; i < distances.length; i++) {
+    assert(distances[i] <= distances[i - 1] + 1e-9,
+      'the sung line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
+  }
+  assert(distances[distances.length - 1] < distances[0] * 0.2,
+    'and be swallowed by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  assert(falling.mesh.visible === false, 'a swallowed row is hidden');
+  assert(falling.material.opacity === 0,
+    'and fully transparent, or a hidden row would still be drawn once it is shown again: ' + falling.material.opacity);
+  console.log('placement: line 0 held at x=' + heldX[0].toFixed(2) + ', line 1 at x=' + heldX[1].toFixed(2)
+    + ', fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  sandbox.bhLyrics.layer = null;
 
-  // One owner for the text: the row flight runs on its own, and stands down the moment the arc
+  // One owner for the text: the row flight runs on its own, and stands down the moment the side
   // layer exists. Asserted as an A/B so "it returned false anyway" cannot pass for the guard.
+  sandbox.stageLyrics = { group: { updateMatrixWorld: function () {}, children: [] }, current: null, outgoing: [] };
   sandbox.bhLyrics.layer = null;
   const flightAlone = sandbox.updateBlackHoleLyricFlight(0.016);
   sandbox.bhLyrics.layer = { fake: true };
-  const flightWithArc = sandbox.updateBlackHoleLyricFlight(0.016);
+  const flightWithLayer = sandbox.updateBlackHoleLyricFlight(0.016);
   sandbox.bhLyrics.layer = null;
-  assert(flightAlone === true, 'without the arc layer the row flight must still run');
-  assert(flightWithArc === false, 'the arc layer must take the text over from the row flight');
-  console.log('lyric arc: glyphs ' + arc.glyphs.length + ', span ' + arc.span.toFixed(3) + ' rad over r=800, front opacity '
-    + front.opacity + ' / back ' + back.opacity.toFixed(2) + ', radius ' + params.radius + ' outside the shadow '
-    + Math.round(shadowWorld * 100) / 100);
+  assert(flightAlone === true, 'without the side layer the row flight must still run');
+  assert(flightWithLayer === false, 'the side layer must take the text over from the row flight');
 }
 
 // ------------------------------------------------------------------ the lyric flight

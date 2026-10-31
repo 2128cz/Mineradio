@@ -1647,24 +1647,29 @@ function runBlackHolePresetCheck() {
   for (const pattern of [/function bhMarchRay\(/, /function bhSilhouette\(/, /uDiscInner/, /uDiscTilt/, /uSteps/]) {
     if (!pattern.test(text)) fail('the marched black hole is incomplete: ' + pattern);
   }
-  // The lyrics are arc rows on the galaxy's rim: per-glyph arc maths, a canvas per row, a plane in
-  // the render target, and an arc radius that stays outside the field.
+  // The lyrics hang beside the hole in the viewer's own frame (odd lines left, even right) and
+  // are pulled into it on a spiral. The side, the gap and the wind are their own knobs, because
+  // "my left and right" is a screen direction, not a world radius.
   for (const pattern of [
-    /function bhArcGlyphs\(/,
+    /function bhLyricSide\(/,
+    /function bhLyricFrame\(/,
+    /function bhSuckPoint\(/,
     /function bhDrawRowCanvas\(/,
     /new THREE\.CanvasTexture\(canvas\)/,
     /new THREE\.MeshBasicMaterial\(/,
     /function updateBlackHoleLyrics\(dt\)/,
   ]) {
-    if (!pattern.test(text)) fail('the lyric arc layer is incomplete: ' + pattern);
+    if (!pattern.test(text)) fail('the lyric side layer is incomplete: ' + pattern);
   }
-  const lyricRadius = Number((text.match(/lyricRadius: \{ def: (-?[\d.]+)/) || [])[1]);
-  const massRadius = Number((text.match(/mass: \{ def: (-?[\d.]+)/) || [])[1]);
-  const shadowScale = Number((text.match(/shadowScale: \{ def: (-?[\d.]+)/) || [])[1]);
-  if (!(lyricRadius > massRadius * shadowScale)) {
-    fail(`the lyric arc radius (${lyricRadius}) must stay outside the shadow (${massRadius * shadowScale})`);
+  for (const key of ['lyricSide', 'lyricGap', 'lyricWind']) {
+    if (!new RegExp(key + ': \\{ def: ').test(text)) fail('the lyric layout needs its own ' + key + ' knob');
   }
-  if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric arc too');
+  if (!/bhSuckPoint\(holdX, row\.exitY, u, params\.curve, params\.wind\)/.test(text)) {
+    fail('the fall has to be the spiral, not a straight shrink');
+  }
+  if (!/row\.mesh\.rotation\.z = 0;/.test(text)) fail('the rows must stay horizontal in the viewer frame');
+  if (!/side = bhLyricSide\(index\)/.test(text)) fail('the row side must come from the line parity');
+  if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric rows too');
   // The text is a second pass over the finished picture: the shadow lives in the first pass, so a
   // single-pass text would be painted over by the hole no matter where the row is.
   if (!/uTextLens/.test(text)) fail('the text bend amount has to reach the shader');
@@ -1675,6 +1680,12 @@ function runBlackHolePresetCheck() {
   if (!/texture2D\(iChannel1, textUv\)/.test(text)) fail('the shader must sample the lyric channel');
   if (!/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(text)) fail('the text must be composited inside the pass, over the shadow');
   if (!/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(text)) fail('the text bend has to fall off at the rim so a row stays readable');
+  if (!/float textGravity = 1\.0 - smoothstep\(uShadowUv \* 1\.25, uShadowUv \* 3\.2, qlen\);/.test(text)) {
+    fail('the text bend must be local to the shadow, or a resting row is sheared by the field');
+  }
+  if (!/float textBendCap = uShadowUv \* 0\.12;/.test(text) || !/min\(textBendLen, textBendCap\)/.test(text)) {
+    fail('the text bend must be capped, or a row disappears before it reaches the hole');
+  }
   if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
