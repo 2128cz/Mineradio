@@ -1546,7 +1546,7 @@ function runBlackHolePresetCheck() {
   // renders the scene twice, or that draws nothing when it fails, cannot be shipped.
   for (const [pattern, why] of [
     [/new THREE\.WebGLRenderTarget\(/, 'the pass needs a render target to refract'],
-    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,600}renderer\.render\(scene, camera\)[\s\S]{0,600}setRenderTarget\(null\)[\s\S]{0,600}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
+    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,2400}setRenderTarget\(null\)[\s\S]{0,800}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
     [/getDrawingBufferSize\(/, 'the target has to follow the renderer drawing buffer, not the window'],
     [/function bhDisposePass\(/, 'leaving the preset must give the GPU memory back'],
   ]) {
@@ -1599,6 +1599,23 @@ function runBlackHolePresetCheck() {
   if (!/if \(i == 3\) keep = 1\.0 - lod;/.test(shader)) fail('the finest octave has to be band-limited, or the disc moires at grazing angles');
   if (!/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(shader)) fail('the slab sample has to be jittered, or the integration is regular');
   if (!/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(shader)) fail('the Keplerian shear has to be bounded, or the field winds into radial moire');
+  // Far rows are their own channel: not baked into the galaxy target (whose radial blur turned them
+// into a smear), taking a gentler lens, and only veiled - not erased - by the fog.
+  if (!/blackHoleState\.farRt = farRt;/.test(text)) fail('the far rows need their own render target');
+  if (!/iChannel2: \{ value: farRt\.texture \}/.test(text)) fail('the far rows must be bound as iChannel2');
+  if (!/texture2D\(iChannel2, clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\) \* 0\.6, 0\.0, 1\.0\)\)/.test(shader)) {
+    fail('the far rows must take a gentler lens than the galaxy');
+  }
+  if (!/float farFade = skyMask \* mix\(0\.42, 1\.0, transmit\);/.test(shader)) {
+    fail('the fog may veil the far rows but must not erase them');
+  }
+  if (!/function bhLyricSideBlend\(/.test(text) || !/row\.nearAlpha = 1 - row\.sideBlend;/.test(text)) {
+    fail('the near/far hand-over has to be a depth blend, or crossing behind the hole pops');
+  }
+  // A long line wraps into a taller block; one fitted line would be a two-pixel strip.
+  if (!/function bhWrapText\(/.test(text)) fail('a long lyric line has to wrap, not shrink off the screen');
+  if (!/row\.lineScale = bhClamp\(/.test(text)) fail('a wrapped row has to grow in height');
+  if (!/\(row\.lineScale \|\| 1\)/.test(text)) fail('the placement has to use the wrapped-row height');
   if (!/float discFragment\(/.test(shader)) fail('the disc needs shards inside it, not screen-space specks');
   if (!/if \(bestR > uDiscInner && bestR < uDiscOuter\)/.test(shader)) fail('the shards have to be looked up where the ray meets the disc');
   if (!/bestTransmit/.test(shader)) fail('the shards have to be dimmed by the fog in front of them');
@@ -1682,8 +1699,11 @@ function runBlackHolePresetCheck() {
     fail('the next line must not start easing in before the previous has begun to leave');
   }
   if (!/var smooth = ease \* ease \* \(3 - 2 \* ease\)/.test(text)) fail('the approach has to decelerate into the front');
-  if (!/row\.front = alongRow < depth;/.test(text)) fail('each row has to be flagged front or back by its depth');
-  if (!/bhSetLyricSideVisibility\(true\) > 0/.test(text) || !/bhSetLyricSideVisibility\(false\)/.test(text)) {
+  if (!/row\.sideBlend = bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(text)
+    || !/row\.farAlpha = row\.sideBlend;/.test(text)) {
+    fail('each row has to be split by its depth, as a blend rather than a one-frame flag');
+  }
+  if (!/bhSetLyricSideVisibility\(true\) > 0/.test(text) || !/bhSetLyricSideVisibility\(false\) > 0/.test(text)) {
     fail('the renderer must split the near and far rows between the two targets');
   }
   if (!/function bhOrbitPanel\(/.test(text) || !/var panel = bhOrbitPanel\(basis, angle\)/.test(text)) {

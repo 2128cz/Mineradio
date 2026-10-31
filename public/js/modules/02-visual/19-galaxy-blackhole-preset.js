@@ -606,14 +606,21 @@ var BH_PASS_FS = shadertoyFragment(
     '    color += ftint * shard * (0.9 + 1.8 * fheat) * bestTransmit * (0.45 + 0.55 * uDebris);',
     '  }',
   '',
-  // The near rows are in front of the hole, so they are pasted straight over the picture: the lens
-  // belongs to what is behind the hole, and that is the scene channel above.
+  // Far rows have their own channel, outside the galaxy target: they must not take the radial blur
+  // that softens the galaxy (a nearly edge-on row would read as a blob), and the fog must only veil
+  // them, not swallow them whole. They take a gentler bend, are masked by the shadow, and keep a
+  // floor of visibility through the densest slab - that is what puts them *inside* the cloud.
+    '  vec4 farText = texture2D(iChannel2, clamp(uv - bend * nearMask * clamp(uTextLens, 0.0, 1.0) * 0.6, 0.0, 1.0));',
+    '  float farFade = skyMask * mix(0.42, 1.0, transmit);',
+    '  color = mix(color, farText.rgb, clamp(farText.a * farFade, 0.0, 1.0));',
+  // Near rows are in front of the hole, so they are pasted straight over the picture: the lens
+  // belongs to what is behind the hole, and that is the two channels above.
     '  vec4 text = texture2D(iChannel1, uv);',
     '  color = color * (1.0 - text.a) + text.rgb;',
     '  fragColor = vec4(color, 1.0);',
     '}'
   ].join('\n'),
-  { channels: 2 }
+  { channels: 3 }
 );
 
 // The text is composited over the finished picture, so the hole can never paint over it: the
@@ -633,7 +640,9 @@ var blackHoleState = {
   active: false,
   rt: null,
   textRt: null,
+  farRt: null,
   textQuads: 0,
+  farQuads: 0,
   quadScene: null,
   quadCamera: null,
   material: null,
@@ -655,6 +664,7 @@ function blackHolePresetIsActive() {
 function bhDisposePass() {
   if (blackHoleState.rt && blackHoleState.rt.dispose) blackHoleState.rt.dispose();
   if (blackHoleState.textRt && blackHoleState.textRt.dispose) blackHoleState.textRt.dispose();
+  if (blackHoleState.farRt && blackHoleState.farRt.dispose) blackHoleState.farRt.dispose();
   if (blackHoleState.material && blackHoleState.material.dispose) blackHoleState.material.dispose();
   if (blackHoleState.quadScene) {
     for (var i = 0; i < blackHoleState.quadScene.children.length; i++) {
@@ -665,6 +675,7 @@ function bhDisposePass() {
   }
   blackHoleState.rt = null;
   blackHoleState.textRt = null;
+  blackHoleState.farRt = null;
   blackHoleState.material = null;
   blackHoleState.quadScene = null;
   blackHoleState.quadCamera = null;
@@ -709,6 +720,19 @@ function bhBuildPass() {
     });
     textRt.texture.wrapS = THREE.ClampToEdgeWrapping;
     textRt.texture.wrapT = THREE.ClampToEdgeWrapping;
+    // Far rows are their own layer: the galaxy target is blurred radially, and a far row that went
+    // through that blur came out as a smear instead of a row.
+    var farRt = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: false,
+      generateMipmaps: false
+    });
+    farRt.texture.wrapS = THREE.ClampToEdgeWrapping;
+    farRt.texture.wrapT = THREE.ClampToEdgeWrapping;
     var material = new THREE.ShaderMaterial({
       vertexShader: BH_PASS_VS,
       fragmentShader: BH_PASS_FS,
@@ -718,6 +742,7 @@ function bhBuildPass() {
       uniforms: {
         iChannel0: { value: rt.texture },
         iChannel1: { value: textRt.texture },
+        iChannel2: { value: farRt.texture },
         uTextLens: { value: 1 },
         uCenter: { value: new THREE.Vector2(0.5, 0.5) },
         uSoft: { value: 3 },
@@ -757,6 +782,7 @@ function bhBuildPass() {
     quadScene.add(quad);
     blackHoleState.rt = rt;
     blackHoleState.textRt = textRt;
+    blackHoleState.farRt = farRt;
     blackHoleState.material = material;
     blackHoleState.quadScene = quadScene;
     blackHoleState.quadCamera = quadCamera;
@@ -786,6 +812,7 @@ function bhAlignPassSize() {
   if (w === blackHoleState.width && h === blackHoleState.height && scale === blackHoleState.passScale) return;
   blackHoleState.rt.setSize(w, h);
   if (blackHoleState.textRt) blackHoleState.textRt.setSize(w, h);
+  if (blackHoleState.farRt) blackHoleState.farRt.setSize(w, h);
   blackHoleState.width = w;
   blackHoleState.height = h;
   blackHoleState.passScale = scale;
@@ -900,9 +927,9 @@ function renderBlackHoleFrame() {
   var lyrics = (typeof bhLyrics !== 'undefined' && bhLyrics && bhLyrics.layer) ? bhLyrics.layer : null;
   var galaxy = (typeof bhGalaxy !== 'undefined' && bhGalaxy && bhGalaxy.group) ? bhGalaxy.group : null;
   try {
-    // 1. the world: the galaxy and the rows on the far half of the orbit. Those rows are behind the
-    //    hole, so they belong to the scene the lens gets to bend and the disc fog gets to cover.
-    if (lyrics) bhSetLyricSideVisibility(false);
+    // 1. the world with no lyric rows in it: the galaxy is what the lens bends and the disc fog
+    //    covers, and a row baked into that target would take the radial blur meant for the galaxy.
+    if (lyrics) bhSetLyricSideVisibility('none');
     renderer.setRenderTarget(blackHoleState.rt);
     renderer.render(scene, camera);
     // 2. the near half of the orbit, alone, from the same camera: these rows are between the eye
@@ -915,6 +942,17 @@ function renderBlackHoleFrame() {
       blackHoleState.textQuads++;
     } else {
       // Nothing to draw: clear it, or the pass would sample last frame's text.
+      renderer.clear();
+    }
+    // 3. the far half, alone, as its own channel: it is composited with the disc's own fog instead
+    //    of being baked into the galaxy, which is what buried it and what blurred it into a blob.
+    renderer.setRenderTarget(blackHoleState.farRt);
+    if (lyrics && bhSetLyricSideVisibility(false) > 0) {
+      if (galaxy) galaxy.visible = false;
+      renderer.render(scene, camera);
+      if (galaxy) galaxy.visible = true;
+      blackHoleState.farQuads++;
+    } else {
       renderer.clear();
     }
     if (lyrics) bhSetLyricSideVisibility(null);
@@ -1761,6 +1799,15 @@ function bhLyricArcWidth(width, radius, orbit) {
   return Math.min(stretched, ring);
 }
 
+// Which side of the hole a row is on, as a 0..1 blend: 0 is the near half of the orbit, 1 the far
+// half, and the band around the hole's own depth keeps both channels partly on. That band is what
+// removes the pop when a row crosses behind the hole: it does not switch channels in one frame.
+function bhLyricSideBlend(along, depth, band) {
+  var d = Number(depth) || 0;
+  var b = Math.max(1e-4, Number(band) || 0.3);
+  return bhClamp((Number(along) - (d - b)) / (2 * b), 0, 1);
+}
+
 // A row's drift through the disc, in world units along the disc normal: two incommensurable sines
 // with a phase of their own, and a deeper swing while it is falling. Pure, so the "rows must not
 // bob in lockstep" can be checked as numbers instead of by eye.
@@ -1989,29 +2036,75 @@ function bhLyricMotionState() {
   return { floatAmp: 0.4, enter: 0.28 };
 }
 
-// Rasterises one row onto its own canvas: the line and, under it, its translation. The text is
-// straight in the viewer's frame - the rows hang beside the hole, so an arc would only make them
-// harder to read - and the canvas is sized to the measured text so the plane carries no empty
-// margin that would shrink the letters.
+// Greedy wrap. A row is one sign, and a sign carrying a 40-character line cannot be fitted onto the
+// screen at a readable height: the whole row is scaled down to the frame width, which turns it into
+// a two-pixel strip and it disappears. Wrapping turns the line into a block; the number of lines
+// rides along in lineScale, and the placement makes the sign taller by that much so each line keeps
+// its size. Latin breaks at spaces, CJK breaks between characters.
+function bhWrapText(ctx, text, maxWidth, maxLines) {
+  var source = String(text || '');
+  var out = [];
+  var current = '';
+  var limit = Math.max(1, Math.round(Number(maxLines) || 1));
+  for (var i = 0; i < source.length; i++) {
+    var ch = source.charAt(i);
+    var candidate = current + ch;
+    if (current && ctx.measureText(candidate).width > maxWidth) {
+      var space = current.lastIndexOf(' ');
+      if (space > 0 && ch !== ' ') {
+        out.push(current.slice(0, space));
+        current = current.slice(space + 1) + ch;
+      } else {
+        out.push(current);
+        current = ch;
+      }
+      if (out.length >= limit) { current = ''; break; }
+    } else {
+      current = candidate;
+    }
+  }
+  if (current && out.length < limit) out.push(current);
+  if (!out.length) out.push('');
+  if (out.join('').length < source.length) {
+    var last = out[limit - 1];
+    while (last.length > 0 && ctx.measureText(last + '…').width > maxWidth) last = last.slice(0, -1);
+    out[limit - 1] = last + '…';
+  }
+  return out;
+}
+
+// Rasterises one row onto its own canvas: the line and, under it, its translation. The canvas is
+// sized to the measured text so the plane carries no empty margin that would shrink the letters.
 function bhDrawRowCanvas(row, item, sung, palette, motion) {
   var fontPx = bhLyricFontPx();
   var subPx = Math.round(fontPx * 0.62);
   var font = '700 ' + fontPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : '"JetBrains Mono","Microsoft YaHei",monospace');
   var subFont = '400 ' + subPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : 'monospace');
-  // Measure first, then size the canvas to the text: a plane that carries a mostly empty texture
-  // puts the letters about a pixel tall on screen.
   var measure = row.ctx;
-  measure.font = font;
-  var mainWidth = Math.max(fontPx * 2, measure.measureText(item.text).width || 0);
-  measure.font = subFont;
-  var subWidth = item.sub ? Math.max(0, measure.measureText(item.sub).width || 0) : 0;
   var pad = Math.max(4, fontPx * 0.35);
-  var canvasWidth = Math.max(fontPx * 4, Math.min(2048, Math.ceil(Math.max(mainWidth, subWidth) + pad * 2)));
-  // The translation band is reserved on every row, so the glyphs occupy the same share of the
-  // plane whether or not the line has a translation and the text does not change size line to line.
   var mainH = fontPx * 1.35;
   var subH = subPx * 1.6;
-  var canvasHeight = Math.ceil(mainH + subH + pad * 2);
+  var maxWidth = Math.min(1900, Math.max(fontPx * 10, 900));
+  measure.font = font;
+  var mainLines = bhWrapText(measure, item.text, maxWidth, 4);
+  measure.font = subFont;
+  var subLines = item.sub ? bhWrapText(measure, item.sub, maxWidth, 2) : [];
+  var textWidth = 0;
+  measure.font = font;
+  for (var li = 0; li < mainLines.length; li++) {
+    textWidth = Math.max(textWidth, measure.measureText(mainLines[li]).width || 0);
+  }
+  measure.font = subFont;
+  for (var si = 0; si < subLines.length; si++) {
+    textWidth = Math.max(textWidth, measure.measureText(subLines[si]).width || 0);
+  }
+  var canvasWidth = Math.max(fontPx * 4, Math.min(2048, Math.ceil(textWidth + pad * 2)));
+  // The translation band is reserved on every row, so the glyphs occupy the same share of the
+  // plane whether or not the line has a translation and the text does not change size line to line.
+  var subBands = Math.max(1, subLines.length);
+  var singleHeight = Math.ceil(mainH + subH + pad * 2);
+  var canvasHeight = Math.ceil(mainLines.length * mainH + subBands * subH + pad * 2);
+  row.lineScale = bhClamp(canvasHeight / singleHeight, 1, 2.8);
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
     row.canvas.width = canvasWidth;
     row.canvas.height = canvasHeight;
@@ -2027,11 +2120,16 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   var alpha = sung ? 1 : 0.72;
   ctx.font = font;
   ctx.fillStyle = bhLyricCss(colour, alpha);
-  ctx.fillText(item.text, width / 2, pad + mainH / 2);
-  if (item.sub) {
+  for (var mi = 0; mi < mainLines.length; mi++) {
+    ctx.fillText(mainLines[mi], width / 2, pad + (mi + 0.5) * mainH);
+  }
+  if (subLines.length) {
     ctx.font = subFont;
     ctx.fillStyle = bhLyricCss(palette.context, alpha * 0.72);
-    ctx.fillText(item.sub, width / 2, pad + mainH + subH / 2);
+    var subTop = pad + mainLines.length * mainH;
+    for (var sj = 0; sj < subLines.length; sj++) {
+      ctx.fillText(subLines[sj], width / 2, subTop + (sj + 0.5) * subH);
+    }
   }
   row.sung = sung;
 }
@@ -2251,11 +2349,18 @@ function bhPlaceLyrics(frame, dt) {
     var alongRow = (wx - camera.position.x) * fwd.x + (wy - camera.position.y) * fwd.y + (wz - camera.position.z) * fwd.z;
     // Near side of the orbit: it is between the eye and the hole, so it belongs in front of the
     // picture. Far side: it is behind the hole's shadow and the lens, so it belongs in the scene.
-    row.front = alongRow < depth;
+    // The near/far split is a blend, not a switch: around the hole's depth both channels carry the
+    // row at complementary opacities, so crossing behind the hole cannot pop in one frame.
+    var sideBand = Math.max(0.15, params.height * depth * tanHalf * 1.2);
+    row.sideBlend = bhLyricSideBlend(alongRow, depth, sideBand);
+    row.nearAlpha = 1 - row.sideBlend;
+    row.farAlpha = row.sideBlend;
+    row.front = row.sideBlend < 0.5;
     row.mesh.renderOrder = 60;
     // Sized against the hole's own depth: the front of the orbit is closer to the eye, so it is
     // drawn bigger by the perspective, and a line on the far side is smaller and hazier.
-    var worldH = params.height * depth * tanHalf * (current ? 1.12 : 0.95);
+    // A wrapped line is a taller sign, not four lines squeezed into the height of one.
+    var worldH = params.height * depth * tanHalf * (current ? 1.12 : 0.95) * (row.lineScale || 1);
     var rowAlong = Math.max(0.05, alongRow);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
@@ -2279,6 +2384,7 @@ function bhPlaceLyrics(frame, dt) {
     if (state.phase === 'read') opacity = current ? 1 : 0.85;
     if (state.phase === 'approach') opacity = state.alpha * (current ? 1 : 0.9);
     if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, horizonWorld);
+    row.baseOpacity = opacity;
     row.material.opacity = opacity;
   }
   return true;
@@ -2292,12 +2398,28 @@ function bhSetLyricSideVisibility(side) {
   var shown = 0;
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
-    if (!row || !row.mesh || row.itemIndex < 0 || !row.live) {
-      if (row && row.mesh) row.mesh.visible = false;
-      continue;
+    if (!row || !row.mesh) continue;
+    if (row.itemIndex < 0 || !row.live) { row.mesh.visible = false; continue; }
+    // Rows placed before the blend existed (and the tests' hand-made rows) fall back to the old
+    // binary split.
+    var nearAlpha = (row.nearAlpha === undefined || row.nearAlpha === null) ? (row.front ? 1 : 0) : row.nearAlpha;
+    var farAlpha = (row.farAlpha === undefined || row.farAlpha === null) ? (row.front ? 0 : 1) : row.farAlpha;
+    var base = (row.baseOpacity === undefined || row.baseOpacity === null)
+      ? (row.material && row.material.opacity !== undefined ? row.material.opacity : 1)
+      : row.baseOpacity;
+    var visible = true;
+    var alpha = 1;
+    if (side === 'none') {
+      visible = false;
+    } else if (side === true) {
+      alpha = nearAlpha;
+      visible = nearAlpha > 0.001;
+    } else if (side === false) {
+      alpha = farAlpha;
+      visible = farAlpha > 0.001;
     }
-    var visible = side === null || side === undefined ? true : (!!side === !!row.front);
     row.mesh.visible = visible;
+    if (row.material) row.material.opacity = base * alpha;
     if (visible) shown++;
   }
   return shown;

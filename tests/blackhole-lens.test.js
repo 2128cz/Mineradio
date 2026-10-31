@@ -341,7 +341,11 @@ function load(overrides) {
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
       clear() {},
-      setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
+      setRenderTarget(target) {
+        record.setTarget.push(target
+          ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : (target === sandbox.blackHoleState.farRt ? 'far-rt' : 'rt'))
+          : null);
+      },
       render(targetScene) {
         record.draws.push(targetScene === scene ? 'scene' : 'quad');
         record.seen.push({ scene: targetScene === scene, front: frontRow.mesh.visible, back: backRow.mesh.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
@@ -354,16 +358,20 @@ function load(overrides) {
   sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
   assert(sandbox.renderBlackHoleFrame() === true, 'the frame must run');
 
-  assert.deepStrictEqual(record.draws, ['scene', 'scene', 'quad'],
-    'world, near rows, then one quad: ' + JSON.stringify(record.draws));
-  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'both targets then the screen: ' + JSON.stringify(record.setTarget));
-  const [worldPass, textPass, quadPass] = record.seen;
-  assert(worldPass.front === false && worldPass.back === true && worldPass.galaxy === true,
-    'the first target is the galaxy plus the far rows, never the near ones');
+  assert.deepStrictEqual(record.draws, ['scene', 'scene', 'scene', 'quad'],
+    'world, near rows, far rows, then one quad: ' + JSON.stringify(record.draws));
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', 'far-rt', null],
+    'three targets then the screen: ' + JSON.stringify(record.setTarget));
+  const [worldPass, textPass, farPass, quadPass] = record.seen;
+  assert(worldPass.front === false && worldPass.back === false && worldPass.galaxy === true,
+    'the first target is the galaxy alone: a row baked into it would take the galaxy blur');
   assert(textPass.front === true && textPass.back === false && textPass.galaxy === false,
     'the second is the near rows alone');
+  assert(farPass.front === false && farPass.back === true && farPass.galaxy === false,
+    'the third is the far rows alone, in their own channel');
   assert(quadPass.scene === false && quadPass.autoClear === true, 'and the pass is one quad, clearing normally');
-  assert(sandbox.blackHoleState.textQuads === 1, 'the text render is counted: ' + sandbox.blackHoleState.textQuads);
+  assert(sandbox.blackHoleState.textQuads === 1 && sandbox.blackHoleState.farQuads === 1,
+    'both text renders are counted: ' + sandbox.blackHoleState.textQuads + '/' + sandbox.blackHoleState.farQuads);
   assert(frontRow.mesh.visible === true && backRow.mesh.visible === true,
     'after the frame both halves are visible again for the fallback render');
 
@@ -374,9 +382,18 @@ function load(overrides) {
     'iChannel1 must be the near-row target');
   assert(uniforms.iChannel0 && uniforms.iChannel0.value === sandbox.blackHoleState.rt.texture,
     'iChannel0 must be the scene target');
+  assert(uniforms.iChannel2 && uniforms.iChannel2.value === sandbox.blackHoleState.farRt.texture,
+    'iChannel2 must be the far-row target');
   assert(uniforms.uTextLens, 'the near-field lens amount must reach the shader');
-  // The far rows bend because the scene texture is sampled back through the bend near the hole;
-  // the near rows are in front, so they are pasted straight over the picture.
+  // The far rows have their own channel so they take a gentler bend, are masked by the shadow and
+  // are only veiled by the fog - a floor of visibility instead of being swallowed by the slab.
+  assert(/vec4 farText = texture2D\(iChannel2, clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\) \* 0\.6, 0\.0, 1\.0\)\);/.test(source),
+    'the far rows must be sampled through a gentler lens, not the galaxy bend');
+  assert(/float farFade = skyMask \* mix\(0\.42, 1\.0, transmit\);/.test(source),
+    'the fog may veil the far rows but must not be allowed to erase them');
+  assert(/color = mix\(color, farText\.rgb, clamp\(farText\.a \* farFade, 0\.0, 1\.0\)\);/.test(source),
+    'and they have to be composited before the near rows');
+  // The near rows are in front, so they are pasted straight over the picture.
   assert(/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(source),
     'the near rows must be composited over the shadowed picture');
   assert(/float nearMask = 1\.0 - smoothstep\(uShadowUv \* 1\.05, uShadowUv \* 2\.6, qlen\);/.test(source),
@@ -391,7 +408,8 @@ function load(overrides) {
   record.setTarget.length = 0;
   sandbox.renderBlackHoleFrame();
   assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'no text means no text pass');
-  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'but the target is still cleared for the channel');
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', 'far-rt', null],
+    'but both text targets are still cleared for their channels');
   sandbox.bhLyrics.layer = lyricsLayer;
   console.log('channels: ' + record.draws.length + ' draws without text, world+front rows+quad with it; iChannel1 bound to the near rows');
 }
@@ -474,7 +492,11 @@ function load(overrides) {
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
         clear() {},
-      setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
+      setRenderTarget(target) {
+        record.setTarget.push(target
+          ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : (target === sandbox.blackHoleState.farRt ? 'far-rt' : 'rt'))
+          : null);
+      },
       render(targetScene) { record.draws.push(targetScene === scene ? 'scene' : 'quad'); }
     }
   });
@@ -484,7 +506,8 @@ function load(overrides) {
   const ok = sandbox.renderBlackHoleFrame();
   assert(ok === true, 'the pass must run when the hole is in front of the camera');
   assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'the scene goes in, one quad comes out');
-  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'both targets, then the screen: ' + JSON.stringify(record.setTarget));
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', 'far-rt', null],
+    'three targets, then the screen: ' + JSON.stringify(record.setTarget));
   const status = sandbox.blackHoleStatus();
   assert(status.rt && status.rt[0] > 0, 'the target must exist after the first frame');
   assert(status.uv && Math.abs(status.uv[0] - 0.5) < 0.2, 'the hole projects near the middle: ' + JSON.stringify(status.uv));
@@ -566,11 +589,14 @@ function load(overrides) {
   sandbox.renderBlackHoleFrame();
   const rtId = sandbox.blackHoleState.rt ? sandbox.blackHoleState.rt.id : null;
   const textRtId = sandbox.blackHoleState.textRt ? sandbox.blackHoleState.textRt.id : null;
+  const farRtId = sandbox.blackHoleState.farRt ? sandbox.blackHoleState.farRt.id : null;
   sandbox.applyBlackHolePresetNow(15, 14);
   assert(rtId !== null && record.disposed.indexOf('rt' + rtId) >= 0 && record.disposed.indexOf('material') >= 0,
     'disposing the pass must release the scene target and the material: ' + JSON.stringify(record.disposed));
   assert(textRtId !== null && record.disposed.indexOf('rt' + textRtId) >= 0,
     'and the text target too: ' + JSON.stringify(record.disposed));
+  assert(farRtId !== null && record.disposed.indexOf('rt' + farRtId) >= 0,
+    'and the far-row target: ' + JSON.stringify(record.disposed));
   assert(sandbox.blackHoleState.rt === null, 'the target must be gone after leaving');
   console.log('pass: scene->rt->quad, target follows the drawing buffer (' + status.rt.join('x') + '), fallback counted, memory released');
 }
@@ -1006,12 +1032,25 @@ function load(overrides) {
 
   // The split is exactly what the renderer uses to choose a target, and it follows each row's own
   // near/far flag rather than a fixed count.
-  const near = rows.filter(function (r) { return r.live && r.front; }).length;
-  const far = rows.filter(function (r) { return r.live && !r.front; }).length;
+  const near = rows.filter(function (r) { return r.live && r.nearAlpha > 0.001; }).length;
+  const far = rows.filter(function (r) { return r.live && r.farAlpha > 0.001; }).length;
+  const liveCount = rows.filter(function (r) { return r.live; }).length;
   assert(near >= 2, 'the approaching and falling lines are on the near half at this moment: ' + near);
   assert(sandbox.bhSetLyricSideVisibility(true) === near, 'near half: ' + near + ' rows');
   assert(sandbox.bhSetLyricSideVisibility(false) === far, 'far half: ' + far + ' rows');
-  assert(sandbox.bhSetLyricSideVisibility(null) === near + far, 'the fallback render gets every live row back');
+  assert(sandbox.bhSetLyricSideVisibility(null) === liveCount, 'the fallback render gets every live row back');
+  assert(sandbox.bhSetLyricSideVisibility('none') === 0 && rows.every(function (r) { return !r.mesh.visible; }),
+    'the scene target must not contain a lyric row at all: that is what the galaxy blur would smear');
+  // The near/far hand-over is a depth blend, not a one-frame switch: it is a pop otherwise.
+  assert(Math.abs(sandbox.bhLyricSideBlend(6.6, 6.6, 0.3) - 0.5) < 1e-9, 'half way across the band is half and half');
+  assert(sandbox.bhLyricSideBlend(6.2, 6.6, 0.3) === 0, 'well in front is the near channel');
+  assert(sandbox.bhLyricSideBlend(7.0, 6.6, 0.3) === 1, 'well behind is the far channel');
+  assert(/row.sideBlend = bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(source),
+    'the placement has to write the blend');
+  rows.filter(function (r) { return r.live; }).forEach(function (r) {
+    assert(Math.abs(r.nearAlpha + r.farAlpha - 1) < 1e-9,
+      'the near/far alphas have to be complementary: ' + r.nearAlpha + '+' + r.farAlpha);
+  });
 
   // The row is an arch of the orbit: its radius of curvature is its distance to the hole, so the
   // middle is tangent, the ends bend inward, and a closer row bends harder.
@@ -1059,6 +1098,24 @@ function load(overrides) {
     'the placement has to bend each row to its own radius');
   assert(/var lo = sung < 0 \? 0 : Math\.max\(0, sung - 4\);/.test(source),
     'the window has to keep four lines of history');
+  // A long line is wrapped into a block instead of being fitted to the screen width, which made it
+  // a two-pixel strip (and read as "the lyrics stopped showing").
+  const measurer = { measureText: function (s) { return { width: String(s).length * 10 }; } };
+  const wrapped = sandbox.bhWrapText(measurer, 'x'.repeat(50), 100, 4);
+  assert(wrapped.length === 4, 'a 50-character line at 10px per character must wrap into four lines: ' + wrapped.length);
+  assert(wrapped[wrapped.length - 1].slice(-1) === '…', 'and the tail has to be marked, not silently dropped');
+  const shortWrap = sandbox.bhWrapText(measurer, 'short', 100, 4);
+  assert(shortWrap.length === 1 && shortWrap[0] === 'short', 'a short line stays one line');
+  const wrapCtx = {
+    font: '', textAlign: '', textBaseline: '', fillStyle: '',
+    measureText: function (s) { return { width: String(s).length * 10 }; },
+    clearRect: function () {}, fillText: function () {}
+  };
+  const wrapRow = { canvas: { width: 8, height: 8, getContext: function () { return wrapCtx; } }, ctx: wrapCtx };
+  sandbox.bhDrawRowCanvas(wrapRow, { text: 'x'.repeat(100), sub: '' }, false, sandbox.bhLyricPaletteState(), { floatAmp: 0.4, enter: 0.28 });
+  assert(wrapRow.lineScale > 1.2, 'a wrapped row has to grow in height: ' + wrapRow.lineScale);
+  assert(wrapRow.canvas.width <= 2048, 'and the canvas has to stay inside a texture: ' + wrapRow.canvas.width);
+  assert(/\* \(row\.lineScale \|\| 1\)/.test(source), 'the placement has to use the wrapped-row height');
   assert(/var arcTarget = params\.orbit \* 0\.46;/.test(source),
     'the arch has to be wide enough to see, not a 40 cm line on a 2.4 m orbit');
   // Rows drift through the disc out of step with each other, and falling rows swing harder.
