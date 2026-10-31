@@ -198,18 +198,16 @@ function load(overrides) {
     + ', shadow radius ' + silhouette.cap.toFixed(4) + ' horizon radii');
 }
 
-// ------------------------------------------- the text is composited over the finished picture
+// --------------------------------------------- the lyric layer is a channel of the pass now
 //
-// The shadow is painted in the scene pass, so anything inside it is multiplied to black - which
-// made the hole cover the lyrics no matter where the row was. The text therefore renders into its
-// own target, is bent there without the shadow, and is added on top afterwards. This block checks
-// the order of the draws and the fact that the shadow is not part of the text pass at all.
+// The text is drawn from the same camera into its own target and handed to the shader as iChannel1,
+// so it is composited inside mainImage: bent by the same field far from the hole, kept where it was
+// drawn near the rim, and never painted out by the shadow.
 {
   const record = { draws: [], seen: [], rtSizes: [], disposed: [], setTarget: [] };
   const scene = { name: 'app-scene' };
   const lyricsLayer = { isLyrics: true, visible: true, children: [] };
-  const galaxyGroup = { isGalaxy: true, visible: true, children: [],
-    position: { set: function () {} }, quaternion: { copy: function () { return this; } } };
+  const galaxyGroup = { isGalaxy: true, visible: true, children: [], position: { set: function () {} }, quaternion: { copy: function () { return this; } } };
   const sandbox = load({
     THREE: makeThree(record),
     camera: makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9),
@@ -219,8 +217,8 @@ function load(overrides) {
       autoClear: true,
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+        clear() {},
       setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
-      // Three would render whatever is visible; record what was visible at that moment instead.
       render(targetScene) {
         record.draws.push(targetScene === scene ? 'scene' : 'quad');
         record.seen.push({ scene: targetScene === scene, lyrics: lyricsLayer.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
@@ -230,26 +228,40 @@ function load(overrides) {
   sandbox.bhLyrics.layer = lyricsLayer;
   sandbox.bhGalaxy.group = galaxyGroup;
   sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
-  assert(sandbox.renderBlackHoleFrame() === true, 'the two-pass frame must run');
+  assert(sandbox.renderBlackHoleFrame() === true, 'the frame must run');
 
-  assert.deepStrictEqual(record.draws, ['scene', 'quad', 'scene', 'quad'],
-    'scene, lens, text, composite: ' + JSON.stringify(record.draws));
-  const [scenePass, lensPass, textPass, compositePass] = record.seen;
-  assert(scenePass.lyrics === false, 'the scene pass must not contain the text (it would be shadowed there)');
-  assert(scenePass.galaxy === true, 'the scene pass is the field');
-  assert(lensPass.scene === false, 'the second draw is the lens quad, not the scene');
-  assert(textPass.scene === true && textPass.galaxy === false, 'the text pass renders the text alone');
-  assert(textPass.lyrics === true, 'and the text is visible in it');
-  assert(compositePass.autoClear === false, 'the composite must not clear the picture it is drawn over');
-  assert(sandbox.blackHoleState.textQuads === 1, 'the text composite is counted: ' + sandbox.blackHoleState.textQuads);
-  assert(lyricsLayer.visible === true && galaxyGroup.visible === true, 'both layers must be back on when the frame ends');
+  assert.deepStrictEqual(record.draws, ['scene', 'scene', 'quad'],
+    'galaxy, lyrics, then one quad: ' + JSON.stringify(record.draws));
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'both targets then the screen: ' + JSON.stringify(record.setTarget));
+  const [galaxyPass, textPass, quadPass] = record.seen;
+  assert(galaxyPass.lyrics === false && galaxyPass.galaxy === true, 'the first target is the galaxy without the text');
+  assert(textPass.lyrics === true && textPass.galaxy === false, 'the second is the text alone');
+  assert(quadPass.scene === false && quadPass.autoClear === true, 'and the pass is one quad, clearing normally');
+  assert(sandbox.blackHoleState.textQuads === 1, 'the text render is counted: ' + sandbox.blackHoleState.textQuads);
 
-  // Without a lyric layer the frame is the single pass it was before.
+  // The binding is the proof: the pass material reads the lyric target as a channel, not as a
+  // texture pasted over its output.
+  const uniforms = sandbox.blackHoleState.material.uniforms;
+  assert(uniforms.iChannel1 && uniforms.iChannel1.value === sandbox.blackHoleState.textRt.texture,
+    'iChannel1 must be the lyric target');
+  assert(uniforms.iChannel0 && uniforms.iChannel0.value === sandbox.blackHoleState.rt.texture,
+    'iChannel0 must be the galaxy target');
+  assert(uniforms.uTextLens, 'the bend amount must reach the shader');
+  // The composite and the rim damping are shader text: the channel test above proves the binding,
+  // these prove what the shader does with it.
+  assert(/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(source),
+    'the lyric channel must be composited inside the pass, over the shadowed picture');
+  assert(/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(source),
+    'the text bend must fade at the rim, or a row crossing the hole is torn off its own spot');
+  // Without a lyric layer the text target is cleared rather than left holding last frame.
   sandbox.bhLyrics.layer = null;
   record.draws.length = 0;
+  record.setTarget.length = 0;
   sandbox.renderBlackHoleFrame();
-  assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'no text means no second pass');
-  console.log('text pass: ' + record.draws.length + ' draws without text, 4 with; composite autoClear off, shadow absent');
+  assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'no text means no text pass');
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'but the target is still cleared for the channel');
+  sandbox.bhLyrics.layer = lyricsLayer;
+  console.log('channels: ' + record.draws.length + ' draws without text, galaxy+text+quad with it; iChannel1 bound to the lyric target');
 }
 
 // ---------------------------------------- swallowed by the row, not painted over by the hole
@@ -270,11 +282,6 @@ function load(overrides) {
     assert(a <= last + 1e-12, 'the fade must be monotone on the way in');
     last = a;
   }
-  // The text shader must not carry the shadow: that is the whole point of the second pass.
-  const textShader = sandbox.BH_TEXT_FS;
-  assert(textShader && !/swallowed/.test(textShader), 'the text pass must not multiply by the shadow');
-  assert(!/uDeflect/.test(textShader) && !/uCenter/.test(textShader),
-    'the text is composited in place: bending it put a centre row 70px out at the rim');
   console.log('swallow: fade 1.4r=' + outside + ', 0.6r=' + deep + ', 0.35r=' + middle.toFixed(2) + ', 0.1r=' + centre);
 }
 
@@ -332,7 +339,8 @@ function load(overrides) {
     renderer: {
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
-      setRenderTarget(target) { record.setTarget.push(target ? 'rt' : null); },
+        clear() {},
+      setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
       render(targetScene) { record.draws.push(targetScene === scene ? 'scene' : 'quad'); }
     }
   });
@@ -342,7 +350,7 @@ function load(overrides) {
   const ok = sandbox.renderBlackHoleFrame();
   assert(ok === true, 'the pass must run when the hole is in front of the camera');
   assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'the scene goes in, one quad comes out');
-  assert.deepStrictEqual(record.setTarget, ['rt', null], 'the target is entered and left again');
+  assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'both targets, then the screen: ' + JSON.stringify(record.setTarget));
   const status = sandbox.blackHoleStatus();
   assert(status.rt && status.rt[0] > 0, 'the target must exist after the first frame');
   assert(status.uv && Math.abs(status.uv[0] - 0.5) < 0.2, 'the hole projects near the middle: ' + JSON.stringify(status.uv));
@@ -398,6 +406,7 @@ function load(overrides) {
       renderer: {
         drawingSize: { x: 1600, y: 900 },
         getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+        clear() {},
         setRenderTarget() {},
         // three reports a failed link through console.error rather than by throwing, so the fake
         // renderer has to raise it the same way, inside the page context.
@@ -590,6 +599,7 @@ function load(overrides) {
     renderer: {
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+        clear() {},
       getPixelRatio() { return 1; }
     }
   });

@@ -1649,16 +1649,14 @@ function runBlackHolePresetCheck() {
   if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric arc too');
   // The text is a second pass over the finished picture: the shadow lives in the first pass, so a
   // single-pass text would be painted over by the hole no matter where the row is.
-  if (!/var BH_TEXT_FS = `/.test(text)) fail('the text needs its own lens shader (bend, no shadow)');
-  const textShader = text.slice(text.indexOf('var BH_TEXT_FS = `'));
-  if (/swallowed/.test(textShader.slice(0, textShader.indexOf('`;')))) {
-    fail('the text pass must not multiply by the shadow: the hole would cover the lyrics again');
-  }
+  if (!/uTextLens/.test(text)) fail('the text bend amount has to reach the shader');
+  // The lyric layer is a channel of the pass: rendered from the same camera into its own target and
+  // sampled inside mainImage, bent by the same field and composited over the shadowed picture.
   if (!/renderer\.setRenderTarget\(blackHoleState\.textRt\)/.test(text)) fail('the text must render into its own target');
-  if (/uCenter/.test(text.slice(text.indexOf('var BH_TEXT_FS = `'), text.indexOf('`;', text.indexOf('var BH_TEXT_FS = `'))))) {
-    fail('the text composite must be in place: a lensed text layer moves rows off their own position');
-  }
-  if (!/renderer\.autoClear = false/.test(text)) fail('the composite must not clear the picture it is drawn over');
+  if (!/iChannel1: \{ value: textRt\.texture \}/.test(text)) fail('the lyric target must be bound as iChannel1 of the pass');
+  if (!/texture2D\(iChannel1, textUv\)/.test(text)) fail('the shader must sample the lyric channel');
+  if (!/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(text)) fail('the text must be composited inside the pass, over the shadow');
+  if (!/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(text)) fail('the text bend has to fall off at the rim so a row stays readable');
   if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {

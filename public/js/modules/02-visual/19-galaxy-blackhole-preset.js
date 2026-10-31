@@ -58,6 +58,8 @@ var BH_TUNING_SCHEMA = {
   discTilt: { def: 14, min: -60, max: 60, kind: 'deg', rebuild: 'live' },
   discGain: { def: 0.85, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   marchSteps: { def: 110, min: 24, max: 256, kind: 'count', rebuild: 'live' },
+  // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
+  textLens: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   fovDeg: { def: 58, min: 35, max: 92, kind: 'deg', rebuild: 'live' },
@@ -322,7 +324,7 @@ void main() {
 // through it has to be checked before it goes in.
 var BH_PASS_FS = shadertoyFragment(
   [
-    'uniform sampler2D uSrc;',
+    'uniform float uTextLens;',
     'uniform vec3 uCamPos;',
     'uniform vec3 uCamFwd;',
     'uniform vec3 uCamRight;',
@@ -376,6 +378,13 @@ var BH_PASS_FS = shadertoyFragment(
     '    prevSide = side;',
     '  }',
     '',
+    '  // Where this ray would land on the text layer if nothing bent it, and where it actually went.',
+    '  vec3 outDir = normalize(vel);',
+    '  float cosF = dot(outDir, uCamFwd);',
+    '  vec2 off = vec2(dot(outDir, uCamRight), dot(outDir, uCamUp)) / max(0.001, cosF * uTanHalf);',
+    '  vec2 lensedUv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
+    '  float rFinal = length(pos);',
+    '',
     '  vec3 color = vec3(0.0);',
     '  if (captured) {',
     '    color = vec3(0.0);',
@@ -389,24 +398,28 @@ var BH_PASS_FS = shadertoyFragment(
     '    vec3 tint = mix(vec3(1.0, 0.52, 0.20), vec3(1.0, 0.96, 0.86), heat);',
     '    color = tint * (0.22 + 1.9 * heat) * max(0.10, doppler) * uDiscGain;',
     '  } else {',
-    '    // Escaped: sample the galaxy along the direction the ray left in.',
-    '    vec3 outDir = normalize(vel);',
-    '    float cosF = dot(outDir, uCamFwd);',
-    '    vec2 off = vec2(dot(outDir, uCamRight), dot(outDir, uCamUp)) / max(0.001, cosF * uTanHalf);',
-    '    vec2 suv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
-    '    vec4 scene = texture2D(uSrc, clamp(suv, 0.0, 1.0));',
-    '    float inside = step(0.0, suv.x) * step(suv.x, 1.0) * step(0.0, suv.y) * step(suv.y, 1.0);',
+    '    // Escaped: the galaxy is sampled along the direction the ray actually left in.',
+    '    vec4 scene = texture2D(iChannel0, clamp(lensedUv, 0.0, 1.0));',
+    '    float inside = step(0.0, lensedUv.x) * step(lensedUv.x, 1.0) * step(0.0, lensedUv.y) * step(lensedUv.y, 1.0);',
     '    color = scene.rgb * inside;',
     '  }',
     '',
     '  // Photon ring: light that skirted the horizon lands in a thin bright rim just outside it.',
-    '  float rFinal = length(pos);',
     '  float rim = exp(-pow((rFinal - 1.32) / 0.11, 2.0));',
     '  color += uRing * rim * vec3(1.0, 0.87, 0.64) * (0.6 + 0.4 * uLevel);',
+    '',
+    '  // The lyric layer is a channel of this shader: it is drawn from the same camera into its own',
+    '  // target and arrives here as iChannel1. Far from the hole it is sampled where the bent ray',
+    '  // lands; at the rim it stays where it was drawn, so a line crossing the shadow is still',
+    '  // readable and its own alpha does the fading. Composited over, not pasted after the pass.',
+    '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
+    '  vec2 textUv = clamp(mix(uv, lensedUv, clamp(uTextLens, 0.0, 1.0) * closeness), 0.0, 1.0);',
+    '  vec4 text = texture2D(iChannel1, textUv);',
+    '  color = color * (1.0 - text.a) + text.rgb;',
     '  fragColor = vec4(color, 1.0);',
     '}'
   ].join('\n'),
-  { channels: 0 }
+  { channels: 2 }
 );
 
 // The text is composited over the finished picture, so the hole can never paint over it: the
@@ -414,21 +427,7 @@ var BH_PASS_FS = shadertoyFragment(
 // finished. What is left of the lens for the text is the bend itself - no shadow, no ring, no sky -
 // so a line crossing the rim is stretched along it instead of being eaten by it. Being swallowed is
 // the row's own doing: it shrinks into the centre and fades out at the shadow radius.
-var BH_TEXT_FS = `
-precision highp float;
 
-varying vec2 vUv;
-
-uniform sampler2D uSrc;
-
-// In place: the text is a foreground layer, so it is composited where its rows were drawn. Running
-// it through the lens put a row at the centre 70px out to the rim, and a row on its way in has to
-// stay readable until it fades - being eaten is the row's own alpha, not the shadow and not the
-// bend.
-void main() {
-  gl_FragColor = texture2D(uSrc, vUv);
-}
-`;
 
 // ---------------------------------------------------------------- the pass
 //
@@ -440,7 +439,6 @@ var blackHoleState = {
   active: false,
   rt: null,
   textRt: null,
-  textMaterial: null,
   textQuads: 0,
   quadScene: null,
   quadCamera: null,
@@ -464,7 +462,6 @@ function bhDisposePass() {
   if (blackHoleState.rt && blackHoleState.rt.dispose) blackHoleState.rt.dispose();
   if (blackHoleState.textRt && blackHoleState.textRt.dispose) blackHoleState.textRt.dispose();
   if (blackHoleState.material && blackHoleState.material.dispose) blackHoleState.material.dispose();
-  if (blackHoleState.textMaterial && blackHoleState.textMaterial.dispose) blackHoleState.textMaterial.dispose();
   if (blackHoleState.quadScene) {
     for (var i = 0; i < blackHoleState.quadScene.children.length; i++) {
       var child = blackHoleState.quadScene.children[i];
@@ -474,7 +471,6 @@ function bhDisposePass() {
   }
   blackHoleState.rt = null;
   blackHoleState.textRt = null;
-  blackHoleState.textMaterial = null;
   blackHoleState.material = null;
   blackHoleState.quadScene = null;
   blackHoleState.quadCamera = null;
@@ -526,7 +522,9 @@ function bhBuildPass() {
       depthWrite: false,
       transparent: true,
       uniforms: {
-        uSrc: { value: rt.texture },
+        iChannel0: { value: rt.texture },
+        iChannel1: { value: textRt.texture },
+        uTextLens: { value: 0.75 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
         iFrame: { value: 0 },
@@ -550,32 +548,13 @@ function bhBuildPass() {
         uLevel: { value: 0 }
       }
     });
-    var textMaterial = new THREE.ShaderMaterial({
-      vertexShader: BH_PASS_VS,
-      fragmentShader: BH_TEXT_FS,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-      // The text is added to the finished picture: additive keeps a glow around letters and cannot
-      // darken the scene, which is exactly what "drawn in front of the hole" means here.
-      blending: THREE.AdditiveBlending,
-      uniforms: {
-        uSrc: { value: textRt.texture }
-      }
-    });
     var quadScene = new THREE.Scene();
     var quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     var quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
     quad.frustumCulled = false;
-    var textQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), textMaterial);
-    textQuad.frustumCulled = false;
-    textQuad.visible = false;
     quadScene.add(quad);
-    quadScene.add(textQuad);
     blackHoleState.rt = rt;
     blackHoleState.textRt = textRt;
-    blackHoleState.textMaterial = textMaterial;
-    blackHoleState.textQuads = 0;
     blackHoleState.material = material;
     blackHoleState.quadScene = quadScene;
     blackHoleState.quadCamera = quadCamera;
@@ -637,6 +616,7 @@ function bhSyncLens(frame) {
   u.uSpin.value = bhClamp(bhParam('spin'), -1, 1);
   u.uRing.value = bhClamp(bhParam('ringGlow'), 0, 2);
   u.uLevel.value = blackHoleState.level;
+  if (u.uTextLens) u.uTextLens.value = bhClamp(bhParam('textLens'), 0, 1);
   if (u.iResolution) u.iResolution.value.set(blackHoleState.width || 1, blackHoleState.height || 1, 1);
   if (u.iFrame) u.iFrame.value = (u.iFrame.value + 1) % 100000;
 }
@@ -706,43 +686,35 @@ function renderBlackHoleFrame() {
   var shaderErrors = [];
   var quads = blackHoleState.quadScene ? blackHoleState.quadScene.children : [];
   var screenQuad = quads[0];
-  var textQuad = quads[1];
   var lyrics = (typeof bhLyrics !== 'undefined' && bhLyrics && bhLyrics.layer) ? bhLyrics.layer : null;
   var galaxy = (typeof bhGalaxy !== 'undefined' && bhGalaxy && bhGalaxy.group) ? bhGalaxy.group : null;
   var lyricsWereVisible = lyrics ? lyrics.visible : false;
   try {
-    // 1. the scene without the text, through the lens (shadow, ring, sky)
+    // 1. the galaxy, without the text
     if (lyrics) lyrics.visible = false;
     renderer.setRenderTarget(blackHoleState.rt);
     renderer.render(scene, camera);
     if (lyrics) lyrics.visible = lyricsWereVisible;
+    // 2. the text alone, from the same camera. The pass samples this target as iChannel1, so the
+    //    lyrics are an input of the shader rather than a layer pasted over its output.
+    renderer.setRenderTarget(blackHoleState.textRt);
+    if (lyrics && lyricsWereVisible) {
+      if (galaxy) galaxy.visible = false;
+      renderer.render(scene, camera);
+      if (galaxy) galaxy.visible = true;
+      blackHoleState.textQuads++;
+    } else {
+      // Nothing to draw: clear it, or the pass would sample last frame's text.
+      renderer.clear();
+    }
     renderer.setRenderTarget(null);
     if (screenQuad) screenQuad.visible = true;
-    if (textQuad) textQuad.visible = false;
     if (firstDraw) {
       shaderErrors = bhCaptureShaderErrors(function () {
         renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
       });
     } else {
       renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
-    }
-    // 2. the text alone, bent but never shadowed, added on top of that picture - so the hole can
-    //    never cover a line: the layer is composited after the shadow has already been painted.
-    if (lyrics && lyricsWereVisible) {
-      if (galaxy) galaxy.visible = false;
-      renderer.setRenderTarget(blackHoleState.textRt);
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(null);
-      if (galaxy) galaxy.visible = true;
-      if (screenQuad) screenQuad.visible = false;
-      if (textQuad) textQuad.visible = true;
-      var autoClear = renderer.autoClear;
-      renderer.autoClear = false;
-      renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
-      renderer.autoClear = autoClear;
-      if (screenQuad) screenQuad.visible = true;
-      if (textQuad) textQuad.visible = false;
-      blackHoleState.textQuads++;
     }
   } catch (error) {
     blackHoleState.error = String((error && error.message) || error);

@@ -188,6 +188,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhdiscTilt', '吸积盘倾角', '银河黑洞 吸积盘 倾角 抬头 俯视 横'),
         fxConsoleItem('fx-bhdiscGain', '吸积盘亮度', '银河黑洞 吸积盘 亮度 盘'),
         fxConsoleItem('fx-bhmarchSteps', '光线步数', '银河黑洞 光线 步数 精度 性能 积分'),
+        fxConsoleItem('fx-bhtextLens', '歌词弯折度', '银河黑洞 歌词 弯折 透镜 通道 文字'),
         fxConsoleItem('fx-bhskyStars', '星空密度', '银河黑洞 星空 星星 背景'),
         fxConsoleItem('fx-bhskyBand', '银河光带', '银河 光带 星云 背景'),
         fxConsoleItem('fx-bhfovDeg', '视锥角度', '银河黑洞 视锥 视野 透视 近大远小 焦距'),
