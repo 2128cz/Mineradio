@@ -1638,9 +1638,10 @@ function runBlackHolePresetCheck() {
     if (!pattern.test(text)) fail('the lyric arc layer is incomplete: ' + pattern);
   }
   const lyricRadius = Number((text.match(/lyricRadius: \{ def: (-?[\d.]+)/) || [])[1]);
-  const fieldRadius = Number((text.match(/galaxyRadius: \{ def: (-?[\d.]+)/) || [])[1]);
-  if (!(lyricRadius > fieldRadius)) {
-    fail(`the lyric arc radius (${lyricRadius}) must stay outside the galaxy radius (${fieldRadius})`);
+  const massRadius = Number((text.match(/mass: \{ def: (-?[\d.]+)/) || [])[1]);
+  const shadowScale = Number((text.match(/shadowScale: \{ def: (-?[\d.]+)/) || [])[1]);
+  if (!(lyricRadius > massRadius * shadowScale)) {
+    fail(`the lyric arc radius (${lyricRadius}) must stay outside the shadow (${massRadius * shadowScale})`);
   }
   if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric arc too');
   // The text is a second pass over the finished picture: the shadow lives in the first pass, so a

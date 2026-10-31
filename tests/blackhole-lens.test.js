@@ -206,6 +206,43 @@ function load(overrides) {
   console.log('plunge: d0=' + d0 + ' speed ' + speedEarly.toFixed(2) + ' -> ' + speedLate.toFixed(2) + ' at the end');
 }
 
+// ------------------------------- the hole is a scene object, not a sticker on the lens
+//
+// The first version placed the hole relative to the camera and sized the shadow in viewport units,
+// so dragging or zooming the camera left it exactly where it was and exactly as big: "the size looks
+// fixed, it is not in world coordinates". These arms are that complaint.
+{
+  const near = load({ camera: makeCamera({ x: 0, y: 0.5, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9), fx: { preset: 15 } });
+  const far = load({ camera: makeCamera({ x: 0, y: 0.5, z: 13.2 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9), fx: { preset: 15 } });
+  const nearFrame = near.bhComputeFrame();
+  const farFrame = far.bhComputeFrame();
+  assert(nearFrame && farFrame, 'both frames must project');
+  const ratio = nearFrame.uvShadow / farFrame.uvShadow;
+  assert(Math.abs(ratio - 2) < 0.02, 'twice the distance must halve the shadow in uv, got ' + ratio.toFixed(3));
+
+  // Same camera distance, wider frustum: the hole gets smaller in uv as well, because what is fixed
+  // is its size in the scene.
+  const wide = load({ camera: makeCamera({ x: 0, y: 0.5, z: 6.6 }, { x: 0, y: 0, z: -1 }, 92, 16 / 9), fx: { preset: 15 } });
+  const wideFrame = wide.bhComputeFrame();
+  assert(wideFrame.uvShadow < nearFrame.uvShadow * 0.75,
+    'a wider fov must shrink the hole: ' + wideFrame.uvShadow.toFixed(3) + ' vs ' + nearFrame.uvShadow.toFixed(3));
+
+  // Moving the camera sideways moves the hole across the screen instead of keeping it centred.
+  const shifted = load({ camera: makeCamera({ x: 2.5, y: 0.5, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9), fx: { preset: 15 } });
+  const shiftedFrame = shifted.bhComputeFrame();
+  assert(Math.abs(nearFrame.uv.u - 0.5) < 0.02, 'looking down the axis puts the hole in the middle: ' + nearFrame.uv.u);
+  assert(shiftedFrame.uv.u < nearFrame.uv.u - 0.15,
+    'moving the camera right must move the hole left on screen: ' + shiftedFrame.uv.u.toFixed(3));
+
+  // And the knobs are lengths in the scene: doubling the mass doubles the shadow.
+  const fatter = load({ camera: makeCamera({ x: 0, y: 0.5, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9), fx: { preset: 15 } });
+  fatter.blackHoleTuning = { mass: near.bhParam('mass') * 2 };
+  const fatterFrame = fatter.bhComputeFrame();
+  assert(Math.abs(fatterFrame.uvShadow / nearFrame.uvShadow - 2) < 0.02, 'mass is a world radius: doubling it doubles the shadow');
+  console.log('world hole: shadow uv ' + nearFrame.uvShadow.toFixed(3) + ' at 6.6u, ' + farFrame.uvShadow.toFixed(3)
+    + ' at 13.2u, ' + wideFrame.uvShadow.toFixed(3) + ' at fov 92; camera right 2.5 -> hole u ' + shiftedFrame.uv.u.toFixed(3));
+}
+
 // ------------------------------------------- the text is composited over the finished picture
 //
 // The shadow is painted in the scene pass, so anything inside it is multiplied to black - which
@@ -673,10 +710,14 @@ function load(overrides) {
   assert(Math.abs(back.angle) > Math.abs(front.angle), 'and fan out along the rim');
   assert(Math.abs(front.radius - params.radius) < 1e-9, 'the sung row sits on the arc radius');
 
-  // The arc has to sit outside the field: the text is "around the galaxy", not inside it.
-  const fieldRadius = sandbox.bhParam('galaxyRadius');
-  assert(params.radius > fieldRadius, 'the lyric arc radius must stay outside the galaxy radius ('
-    + params.radius + ' against ' + fieldRadius + ')');
+  // The arc has to sit outside the shadow (or the rows are placed already eaten) and inside the
+  // frame (or nothing is on screen). The galaxy is wider than the frame now, so "outside the field"
+  // is not the invariant that matters.
+  const arcFrame = sandbox.bhComputeFrame();
+  const shadowWorld = arcFrame.horizonWorld * sandbox.bhParam('shadowScale');
+  assert(params.radius > shadowWorld, 'the lyric arc must sit outside the shadow (' + params.radius + ' against ' + shadowWorld + ')');
+  assert(params.radius < arcFrame.distance * Math.tan((arcFrame.fovDeg * Math.PI / 180) * 0.5) * arcFrame.aspect,
+    'and inside the frame');
 
   // One owner for the text: the row flight runs on its own, and stands down the moment the arc
   // layer exists. Asserted as an A/B so "it returned false anyway" cannot pass for the guard.
@@ -688,8 +729,8 @@ function load(overrides) {
   assert(flightAlone === true, 'without the arc layer the row flight must still run');
   assert(flightWithArc === false, 'the arc layer must take the text over from the row flight');
   console.log('lyric arc: glyphs ' + arc.glyphs.length + ', span ' + arc.span.toFixed(3) + ' rad over r=800, front opacity '
-    + front.opacity + ' / back ' + back.opacity.toFixed(2) + ', radius ' + params.radius + ' outside field '
-    + fieldRadius);
+    + front.opacity + ' / back ' + back.opacity.toFixed(2) + ', radius ' + params.radius + ' outside the shadow '
+    + Math.round(shadowWorld * 100) / 100);
 }
 
 // ------------------------------------------------------------------ the lyric flight

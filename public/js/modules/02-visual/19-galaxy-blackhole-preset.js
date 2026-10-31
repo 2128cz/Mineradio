@@ -39,18 +39,20 @@ var BH_SHADOW_EDGE_FACTOR = 0.06;   // how fast the shadow's rim fades, same uni
 // rebuild: 'pass' re-makes the render target, 'lyric' re-lays the flight, 'live' is read
 // every frame and only needs a redraw.
 var BH_TUNING_SCHEMA = {
-  holeX: { def: 0.14, min: -0.9, max: 0.9, kind: 'ratio', rebuild: 'live' },
-  holeY: { def: 0.03, min: -0.7, max: 0.7, kind: 'ratio', rebuild: 'live' },
-  holeDepth: { def: 5.2, min: 1.8, max: 9, kind: 'unit', rebuild: 'live' },
-  mass: { def: 0.14, min: 0.02, max: 0.5, kind: 'ratio', rebuild: 'live' },
+  // World units: the hole is a scene point, so these are positions in the scene and the horizon
+  // radius is a length, not a fraction of the viewport.
+  holeX: { def: 0.0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
+  holeY: { def: 0.2, min: -6, max: 6, kind: 'unit', rebuild: 'live' },
+  holeDepth: { def: 0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
+  mass: { def: 0.9, min: 0.05, max: 6, kind: 'unit', rebuild: 'live' },
   spin: { def: 0.7, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   charge: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   deflect: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   shadowScale: { def: 1.35, min: 1, max: 2, kind: 'ratio', rebuild: 'live' },
   swirl: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
-  ringGlow: { def: 0.85, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
-  skyStars: { def: 0.6, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  skyBand: { def: 0.55, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  ringGlow: { def: 0.45, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   fovDeg: { def: 58, min: 35, max: 92, kind: 'deg', rebuild: 'live' },
   sideSpread: { def: 6.2, min: 2.5, max: 14, kind: 'unit', rebuild: 'lyric' },
   startNear: { def: 1.6, min: 0.7, max: 4, kind: 'unit', rebuild: 'lyric' },
@@ -60,13 +62,15 @@ var BH_TUNING_SCHEMA = {
   passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
   // branch count rebuild the buffer, brightness / spin / haze are read every frame.
-  galaxyDensity: { def: 2600, min: 300, max: 6000, kind: 'count', rebuild: 'field' },
-  galaxyRadius: { def: 2.6, min: 0.8, max: 12, kind: 'unit', rebuild: 'field' },
+  galaxyDensity: { def: 12000, min: 1000, max: 40000, kind: 'count', rebuild: 'field' },
+  // Wider than the frame on purpose: a galaxy whose whole disc sat inside the lens's strong-bend
+  // annulus would be drawn as that annulus (only a ring), so the outer arms have to live outside it.
+  galaxyRadius: { def: 5.5, min: 0.8, max: 20, kind: 'unit', rebuild: 'field' },
   galaxyPitch: { def: 1.35, min: 0.2, max: 4, kind: 'ratio', rebuild: 'field' },
   galaxyBranches: { def: 2, min: 1, max: 4, kind: 'count', rebuild: 'field' },
   galaxyArmWidth: { def: 0.16, min: 0.02, max: 0.5, kind: 'ratio', rebuild: 'field' },
   galaxySpin: { def: 0.55, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
-  galaxyGlow: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
+  galaxyGlow: { def: 0.7, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   // The lyrics run along the galaxy's outer rim; the radius has to stay outside the field, which
   // the test pins against galaxyRadius.
@@ -157,10 +161,14 @@ function bhImpactRadius(qx, qy, planeZ, spinA) {
 // shows up as equatorial > polar. s is the boundary in the kernel's normalized units; du/dv are
 // the same boundary in viewport uv, which is what a pixel measurement can be compared against.
 function bhSilhouette(stepAngles) {
-  var radii = bhHorizonRadii(bhParam('spin'), bhParam('charge'));
-  var uScale = bhClamp(bhParam('mass'), 0.005, 0.9) / BH_MASS_UNIT;
-  var planeZ = bhPlaneZ((typeof camera !== 'undefined' && camera) ? camera.fov : 58) / uScale;
-  var aspect = (typeof camera !== 'undefined' && camera && camera.aspect) ? camera.aspect : 1.78;
+  // Derived from the frame rather than rebuilt: the prediction and the shader must share one
+  // measure, and the frame is already the place where world units become uv.
+  var frame = bhComputeFrame();
+  if (!frame) return null;
+  var radii = frame.radii;
+  var uScale = frame.scale;
+  var planeZ = frame.planeZ;
+  var aspect = frame.aspect;
   var cap = radii.rp * bhClamp(bhParam('shadowScale'), 1, 2);
   var rays = [];
   var count = Math.max(1, Math.round(Number(stepAngles) || 8));
@@ -232,32 +240,42 @@ function bhGatherFrame() {
 // Where the hole is: on the camera axis at holeDepth, offset along the camera's own right/up
 // by the two position knobs, in units of the visible half-height at that depth - the same
 // basis the lyric stage uses for its layout offsets.
+// The hole is a point in the scene, not a point glued in front of the camera: dragging or zooming
+// the camera has to move it and change its size the way it does for every other element. The knobs
+// are therefore world units, and the lens geometry (how wide the shadow is in uv) is derived from
+// the distance to that point every frame - so walking away shrinks the hole, walking around it moves
+// it across the screen.
 function bhComputeFrame() {
   var frame = bhGatherFrame();
   var vecs = bhEnsureScratch();
   if (!frame || !vecs) return null;
-  var depth = bhClamp(bhParam('holeDepth'), 1.2, 24);
-  var planeH = frame.tanHalfFov * depth;
-  vecs.point.set(frame.position.x, frame.position.y, frame.position.z)
-    .addScaledVector(frame.dir, depth)
-    .addScaledVector(frame.right, bhParam('holeX') * planeH * frame.aspect)
-    .addScaledVector(frame.up, bhParam('holeY') * planeH);
+  vecs.point.set(
+    bhClamp(bhParam('holeX'), -20, 20),
+    bhClamp(bhParam('holeY'), -20, 20),
+    -bhClamp(bhParam('holeDepth'), -20, 20)
+  );
   var world = { x: vecs.point.x, y: vecs.point.y, z: vecs.point.z };
+  var projected = bhProjectPoint(world, frame.position, frame.dir, frame.right, frame.up, frame.tanHalfFov, frame.aspect);
+  if (!projected) return null;
   var radii = bhHorizonRadii(bhParam('spin'), bhParam('charge'));
-  // The mass knob is the horizon radius in half-height units; the reference's algebra works in
-  // its own M = 0.5 units, so one scale converts between them and keeps rp/ergo consistent.
-  var scale = bhClamp(bhParam('mass'), 0.005, 0.9) / BH_MASS_UNIT;
+  // mass is the outer horizon's radius in world units. Its angular radius in half-height units is
+  // r / (distance * tan(fov/2)), and one normalized (M = 0.5) unit is that divided by rp - the same
+  // algebra the reference uses, now measured on the scene's own scale instead of the viewport's.
+  var horizonWorld = bhClamp(bhParam('mass'), 0.02, 20);
+  var angularHorizon = horizonWorld / Math.max(1e-4, projected.distance * frame.tanHalfFov);
+  var scale = angularHorizon / Math.max(1e-4, radii.rp);
   return {
     world: world,
-    uv: bhProjectPoint(world, frame.position, frame.dir, frame.right, frame.up, frame.tanHalfFov, frame.aspect),
-    distance: depth,
-    planeZ: bhPlaneZ(frame.fovDeg),
+    uv: projected,
+    distance: projected.distance,
+    planeZ: (1 / Math.max(1e-4, frame.tanHalfFov)) / Math.max(1e-4, scale),
     fovDeg: frame.fovDeg,
     aspect: frame.aspect || 1,
     radii: radii,
     scale: scale,
-    uvHorizon: radii.rp * scale,
-    uvShadow: radii.rp * bhClamp(bhParam('shadowScale'), 1, 2) * scale
+    horizonWorld: horizonWorld,
+    uvHorizon: angularHorizon,
+    uvShadow: angularHorizon * bhClamp(bhParam('shadowScale'), 1, 2)
   };
 }
 
@@ -276,7 +294,7 @@ var BH_PASS_FS = `
 precision highp float;
 
 #define BH_RIM 0.14
-#define BH_RING_W 0.16
+#define BH_RING_W 0.08
 
 varying vec2 vUv;
 
@@ -1081,7 +1099,13 @@ var BH_GALAXY_MODEL = {
 // testable statement and not a description of a picture.
 function bhGalaxySegments(branches) {
   var count = Math.max(1, Math.round(Number(branches) || 2));
-  var segments = [];
+  var segments = [
+    // The bulge and the bar are part of the picture the model promises, so they are part of the
+    // sampled field: without them the arms started at 0.26 and the middle of the galaxy was empty.
+    { arm: 0, kind: 'core', r0: 0.01, r1: 0.09, root: 0, offset: 0, weight: 0.07 },
+    { arm: 0, kind: 'bar', r0: 0.02, r1: BH_GALAXY_MODEL.barLength, root: BH_GALAXY_MODEL.barAngle, offset: 0, weight: 0.14 },
+    { arm: 1, kind: 'bar', r0: 0.02, r1: BH_GALAXY_MODEL.barLength, root: BH_GALAXY_MODEL.barAngle + Math.PI, offset: 0, weight: 0.14 }
+  ];
   for (var arm = 0; arm < 2; arm++) {
     var root = BH_GALAXY_MODEL.barAngle + arm * Math.PI;
     segments.push({ arm: arm, kind: 'inner', r0: BH_GALAXY_MODEL.barLength, r1: 1, root: root, offset: 0 });
@@ -1152,7 +1176,7 @@ function bhGalaxyPoint(index, rand, params) {
   var weights = [];
   for (var i = 0; i < segments.length; i++) {
     var seg = segments[i];
-    var weight = Math.max(0.02, seg.r1 * seg.r1 - seg.r0 * seg.r0);
+    var weight = seg.weight || Math.max(0.02, seg.r1 * seg.r1 - seg.r0 * seg.r0);
     weights.push(weight);
     total += weight;
   }
@@ -1166,13 +1190,22 @@ function bhGalaxyPoint(index, rand, params) {
   radius = Math.min(1, Math.max(0.02, radius));
   var angle = bhGalaxyArmAngle(chosen.root, radius, params.pitch);
   if (chosen.kind === 'branch') angle += chosen.offset + chosen.wind * (radius - chosen.r0);
+  if (chosen.kind === 'bar') {
+    // A bar is straight: its thickness is a length, not an angle, so the angular scatter has to
+    // shrink as the radius grows or the bar would fan out into a wedge.
+    angle = chosen.root + (rand() - 0.5) * 0.10 / Math.max(0.04, radius);
+    radius = chosen.r0 + rand() * (chosen.r1 - chosen.r0);
+  } else if (chosen.kind === 'core') {
+    radius = Math.pow(rand(), 1.8) * chosen.r1;
+    angle = rand() * Math.PI * 2;
+  }
   // Arms are wider relative to their own length at the outside, and branches are looser than the
   // main arms - otherwise the whole field reads as two hard lines.
   var spread = params.armWidth * (0.45 + radius * 0.85) * (chosen.kind === 'branch' ? 1.45 : 1);
   var scatter = (rand() + rand() + rand() - 1.5) * spread;
   // A quarter of the field is inter-arm: halo stars and diffuse haze, so the arms sit in a
   // background instead of floating on black.
-  if (rand() < 0.24) {
+  if (chosen.kind !== 'bar' && chosen.kind !== 'core' && rand() < 0.10) {
     radius = Math.pow(rand(), 0.6);
     angle += (rand() - 0.5) * Math.PI * 0.9;
     scatter = 0;
@@ -1203,7 +1236,7 @@ var bhGalaxy = { group: null, bands: [], key: '', count: 0, hazeCount: 0, error:
 
 function bhGalaxyParams() {
   return {
-    density: Math.round(bhClamp(bhParam('galaxyDensity'), 200, 6000)),
+    density: Math.round(bhClamp(bhParam('galaxyDensity'), 200, 40000)),
     radius: bhClamp(bhParam('galaxyRadius'), 0.6, 14),
     pitch: bhClamp(bhParam('galaxyPitch'), 0.2, 4),
     branches: Math.round(bhClamp(bhParam('galaxyBranches'), 1, 4)),
@@ -1249,7 +1282,7 @@ function bhGalaxyColours(point) {
   var green = 0.45 + warm * 0.30 + (1 - warm) * 0.22;
   var blue = 0.42 + (1 - warm) * 0.58;
   if (point.knot > 0.35 && point.bright > 2) { red = 1.0; green = 0.45; blue = 0.72; }
-  var gain = Math.min(3.2, point.bright) * 0.55;
+  var gain = Math.min(3.2, point.bright) * 0.55 * (0.45 + 0.55 * (1 - point.radius * 0.55));
   return [red * gain, green * gain, blue * gain];
 }
 
@@ -1278,9 +1311,33 @@ function bhGalaxyGeometry(points, params, haze) {
   return geometry;
 }
 
+var bhGalaxySprite = null;
+function bhGalaxySpriteTexture() {
+  if (bhGalaxySprite || typeof document === 'undefined') return bhGalaxySprite;
+  var size = 64;
+  var canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  var ctx = canvas.getContext('2d');
+  var gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.35, 'rgba(255,255,255,0.72)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  var texture = new THREE.CanvasTexture(canvas);
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  bhGalaxySprite = texture;
+  return texture;
+}
+
 function bhGalaxyMaterial(params, haze) {
   var material = new THREE.PointsMaterial({
-    size: params.radius * (haze ? 0.055 : 0.012),
+    map: bhGalaxySpriteTexture(),
+    alphaTest: 0.02,
+    size: params.radius * (haze ? 0.075 : 0.030),
     sizeAttenuation: true,
     vertexColors: true,
     transparent: true,
@@ -1650,7 +1707,7 @@ function bhBuildLyrics() {
   var params = bhLyricParams();
   var rows = [];
   var fontPx = bhLyricFontPx();
-  var worldHeight = fontPx * 0.0085;
+  var worldHeight = fontPx * 0.045;
   for (var i = 0; i < 5; i++) {
     var row = bhBuildLyricRow(1024, 256);
     row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
@@ -1718,12 +1775,14 @@ function bhPlaceLyrics(frame, dt) {
       row.mesh.visible = true;
     }
     row.mesh.position.set(x, y, 0.02);
-    row.mesh.rotation.z = angle + Math.PI / 2;
-    var worldH = bhLyricFontPx() * 0.0085;
+    // The plane's local +x is its width, so a tangent strip is the angle itself; +PI/2 stood
+    // the text on end (a column of vertical lines beside the hole).
+    row.mesh.rotation.z = angle;
+    var worldH = bhLyricFontPx() * 0.045;
     row.mesh.scale.set(worldH * (row.widthRatio || 4), worldH, 1);
     // The shadow never covers the text any more, so being swallowed has to come from the row: it
     // fades out as it crosses the shadow radius on its way in.
-    var shadowWorld = frame.uvShadow * Math.tan((frame.fovDeg * Math.PI / 180) * 0.5) * frame.distance;
+    var shadowWorld = (frame.horizonWorld || 1) * bhClamp(bhParam('shadowScale'), 1, 2);
     row.material.opacity = place.opacity * bhSwallowAlpha(Math.sqrt(x * x + y * y), shadowWorld);
   }
   return true;
