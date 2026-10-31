@@ -928,6 +928,21 @@ function load(overrides) {
   const lightSpan = params.swallow / light;
   const heavySpan = params.swallow / heavy;
   assert(heavySpan < lightSpan, 'the heavier line has to fall faster: ' + heavySpan.toFixed(2) + ' vs ' + lightSpan.toFixed(2));
+  // With a rim (the shadow's edge, passed per frame) the row has to stop there and keep turning;
+  // going on into the centre is what made the middle of the hole flicker.
+  const rimStateParams = Object.assign({}, params, { rim: 0.3 });
+  let rimLast = null;
+  for (let i = 1; i <= 60; i++) {
+    const s = sandbox.bhLyricOrbitState(item, exitStart + span * i / 60, rimStateParams, front, null);
+    if (!s) break;
+    assert(s.radius >= 0.3 - 1e-9, 'the row may not pass the rim: ' + s.radius);
+    rimLast = s;
+  }
+  assert(rimLast && Math.abs(rimLast.radius - 0.3) < 1e-9, 'by the end it sits on the rim: ' + (rimLast && rimLast.radius));
+  assert(rimLast.left >= 0 && rimLast.left <= span / 60 + 1e-9, 'and the fall clock is nearly out: ' + rimLast.left);
+  const rimA = sandbox.bhLyricOrbitState(item, exitStart + span * 0.9, rimStateParams, front, null);
+  const rimB = sandbox.bhLyricOrbitState(item, exitStart + span * 0.96, rimStateParams, front, null);
+  assert(rimB.angle < rimA.angle, 'it keeps turning while it orbits the rim');
   assert(sandbox.bhLyricOrbitState(item, exitStart + span + 0.01, params, front, null) === null,
     'once the fall is over the line is gone');
   const noWind = sandbox.bhLyricOrbitState(item, exitStart + 0.9, {
@@ -1028,6 +1043,17 @@ function load(overrides) {
   for (let i = 1; i < liveRadii.length; i++) if (Math.abs(liveRadii[i] - liveRadii[i - 1]) < 0.05) distinct = false;
   assert(distinct, 'the lines in the disc have to be at their own radii: '
     + liveRadii.map(function (d) { return d.toFixed(2); }).join(' / '));
+  // Close to the hole the row stays in one channel: at the rim the flat and lensed versions are far
+  // apart, and blending them is the flicker the user saw in the middle of the hole.
+  const shadowWorldTest = (Number(frame.uvShadow) || 0) * frame.distance
+    * (frame.camera && frame.camera.tanHalf ? frame.camera.tanHalf : 0.55);
+  rows.filter(function (r) { return r.live; }).forEach(function (r) {
+    const rad = Math.hypot(r.mesh.position.x, r.mesh.position.y, r.mesh.position.z);
+    if (rad <= shadowWorldTest * 1.8) {
+      assert(r.farAlpha === 0 && r.nearAlpha === 1,
+        'a row at the rim must stay in the near channel, not blend two lensed versions: ' + r.farAlpha);
+    }
+  });
   assert(rows[2].sung === true && rows[3].sung === false, 'the line still being sung keeps the highlight');
 
   // The split is exactly what the renderer uses to choose a target, and it follows each row's own
@@ -1045,8 +1071,8 @@ function load(overrides) {
   assert(Math.abs(sandbox.bhLyricSideBlend(6.6, 6.6, 0.3) - 0.5) < 1e-9, 'half way across the band is half and half');
   assert(sandbox.bhLyricSideBlend(6.2, 6.6, 0.3) === 0, 'well in front is the near channel');
   assert(sandbox.bhLyricSideBlend(7.0, 6.6, 0.3) === 1, 'well behind is the far channel');
-  assert(/row.sideBlend = bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(source),
-    'the placement has to write the blend');
+  assert(/row\.sideBlend = nearHole \? 0 : bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(source),
+    'the placement has to write the blend, and force the near channel at the rim');
   rows.filter(function (r) { return r.live; }).forEach(function (r) {
     assert(Math.abs(r.nearAlpha + r.farAlpha - 1) < 1e-9,
       'the near/far alphas have to be complementary: ' + r.nearAlpha + '+' + r.farAlpha);
@@ -1167,7 +1193,11 @@ function load(overrides) {
     sandbox.bhLyrics.now += 0.08;
     sandbox.bhPlaceLyrics(frame, 0.08);
     if (fallingRow.itemIndex < 0) break;
-    distances.push(Math.hypot(fallingRow.mesh.position.x, fallingRow.mesh.position.y, fallingRow.mesh.position.z));
+    // In-plane radius: the row also bobs along the disc normal, and that perpendicular offset would
+    // otherwise read as the row moving back out at the rim.
+    const p = fallingRow.mesh.position;
+    const nOff = p.x * basis.n.x + p.y * basis.n.y + p.z * basis.n.z;
+    distances.push(Math.hypot(p.x - basis.n.x * nOff, p.y - basis.n.y * nOff, p.z - basis.n.z * nOff));
     opacities.push(fallingRow.material.opacity);
   }
   for (let i = 1; i < distances.length; i++) {
@@ -1175,16 +1205,37 @@ function load(overrides) {
       'the line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
   }
   assert(distances.length >= 20, 'the fall has to last seconds of frames, got ' + distances.length);
-  assert(distances[distances.length - 1] < distances[0] * 0.3,
-    'and reach the horizon by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  // It stops at the rim - the visible edge of the black disk - instead of shrinking into the centre,
+  // where front and back are the same thing and the near/far hand-over flickered.
+  const shadowWorldWalk = (Number(frame.uvShadow) || 0) * frame.distance
+    * (frame.camera && frame.camera.tanHalf ? frame.camera.tanHalf : 0.55);
+  const rimWorldWalk = Math.max(frame.horizonWorld * 1.02, shadowWorldWalk * 0.98);
+  assert(Math.abs(distances[distances.length - 1] - rimWorldWalk) < 0.15,
+    'the row has to stop at the rim, not sink to the centre: ' + distances[distances.length - 1].toFixed(2)
+    + ' vs ' + rimWorldWalk.toFixed(2));
+  assert(distances[distances.length - 1] < distances[0] * 0.6, 'and reach it from the hold radius');
   const readable = opacities.filter(function (o) { return o > 0.99; }).length;
-  assert(readable > opacities.length * 0.7,
-    'the row has to stay readable over the shadow and fade only at the horizon: ' + readable + '/' + opacities.length);
+  assert(readable > opacities.length * 0.6,
+    'the row has to stay readable while it spirals and fades only at the end: ' + readable + '/' + opacities.length);
   assert(opacities[opacities.length - 1] < 0.9,
-    'and fade at the rim, not pop at the frame it disappears: '
+    'and fade on the fall clock, not pop at the frame it disappears: '
     + opacities.slice(-4).map(function (o) { return o.toFixed(2); }).join(' -> '));
   assert(fallingRow.mesh.visible === false && fallingRow.material.opacity === 0,
     'a swallowed row is hidden and fully transparent');
+
+  // Somewhere around the crossing a row (outside the rim override) has to be in both channels with
+  // complementary weights; otherwise the depth band is dead code and the crossing pops after all.
+  let partial = null;
+  for (let n = 0; n < 160 && !partial; n++) {
+    sandbox.bhLyrics.now += 0.1;
+    sandbox.bhPlaceLyrics(frame, 0.1);
+    rows.forEach(function (r) {
+      if (!partial && r.live && r.nearAlpha > 0.05 && r.farAlpha > 0.05) partial = r;
+    });
+  }
+  assert(partial, 'a row crossing the hole depth has to be in both channels for a moment');
+  assert(Math.abs(partial.nearAlpha + partial.farAlpha - 1) < 1e-9,
+    'and the two weights have to add to one: ' + partial.nearAlpha + '+' + partial.farAlpha);
   console.log('orbit: radius ' + params.orbit + ', rate ' + params.rate + ' rad/s, wind ' + params.wind
     + '; front ' + front.toFixed(2) + ', spiral ' + path.toFixed(2) + ' vs radius ' + params.orbit
     + ', exit at ' + exitStart + ', span ' + span.toFixed(2) + 's, fall '

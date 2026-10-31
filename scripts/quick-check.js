@@ -1720,7 +1720,7 @@ function runBlackHolePresetCheck() {
     fail('the next line must not start easing in before the previous has begun to leave');
   }
   if (!/var smooth = ease \* ease \* \(3 - 2 \* ease\)/.test(text)) fail('the approach has to decelerate into the front');
-  if (!/row\.sideBlend = bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(text)
+  if (!/row\.sideBlend = nearHole \? 0 : bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(text)
     || !/row\.farAlpha = row\.sideBlend;/.test(text)) {
     fail('each row has to be split by its depth, as a blend rather than a one-frame flag');
   }
@@ -1787,6 +1787,15 @@ function runBlackHolePresetCheck() {
   // The sign is displayed 2-3x its layout size; rasterising at the layout size is what blurred it.
   if (!/var superSample = 2\.5;/.test(text)) fail('the lyric canvas has to be supersampled above its display size');
   if (!/row\.textureScale = superSample;/.test(text)) fail('the row has to report its supersample factor');
+  // A falling row stops at the rim (the shadow's edge) and turns there; inside the black disk there
+  // is nothing to see, and the near/far hand-over flickers where depth stops meaning anything.
+  if (!/var rim = bhClamp\(Number\(params\.rim\) \|\| 0, 0, 1\);/.test(text)) fail('the fall needs its rim');
+  if (!/params\.rim = bhClamp\(rimWorld \/ Math\.max\(1e-4, params\.orbit\), 0\.01, 1\);/.test(text)) {
+    fail('the rim has to come from the shadow edge in the frame');
+  }
+  if (!/var rho = Math\.max\(rim, rawRho\);/.test(text)) fail('the row must not keep sinking past the rim');
+  if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
+  if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ 1\.2, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');

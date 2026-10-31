@@ -1993,15 +1993,35 @@ function bhLyricOrbitState(item, now, params, frontAngle, prevExitStart) {
   if (tau >= span) return null;
   var u = bhClamp(tau / span, 0, 1);
   var curve = bhClamp(Number(params.curve) || 0.5, 0.05, 3);
-  var rho = Math.pow(Math.max(0, 1 - u), curve);
-  // dphi/dtau = rate / rho^1.5, integrated in closed form. The ramp is what turns "stopped at the
-  // front" into "thrown sideways": the angle leaves the front with zero speed and reaches the orbit
-  // rate within a third of a second.
+  // Inside the black disk there is nothing to see, so the row stops spiralling when it reaches the
+  // rim (the shadow's edge, passed in as a fraction of the orbit) and orbits there for the rest of
+  // its life. Without the rim it kept shrinking into the centre, where "in front of" and "behind"
+  // the hole are the same thing and the near/far hand-over flickered.
+  var rim = bhClamp(Number(params.rim) || 0, 0, 1);
+  // The inward part takes this share of the fall; the rest is the rim orbit. Two thirds of the
+  // length spirals, the last third turns at the edge where it can still be seen.
+  var RIM_RISE = 0.68;
+  var uu = bhClamp(u / RIM_RISE, 0, 1);
+  var rawRho = Math.pow(Math.max(0, 1 - uu), curve);
+  var rho = Math.max(rim, rawRho);
+  // dphi/dtau = rate / rho^1.5. The integral is closed form up to the rim, then linear along it.
   var expo = 1 - 1.5 * curve;
-  var wound = Math.abs(expo) < 1e-3
-    ? -Math.log(Math.max(1e-4, 1 - u))
-    : (1 - Math.pow(Math.max(0, 1 - u), expo)) / expo;
-  wound = Math.min(wound, 12);
+  var wound;
+  if (rim > 1e-4) {
+    var uuFloor = 1 - Math.pow(rim, 1 / curve);
+    var v = Math.min(uu, uuFloor);
+    var inward = Math.abs(expo) < 1e-3
+      ? -Math.log(Math.max(1e-4, 1 - v))
+      : (1 - Math.pow(Math.max(0, 1 - v), expo)) / expo;
+    if (uu > uuFloor) inward += (uu - uuFloor) / Math.pow(rim, 1.5);
+    wound = RIM_RISE * inward;
+    if (u > RIM_RISE) wound += (u - RIM_RISE) / Math.pow(rim, 1.5);
+  } else {
+    wound = Math.abs(expo) < 1e-3
+      ? -Math.log(Math.max(1e-4, 1 - u))
+      : (1 - Math.pow(Math.max(0, 1 - u), expo)) / expo;
+  }
+  wound = Math.min(wound, 64);
   var kick = (function () {
     var x = bhClamp(tau / 0.35, 0, 1);
     return x * x * (3 - 2 * x);
@@ -2014,6 +2034,9 @@ function bhLyricOrbitState(item, now, params, frontAngle, prevExitStart) {
     alpha: 1,
     fall: u,
     mass: mass,
+    // Seconds of fall left: the placement fades on this, because the radius no longer reaches the
+    // horizon (the rim is as close as a visible row can get).
+    left: span * (1 - u),
     // Radians per second right now: the tests read this as the spin-up, and so could a caller that
     // wants to blur fast rows.
     spin: rate / Math.pow(Math.max(1e-3, rho), 1.5)
@@ -2293,11 +2316,16 @@ function bhPlaceLyrics(frame, dt) {
   var fwd = (frame.camera && frame.camera.fwd) || { x: 0, y: 0, z: -1 };
   var depth = Math.max(0.1, Number(frame.distance) || 1);
   var horizonWorld = Math.max(1e-4, Number(frame.horizonWorld) || 0.3);
+  // The rim a row may not pass is the edge of the black disk (the shadow), not the horizon: inside
+  // the shadow the row is either hidden or sitting on the centre where front/back has no meaning.
+  var shadowWorld = Math.max(0, (Number(frame.uvShadow) || 0) * depth * tanHalf);
+  var rimWorld = Math.max(horizonWorld * 1.02, shadowWorld * 0.98);
+  params.rim = bhClamp(rimWorld / Math.max(1e-4, params.orbit), 0.01, 1);
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
   var anchor = sung < 0 ? 0 : sung;
   // The window is the row pool: a fast song needs every slot to keep the older inspiral alive, so
-// the history is rows - 3 lines (the current one and two ahead take the rest).
+  // the history is rows - 3 lines (the current one and two ahead take the rest).
   var range = bhLyricWindowRange(sung, items.length, bhLyrics.rows.length);
   var lo = range.lo;
   var hi = range.hi;
@@ -2386,10 +2414,13 @@ function bhPlaceLyrics(frame, dt) {
     var alongRow = (wx - camera.position.x) * fwd.x + (wy - camera.position.y) * fwd.y + (wz - camera.position.z) * fwd.z;
     // Near side of the orbit: it is between the eye and the hole, so it belongs in front of the
     // picture. Far side: it is behind the hole's shadow and the lens, so it belongs in the scene.
-    // The near/far split is a blend, not a switch: around the hole's depth both channels carry the
-    // row at complementary opacities, so crossing behind the hole cannot pop in one frame.
+    // The split is a blend near the hole's depth - but only well outside the strong-lens zone. At
+    // the rim the row is as deep as the hole itself, and the two versions (flat vs lensed) are far
+    // apart, so a blend there is a flickering double image; close in, the row simply stays in the
+    // near channel at its true position.
     var sideBand = Math.max(0.15, params.height * depth * tanHalf * 1.2);
-    row.sideBlend = bhLyricSideBlend(alongRow, depth, sideBand);
+    var nearHole = radius <= shadowWorld * 1.8;
+    row.sideBlend = nearHole ? 0 : bhLyricSideBlend(alongRow, depth, sideBand);
     row.nearAlpha = 1 - row.sideBlend;
     row.farAlpha = row.sideBlend;
     row.front = row.sideBlend < 0.5;
@@ -2420,7 +2451,12 @@ function bhPlaceLyrics(frame, dt) {
     var opacity = current ? 1 : 0.72;
     if (state.phase === 'read') opacity = current ? 1 : 0.85;
     if (state.phase === 'approach') opacity = state.alpha * (current ? 1 : 0.9);
-    if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, horizonWorld);
+    // The rim is outside the horizon, so the old horizon fade never fires any more: the row fades on
+    // the fall's own clock instead, over its last second or so at the rim. Keep the horizon fade as
+    // a floor, for a rim that is very small.
+    if (state.phase === 'fall') {
+      opacity = Math.min(bhSwallowAlpha(radius, horizonWorld), bhClamp((Number(state.left) || 0) / 1.2, 0, 1));
+    }
     row.baseOpacity = opacity;
     row.material.opacity = opacity;
   }
