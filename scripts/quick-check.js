@@ -1575,15 +1575,15 @@ function runBlackHolePresetCheck() {
   if (!/scene\.add\(layer\);/.test(text) || !/bhLyrics\.layer = layer;/.test(text)) { fail('the arc rows must be added to the scene the lens renders: text outside the render target cannot be bent by the lens'); }
   // The ported kernel has to be in the shader, where it is actually evaluated.
   const shader = text.slice(text.indexOf('var BH_PASS_FS'));
-  if (!/float ksRadius\(float px, float py, float pz, float a\)/.test(shader)) fail('the fragment stage must carry the Kerr-Schild radius');
-  if (!/2\.0 \* a2 \* y2\) \/ max\(1e-20, det - b\)/.test(shader)) fail('the b < 0 branch of the reference expression must be kept');
-  if (!/uDeflect \* horizon \* rp \* rp \/ b\)/.test(shader)) fail('the bend must be the 1/b law expressed in rp');
-  // The radial measure the lens is written in has to be the impact parameter (the perpendicular
-  // distance from the hole to the eye ray), not the KS radius of the point on the screen plane:
-  // the latter is never inside the horizon, so the shadow silently never appears.
-  if (!/vec3 impactPoint = vec3\(nq\.x, nq\.y, 0\.0\) \* \(pz \/ max\(denom, 1e-4\)\);/.test(shader)) fail('the shader must measure the impact parameter, not the screen-plane point');
-  if (!/ksRadius\(impactPoint\.x, impactPoint\.y, 0\.0, a\)/.test(shader)) fail('the shadow silhouette must be a level set of the KS radius of the impact point');
-  if (/ksRadius\(nq\.x, nq\.y, pz, a\)/.test(shader)) fail('the screen-plane KS radius cannot reach the horizon; it must not come back');
+  // The pass integrates a photon through the Schwarzschild field; the shadow is where that ray is
+  // captured, and the background is sampled along the direction the ray escaped in.
+  if (!/shadertoyFragment\(/.test(text)) fail('the pass must be written against the Shadertoy driver');
+  if (loaderText.indexOf("'js/modules/02-visual/20-shadertoy-driver.js'") < 0) fail('the Shadertoy driver must be loaded, or the pass cannot compile');
+  if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* sqrt\(r2\)\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
+  if (!/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader)) fail('a ray inside the horizon has to be captured');
+  if (!/prevSide \* side < 0\.0/.test(shader)) fail('the disc is found by crossing the plane, or there is no disc');
+  if (!/dot\(outDir, uCamRight\)/.test(shader)) fail('an escaped ray must sample the galaxy along its own direction (that is the lensing)');
+  if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
   // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the
   // per-field reset button), and a console group that lists them all.
   const schema = new Map();
@@ -1626,6 +1626,9 @@ function runBlackHolePresetCheck() {
     fail('the preset must take the cover-particle layers over: the field here is its own galaxy');
   }
   if (!/galaxy: bhGalaxyStatus\(\)/.test(text)) fail('blackHoleStatus() must report the field, or it cannot be read back live');
+  for (const pattern of [/function bhMarchRay\(/, /function bhSilhouette\(/, /uDiscInner/, /uDiscTilt/, /uSteps/]) {
+    if (!pattern.test(text)) fail('the marched black hole is incomplete: ' + pattern);
+  }
   // The lyrics are arc rows on the galaxy's rim: per-glyph arc maths, a canvas per row, a plane in
   // the render target, and an arc radius that stays outside the field.
   for (const pattern of [

@@ -48,9 +48,16 @@ var BH_TUNING_SCHEMA = {
   spin: { def: 0.7, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   charge: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   deflect: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
-  shadowScale: { def: 1.35, min: 1, max: 2, kind: 'ratio', rebuild: 'live' },
+  shadowScale: { def: 1, min: 0.5, max: 1.6, kind: 'ratio', rebuild: 'live' },
   swirl: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   ringGlow: { def: 0.45, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  // The accretion disc is horizontal (a small tilt only, so it is seen slightly from above), and its
+  // radii are world lengths like every other size in this preset.
+  discInner: { def: 1.6, min: 0.2, max: 12, kind: 'unit', rebuild: 'live' },
+  discOuter: { def: 4.2, min: 0.6, max: 24, kind: 'unit', rebuild: 'live' },
+  discTilt: { def: 14, min: -60, max: 60, kind: 'deg', rebuild: 'live' },
+  discGain: { def: 0.85, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  marchSteps: { def: 110, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   fovDeg: { def: 58, min: 35, max: 92, kind: 'deg', rebuild: 'live' },
@@ -94,18 +101,6 @@ function bhClamp(value, min, max) {
 
 // ---------------------------------------------------------------- the ported kernel
 //
-// The reference's MapKerrSchildRadius, in JS as well as in the shader: both must agree, so
-// tests/blackhole-lens.test.js checks the JS one and reads the GLSL text back for the shape.
-function bhKerrSchildRadius(px, py, pz, spinA) {
-  var a2 = spinA * spinA;
-  var rho2 = px * px + pz * pz;
-  var y2 = py * py;
-  var b = rho2 + y2 - a2;
-  var det = Math.sqrt(b * b + 4 * a2 * y2);
-  var r2 = b >= 0 ? 0.5 * (b + det) : (2 * a2 * y2) / Math.max(1e-20, det - b);
-  return Math.sqrt(Math.max(0, r2));
-}
-
 // The reference's horizon algebra, verbatim in its own units.
 function bhHorizonRadii(spin, charge) {
   var a = BH_MASS_UNIT * bhClamp(Number(spin) || 0, -1, 1);
@@ -141,55 +136,75 @@ function bhFallDistance(d0, progress, curve) {
   return (Number(d0) || 0) * Math.pow(Math.max(0, 1 - u), k);
 }
 
-// The lens' radial measure for one pixel: the perpendicular distance from the hole to the eye ray
-// that passes through that pixel - the impact parameter - expressed as a Kerr-Schild radius, so
-// the spin flattens the silhouette along the spin axis instead of leaving a circle.
-//
-// This is not the KS radius of the point on the screen plane. That one is always at least the
-// plane's own distance from the hole (6.4 in the default units), which is larger than the horizon
-// radius (1.16), so no pixel could ever be inside the shadow and the bend came out as a faint
-// smear. Found with the live silhouette instrument, not in the unit test: the algebra was right
-// and the geometry handed to it was wrong.
-function bhImpactRadius(qx, qy, planeZ, spinA) {
-  var denom = Math.sqrt(qx * qx + qy * qy + planeZ * planeZ);
-  var along = planeZ / Math.max(1e-4, denom);
-  return bhKerrSchildRadius(qx * along, qy * along, 0, spinA);
-}
-
-// Predicted shadow silhouette. Directions are unit vectors in the shader's own q space (x in
-// half-widths, y in half-heights), so an isotropic kernel stays isotropic here and an oblate one
-// shows up as equatorial > polar. s is the boundary in the kernel's normalized units; du/dv are
-// the same boundary in viewport uv, which is what a pixel measurement can be compared against.
+// Predicted shadow silhouette for the marched pass: a circle of 3*sqrt(3)/2 horizon radii, which is
+// the critical impact parameter of the Schwarzschild field the march integrates. Directions are unit
+// vectors in q space (x in half-widths, y in half-heights) so a pixel measurement can walk the same
+// rays; `s` is in horizon radii and du/dv are the same boundary in viewport uv.
 function bhSilhouette(stepAngles) {
-  // Derived from the frame rather than rebuilt: the prediction and the shader must share one
-  // measure, and the frame is already the place where world units become uv.
   var frame = bhComputeFrame();
   if (!frame) return null;
-  var radii = frame.radii;
+  var aspects = frame.aspect || 1.78;
   var uScale = frame.scale;
-  var planeZ = frame.planeZ;
-  var aspect = frame.aspect;
-  var cap = radii.rp * bhClamp(bhParam('shadowScale'), 1, 2);
+  var cap = 2.598076 * bhClamp(bhParam('shadowScale'), 0.5, 1.6);
   var rays = [];
   var count = Math.max(1, Math.round(Number(stepAngles) || 8));
   for (var i = 0; i < count; i++) {
     var ang = i * Math.PI * 2 / count;
     var cx = Math.cos(ang), cy = Math.sin(ang);
-    var lo = 0, hi = planeZ * 0.999;
-    if (bhImpactRadius(cx * hi, cy * hi, planeZ, radii.a) < cap) {
-      rays.push({ s: hi, du: hi * uScale * cx / aspect, dv: hi * uScale * cy, angle: ang });
-      continue;
-    }
-    for (var it = 0; it < 48; it++) {
-      var mid = (lo + hi) * 0.5;
-      if (bhImpactRadius(cx * mid, cy * mid, planeZ, radii.a) < cap) lo = mid; else hi = mid;
-    }
-    var s = (lo + hi) * 0.5;
-    rays.push({ s: s, du: s * uScale * cx / aspect, dv: s * uScale * cy, angle: ang });
+    rays.push({ s: cap, du: cap * uScale * cx / aspects, dv: cap * uScale * cy, angle: ang });
   }
-  return { cap: cap, radii: radii, planeZ: planeZ, aspect: aspect, uScale: uScale, rays: rays };
+  return { cap: cap, radii: frame.radii, planeZ: frame.planeZ, aspect: aspects, uScale: uScale, rays: rays };
 }
 
+// The same integration as the shader, in JS: a photon in the Schwarzschild field feels
+// a = -1.5 h^2 r / |r|^5. Kept here so the deflection and the capture test can be checked as
+// arithmetic instead of by eye.
+function bhMarchRay(origin, dir, options) {
+  options = options || {};
+  var steps = Math.max(4, Math.round(Number(options.steps) || 110));
+  var deflect = options.deflect === undefined ? 1 : Number(options.deflect);
+  var inner = Number(options.discInner) || 2.2;
+  var outer = Number(options.discOuter) || 7.5;
+  var tilt = Number(options.discTilt) || 0.14;
+  var n = { x: Math.sin(tilt), y: Math.cos(tilt), z: 0 };
+  var pos = { x: origin.x, y: origin.y, z: origin.z };
+  var vel = { x: dir.x, y: dir.y, z: dir.z };
+  var cross = {
+    x: pos.y * vel.z - pos.z * vel.y,
+    y: pos.z * vel.x - pos.x * vel.z,
+    z: pos.x * vel.y - pos.y * vel.x
+  };
+  var h2 = cross.x * cross.x + cross.y * cross.y + cross.z * cross.z;
+  var prevSide = pos.x * n.x + pos.y * n.y + pos.z * n.z;
+  var discRadius = -1;
+  var captured = false;
+  var used = 0;
+  for (var i = 0; i < steps; i++) {
+    used = i + 1;
+    var r2 = pos.x * pos.x + pos.y * pos.y + pos.z * pos.z;
+    if (r2 < 1) { captured = true; break; }
+    if (r2 > 3600 && pos.x * vel.x + pos.y * vel.y + pos.z * vel.z > 0) break;
+    var r = Math.sqrt(r2);
+    var dt = Math.min(0.4, Math.max(0.008, 0.05 * r)) * deflect;
+    var k = -1.5 * h2 / (r2 * r2 * r) * dt;
+    vel.x += pos.x * k; vel.y += pos.y * k; vel.z += pos.z * k;
+    pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
+    var side = pos.x * n.x + pos.y * n.y + pos.z * n.z;
+    if (discRadius < 0 && prevSide * side < 0) {
+      var f = prevSide / (prevSide - side);
+      var cx = pos.x - vel.x * dt * (1 - f);
+      var cy = pos.y - vel.y * dt * (1 - f);
+      var cz = pos.z - vel.z * dt * (1 - f);
+      var rc = Math.sqrt(cx * cx + cy * cy + cz * cz);
+      if (rc > inner && rc < outer) discRadius = rc;
+    }
+    prevSide = side;
+  }
+  var len = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) || 1;
+  return { captured: captured, discRadius: discRadius, steps: used, dirOut: { x: vel.x / len, y: vel.y / len, z: vel.z / len } };
+}
+
+// ---------------------------------------------------------------- the hole on screen
 // ---------------------------------------------------------------- the hole on screen
 //
 // The hole is a world point (so the lyric rows can fly to it) and its projection (so the lens
@@ -274,8 +289,12 @@ function bhComputeFrame() {
     radii: radii,
     scale: scale,
     horizonWorld: horizonWorld,
+    camera: { fwd: frame.dir, right: frame.right, up: frame.up, tanHalf: frame.tanHalfFov },
     uvHorizon: angularHorizon,
-    uvShadow: angularHorizon * bhClamp(bhParam('shadowScale'), 1, 2)
+    // A Schwarzschild shadow is a circle of radius 3*sqrt(3)/2 horizon radii - the critical impact
+    // parameter - whatever the spin or charge dials say, because the march integrates the
+    // Schwarzschild field.
+    uvShadow: 2.598076 * angularHorizon * bhClamp(bhParam('shadowScale'), 0.5, 1.6)
   };
 }
 
@@ -290,140 +309,105 @@ void main() {
 }
 `;
 
-var BH_PASS_FS = `
-precision highp float;
-
-#define BH_RIM 0.14
-#define BH_RING_W 0.08
-
-varying vec2 vUv;
-
-uniform sampler2D uSrc;
-uniform vec2 uCenter;
-uniform float uAspect;
-uniform float uPlaneZ;
-uniform float uScale;
-uniform float uSpin;
-uniform float uCharge;
-uniform float uDeflect;
-uniform float uShadowScale;
-uniform float uSwirl;
-uniform float uRing;
-uniform float uStars;
-uniform float uBand;
-uniform float uTime;
-uniform float uLevel;
-
-// Kerr-Schild radius, ported from the reference's MapKerrSchildRadius - same two branches.
-float ksRadius(float px, float py, float pz, float a) {
-  float a2 = a * a;
-  float rho2 = px * px + pz * pz;
-  float y2 = py * py;
-  float b = rho2 + y2 - a2;
-  float det = sqrt(b * b + 4.0 * a2 * y2);
-  float r2 = b >= 0.0 ? 0.5 * (b + det) : (2.0 * a2 * y2) / max(1e-20, det - b);
-  return sqrt(max(r2, 0.0));
-}
-
-float hash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
-
-// The sky the lens refracts: a galactic band plus two star layers. It is written in the source
-// direction, so it bends along with the scene instead of sitting behind the effect.
-vec3 skyColor(vec2 nq, float band, float stars) {
-  vec3 deep = vec3(0.012, 0.017, 0.030);
-  if (band <= 0.001 && stars <= 0.001) return deep;
-  vec2 tilt = vec2(nq.x * 0.966 - nq.y * 0.259, nq.x * 0.259 + nq.y * 0.966);
-  float core = exp(-pow(tilt.y / 0.19, 2.0));
-  float dust = mix(1.0, 0.46, core) * smoothstep(0.14, 0.86, hash12(floor(tilt * 4.2) + 9.0));
-  vec3 glow = vec3(0.34, 0.42, 0.68) * core * dust * band * 0.52
-            + vec3(0.85, 0.76, 0.62) * pow(core, 3.0) * band * 0.20;
-  float grain = 0.0;
-  for (int layer = 0; layer < 2; layer++) {
-    float sc = mix(56.0, 122.0, float(layer));
-    vec2 cell = floor(nq * sc);
-    float h = hash12(cell + float(layer) * 71.3);
-    float on = step(0.985 - float(layer) * 0.003, h);
-    vec2 jitter = vec2(hash12(cell + 3.1), hash12(cell + 7.7));
-    vec2 d = (nq - (cell + jitter) / sc) * sc;
-    float twinkle = 0.72 + 0.28 * sin(uTime * (0.9 + h * 2.6) + h * 22.0);
-    grain += on * exp(-dot(d, d) * 24.0) * (0.45 + h) * twinkle;
-  }
-  vec3 tint = mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.86, 0.72), hash12(floor(nq * 56.0) + 5.0));
-  return deep + glow + grain * tint * 1.1;
-}
-
-void main() {
-  vec2 uv = vUv;
-  vec2 nq = (uv - uCenter) * vec2(uAspect, 1.0) / max(uScale, 1e-4);
-
-  float a = 0.5 * uSpin;
-  float q2 = 0.25 * uCharge;
-  float disc = 0.25 - a * a - q2;
-  float root = sqrt(max(0.0, disc));
-  float rp = 0.5 + root;
-  float ergo = sqrt(pow(0.5 + sqrt(max(0.0, 0.25 - q2)), 2.0) + a * a);
-  // Two horizons is the reference's subextremal case; with no horizon at all the lens has to
-  // close down instead of bending around a singularity nothing shields.
-  float horizon = disc > 0.0 ? 1.0 : 0.0;
-  float cap = rp * uShadowScale;
-
-  float pz = uPlaneZ / max(uScale, 1e-4);
-  // The impact parameter: the perpendicular distance from the hole to the eye ray through this
-  // pixel, as a Kerr-Schild radius so the silhouette is flattened along the spin axis. This is
-  // deliberately not ksRadius of the point on the screen plane - that measure never falls inside
-  // the horizon at any pixel, and the shadow would silently never be drawn.
-  float denom = sqrt(nq.x * nq.x + nq.y * nq.y + pz * pz);
-  vec3 impactPoint = vec3(nq.x, nq.y, 0.0) * (pz / max(denom, 1e-4));
-  float rPlane = ksRadius(impactPoint.x, impactPoint.y, 0.0, a);
-
-  // Bend ~ rp*r / b (the 1/b of weak lensing), floored at the shadow's rim so nothing samples
-  // from inside the horizon.
-  float b = max(rPlane, cap * 0.92);
-  vec2 dir = nq / max(length(nq), 1e-5);
-  vec2 src = nq + dir * (uDeflect * horizon * rp * rp / b);
-
-  // Frame dragging: the azimuthal half of the Lense-Thuring term, ~ a*rp/b.
-  float drag = uSwirl * a * rp / b * horizon;
-  float cs = cos(drag), sn = sin(drag);
-  src = vec2(src.x * cs - src.y * sn, src.x * sn + src.y * cs);
-
-  // The deflection pulls samples outward, so near the viewport border it would read outside the
-  // render target and smear its edge; fade it out over the last few percent instead.
-  vec2 srcUv = src * uScale / vec2(uAspect, 1.0) + uCenter;
-  float border = min(min(srcUv.x, 1.0 - srcUv.x), min(srcUv.y, 1.0 - srcUv.y));
-  srcUv = mix(uv, srcUv, smoothstep(0.0, 0.09, border));
-
-  vec4 sceneTex = texture2D(uSrc, srcUv);
-  vec3 sky = skyColor(src, uBand, uStars);
-  vec3 deep = vec3(0.012, 0.017, 0.030);
-  vec3 color = sceneTex.rgb + sky * (1.0 - sceneTex.a);
-
-  // The shadow: what fell in does not come back. The rim is a fade, not a cut, so a line on its
-  // way in is smeared into the hole rather than clipped on a hard circle.
-  float swallowed = horizon * (1.0 - smoothstep(cap, cap + BH_RIM * rp, rPlane));
-  color *= 1.0 - swallowed;
-
-  // Photon ring on the shadow rim and the outer static limit, then the reference's Reinhardt
-  // rolloff so a bright ring cannot clip into a flat white disc.
-  float rimW = max(BH_RING_W * rp, 1e-3);
-  float ringBand = exp(-pow((rPlane - cap) / rimW, 2.0));
-  float ergoBand = exp(-pow((rPlane - ergo) / (rimW * 1.8), 2.0));
-  float doppler = 1.0 + 0.62 * a * sin(atan(nq.y, nq.x));
-  vec3 ringColor = (vec3(1.0, 0.86, 0.66) * ringBand * 1.35 + vec3(0.62, 0.78, 1.0) * ergoBand * 0.55)
-    * uRing * horizon * doppler * (0.65 + 0.55 * uLevel);
-  color += ringColor / (1.0 + ringColor);
-
-  // The canvas keeps its alpha: where there is neither scene content, nor starlight, nor the
-  // hole itself, the user's own background shows through. The shadow is always opaque - a black
-  // hole you can see your wallpaper through is not a black hole.
-  float lightness = max(length(sky - deep) * 2.1, max(length(ringColor) * 1.4, swallowed));
-  gl_FragColor = vec4(clamp(color, 0.0, 4.0), clamp(max(sceneTex.a, lightness), 0.0, 1.0));
-}
-`;
+// The scene pass, written as a Shadertoy body: a ray is marched through the Schwarzschild field and
+// what it does decides the pixel - falls in (black), hits the accretion disc (bright, dopplered),
+// or escapes (the galaxy is sampled along the direction it actually left in, so the background is
+// lensed rather than merely hidden behind a dark circle).
+//
+// Units: one horizon radius. The camera and the hole arrive in world space and are divided by uRs
+// here, so `mass` staying a world length means the picture keeps its physics when you zoom.
+//
+// This is our own implementation. The driver above can run a shader lifted from Shadertoy, but those
+// carry their authors' licences (often CC BY-NC-SA) and this build ships under GPL; anything pasted
+// through it has to be checked before it goes in.
+var BH_PASS_FS = shadertoyFragment(
+  [
+    'uniform sampler2D uSrc;',
+    'uniform vec3 uCamPos;',
+    'uniform vec3 uCamFwd;',
+    'uniform vec3 uCamRight;',
+    'uniform vec3 uCamUp;',
+    'uniform float uTanHalf;',
+    'uniform float uAspect;',
+    'uniform vec3 uHole;',
+    'uniform float uRs;',
+    'uniform float uSteps;',
+    'uniform float uDeflect;',
+    'uniform float uDiscInner;',
+    'uniform float uDiscOuter;',
+    'uniform float uDiscTilt;',
+    'uniform float uDiscGain;',
+    'uniform float uSpin;',
+    'uniform float uRing;',
+    'uniform float uLevel;',
+    '',
+    'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
+    '  vec2 uv = fragCoord.xy / iResolution.xy;',
+    '  vec2 ndc = (uv - 0.5) * 2.0;',
+    '  vec3 dir = normalize(uCamFwd + uCamRight * ndc.x * uTanHalf * uAspect + uCamUp * ndc.y * uTanHalf);',
+    '',
+    '  // Everything in horizon radii, with the hole at the origin.',
+    '  vec3 pos = (uCamPos - uHole) / max(0.0001, uRs);',
+    '  vec3 vel = dir;',
+    '  float h2 = dot(cross(pos, vel), cross(pos, vel));',
+    '  vec3 discN = normalize(vec3(sin(uDiscTilt), cos(uDiscTilt), 0.0));',
+    '  float prevSide = dot(pos, discN);',
+    '  float discR = -1.0;',
+    '  vec3 discPos = vec3(0.0);',
+    '  bool captured = false;',
+    '  int steps = int(uSteps);',
+    '  for (int i = 0; i < 256; i++) {',
+    '    if (i >= steps) break;',
+    '    float r2 = dot(pos, pos);',
+    '    if (r2 < 1.0) { captured = true; break; }',
+    '    if (r2 > 3600.0 && dot(pos, vel) > 0.0) break;',
+    '    float dt = clamp(0.05 * sqrt(r2), 0.008, 0.4) * uDeflect;',
+    '    vec3 force = -1.5 * h2 * pos / (r2 * r2 * sqrt(r2));',
+    '    vel += force * dt;',
+    '    vec3 next = pos + vel * dt;',
+    '    float side = dot(next, discN);',
+    '    if (discR < 0.0 && prevSide * side < 0.0) {',
+    '      float k = prevSide / (prevSide - side);',
+    '      vec3 crossing = mix(pos, next, k);',
+    '      float rc = length(crossing);',
+    '      if (rc > uDiscInner && rc < uDiscOuter) { discR = rc; discPos = crossing; }',
+    '    }',
+    '    pos = next;',
+    '    prevSide = side;',
+    '  }',
+    '',
+    '  vec3 color = vec3(0.0);',
+    '  if (captured) {',
+    '    color = vec3(0.0);',
+    '  } else if (discR > 0.0) {',
+    '    // The disc: hot towards its inner edge, and brighter on the side that is coming at the eye.',
+    '    float rn = clamp((discR - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
+    '    float heat = pow(1.0 - rn, 1.7);',
+    '    vec2 tangent = normalize(vec2(-discPos.z, discPos.x));',
+    '    vec2 motion = normalize(vec2(vel.x, vel.z));',
+    '    float doppler = 1.0 + uSpin * 0.85 * dot(tangent, motion);',
+    '    vec3 tint = mix(vec3(1.0, 0.52, 0.20), vec3(1.0, 0.96, 0.86), heat);',
+    '    color = tint * (0.22 + 1.9 * heat) * max(0.10, doppler) * uDiscGain;',
+    '  } else {',
+    '    // Escaped: sample the galaxy along the direction the ray left in.',
+    '    vec3 outDir = normalize(vel);',
+    '    float cosF = dot(outDir, uCamFwd);',
+    '    vec2 off = vec2(dot(outDir, uCamRight), dot(outDir, uCamUp)) / max(0.001, cosF * uTanHalf);',
+    '    vec2 suv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
+    '    vec4 scene = texture2D(uSrc, clamp(suv, 0.0, 1.0));',
+    '    float inside = step(0.0, suv.x) * step(suv.x, 1.0) * step(0.0, suv.y) * step(suv.y, 1.0);',
+    '    color = scene.rgb * inside;',
+    '  }',
+    '',
+    '  // Photon ring: light that skirted the horizon lands in a thin bright rim just outside it.',
+    '  float rFinal = length(pos);',
+    '  float rim = exp(-pow((rFinal - 1.32) / 0.11, 2.0));',
+    '  color += uRing * rim * vec3(1.0, 0.87, 0.64) * (0.6 + 0.4 * uLevel);',
+    '  fragColor = vec4(color, 1.0);',
+    '}'
+  ].join('\n'),
+  { channels: 0 }
+);
 
 // The text is composited over the finished picture, so the hole can never paint over it: the
 // shadow exists in the scene pass, and by the time these pixels are drawn the lens has already
@@ -543,20 +527,27 @@ function bhBuildPass() {
       transparent: true,
       uniforms: {
         uSrc: { value: rt.texture },
-        uCenter: { value: new THREE.Vector2(0.5, 0.5) },
-        uAspect: { value: 1 },
-        uPlaneZ: { value: 1.8 },
-        uScale: { value: 0.28 },
-        uSpin: { value: 0.7 },
-        uCharge: { value: 0 },
+        iResolution: { value: new THREE.Vector3(w, h, 1) },
+        iTime: bhSharedTimeUniform(),
+        iFrame: { value: 0 },
+        iMouse: { value: new THREE.Vector4() },
+        uCamPos: { value: new THREE.Vector3() },
+        uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
+        uCamRight: { value: new THREE.Vector3(1, 0, 0) },
+        uCamUp: { value: new THREE.Vector3(0, 1, 0) },
+        uTanHalf: { value: 0.55 },
+        uAspect: { value: 1.78 },
+        uHole: { value: new THREE.Vector3() },
+        uRs: { value: 1 },
+        uSteps: { value: 110 },
         uDeflect: { value: 1 },
-        uShadowScale: { value: 1.35 },
-        uSwirl: { value: 1 },
-        uRing: { value: 0.85 },
-        uStars: { value: 0.6 },
-        uBand: { value: 0.55 },
-        uLevel: { value: 0 },
-        uTime: bhSharedTimeUniform()
+        uDiscInner: { value: 2.2 },
+        uDiscOuter: { value: 7.5 },
+        uDiscTilt: { value: 0.14 },
+        uDiscGain: { value: 1.1 },
+        uSpin: { value: 0.7 },
+        uRing: { value: 0.45 },
+        uLevel: { value: 0 }
       }
     });
     var textMaterial = new THREE.ShaderMaterial({
@@ -621,21 +612,33 @@ function bhAlignPassSize() {
 
 function bhSyncLens(frame) {
   var material = blackHoleState.material;
-  if (!material) return;
+  if (!material || !frame) return;
   var u = material.uniforms;
-  u.uCenter.value.set(frame.uv.u, frame.uv.v);
-  u.uAspect.value = frame.aspect;
-  u.uPlaneZ.value = frame.planeZ;
-  u.uScale.value = frame.scale;
-  u.uSpin.value = bhParam('spin');
-  u.uCharge.value = bhParam('charge');
-  u.uDeflect.value = bhParam('deflect');
-  u.uShadowScale.value = bhParam('shadowScale');
-  u.uSwirl.value = bhParam('swirl');
-  u.uRing.value = bhParam('ringGlow');
-  u.uStars.value = bhParam('skyStars');
-  u.uBand.value = bhParam('skyBand');
+  var rs = Math.max(0.0001, frame.horizonWorld || 1);
+  u.uHole.value.set(frame.world.x, frame.world.y, frame.world.z);
+  u.uRs.value = rs;
+  if (typeof camera !== 'undefined' && camera && camera.position) {
+    u.uCamPos.value.set(camera.position.x, camera.position.y, camera.position.z);
+  }
+  if (frame.camera) {
+    u.uCamFwd.value.set(frame.camera.fwd.x, frame.camera.fwd.y, frame.camera.fwd.z);
+    u.uCamRight.value.set(frame.camera.right.x, frame.camera.right.y, frame.camera.right.z);
+    u.uCamUp.value.set(frame.camera.up.x, frame.camera.up.y, frame.camera.up.z);
+    u.uTanHalf.value = frame.camera.tanHalf || 0.55;
+  }
+  u.uAspect.value = frame.aspect || 1.78;
+  u.uSteps.value = bhClamp(bhParam('marchSteps'), 16, 256);
+  u.uDeflect.value = bhClamp(bhParam('deflect'), 0, 3);
+  // Disc radii arrive in world units and are used in horizon radii, like everything inside the march.
+  u.uDiscInner.value = Math.max(1.02, bhClamp(bhParam('discInner'), 0.2, 40) / rs);
+  u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
+  u.uDiscTilt.value = bhClamp(bhParam('discTilt'), -60, 60) * Math.PI / 180;
+  u.uDiscGain.value = bhClamp(bhParam('discGain'), 0, 3);
+  u.uSpin.value = bhClamp(bhParam('spin'), -1, 1);
+  u.uRing.value = bhClamp(bhParam('ringGlow'), 0, 2);
   u.uLevel.value = blackHoleState.level;
+  if (u.iResolution) u.iResolution.value.set(blackHoleState.width || 1, blackHoleState.height || 1, 1);
+  if (u.iFrame) u.iFrame.value = (u.iFrame.value + 1) % 100000;
 }
 
 // Runs between the camera modules and the lyric layout: the frustum knob has to be in place

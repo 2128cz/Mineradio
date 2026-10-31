@@ -40,6 +40,7 @@
     'js/modules/02-visual/17-pv-preset.js',
     'js/modules/02-visual/18-halo-ring-preset.js',
     'js/modules/02-visual/19-galaxy-blackhole-preset.js',
+    'js/modules/02-visual/20-shadertoy-driver.js',
     'sonic-topography-preset.js',
     'sonic-workshop-preset.js',
     'js/modules/03-beat/00-tempo-worker-cache-prefetch.js',
