@@ -59,6 +59,9 @@ var BH_TUNING_SCHEMA = {
   discGain: { def: 0.85, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   // The disc is a volume of this world thickness: the camera can be inside it and still see it.
   discThickness: { def: 0.12, min: 0.01, max: 6, kind: 'unit', rebuild: 'live' },
+  // How much the disc's density field is wispy rather than a smooth glow: 0 is a uniform slab,
+  // 1 is the default filament field, above that the voids get deeper and the filaments sharper.
+  discWisp: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // One softness for the whole backdrop: the galaxy, the streaks and the glow move together.
   // Radial blur of the star field, in pixels: a little is depth, a lot is a smeared plate.
   softness: { def: 3, min: 0, max: 6, kind: 'px', rebuild: 'live' },
@@ -66,7 +69,7 @@ var BH_TUNING_SCHEMA = {
   debris: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
-  textLens: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  textLens: { def: 1, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   // A long lens: the narrower the fov, the flatter the perspective and the more the hole reads as
@@ -75,7 +78,7 @@ var BH_TUNING_SCHEMA = {
   sideSpread: { def: 6.2, min: 2.5, max: 14, kind: 'unit', rebuild: 'lyric' },
   startNear: { def: 1.6, min: 0.7, max: 4, kind: 'unit', rebuild: 'lyric' },
   flyIn: { def: 0.75, min: 0.15, max: 2.5, kind: 'sec', rebuild: 'live' },
-  swallow: { def: 0.55, min: 0.15, max: 2, kind: 'sec', rebuild: 'live' },
+  swallow: { def: 1.4, min: 0.2, max: 3, kind: 'sec', rebuild: 'live' },
   fallCurve: { def: 0.66, min: 0.25, max: 1.6, kind: 'ratio', rebuild: 'live' },
   passScale: { def: 1, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   // The field is this preset's own galaxy, not the app's cover particles: density, size and the
@@ -90,13 +93,12 @@ var BH_TUNING_SCHEMA = {
   galaxySpin: { def: 0.55, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   galaxyGlow: { def: 0.7, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   nebulaAmount: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  // The lyric rows hang beside the hole in the viewer's own frame: odd lines on the left, even on
-  // the right. These are fractions of the half-width / half-height, not world lengths, because "my
-  // left and right" is a screen direction - a world offset would drift off the frame as the camera
-  // moves. lyricWind is how far round the hole a row winds on its way in.
-  lyricSide: { def: 0.62, min: 0.25, max: 0.95, kind: 'ratio', rebuild: 'live' },
-  lyricGap: { def: 0.16, min: 0.04, max: 0.5, kind: 'ratio', rebuild: 'live' },
-  lyricWind: { def: 0.9, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
+  // The lyrics orbit inside the accretion disc's plane, so "where they are" is a world circle, not
+  // a screen offset: lyricOrbit is its radius in scene units, lyricOrbitRate how fast a line comes
+  // round (radians per second), lyricWind how many extra radians it turns while falling in.
+  lyricOrbit: { def: 2.4, min: 0.4, max: 12, kind: 'unit', rebuild: 'live' },
+  lyricOrbitRate: { def: 0.5, min: 0.05, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricWind: { def: 2.0, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
@@ -345,6 +347,7 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform float uDiscInner;',
     'uniform float uDiscOuter;',
     'uniform float uDiscThick;',
+    'uniform float uWisp;',
     'uniform float uDiscTilt;',
     'uniform float uDiscGain;',
     'uniform float uSpin;',
@@ -357,6 +360,39 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform float uLevel;',
     '',
     'float hash21(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }',
+    '',
+    '// 3D value noise: the disc fog is sampled at the marched point, so the field has to exist in the',
+    '// third dimension or every step along a ray reads the same cell (streaks instead of wisps).',
+    'float hash13(vec3 p3) {',
+    '  p3 = fract(p3 * 0.1031);',
+    '  p3 += dot(p3, p3.yzx + 33.33);',
+    '  return fract((p3.x + p3.y) * p3.z);',
+    '}',
+    'float noise3(vec3 x) {',
+    '  vec3 i = floor(x);',
+    '  vec3 f = fract(x);',
+    '  f = f * f * (3.0 - 2.0 * f);',
+    '  float n000 = hash13(i);',
+    '  float n100 = hash13(i + vec3(1.0, 0.0, 0.0));',
+    '  float n010 = hash13(i + vec3(0.0, 1.0, 0.0));',
+    '  float n110 = hash13(i + vec3(1.0, 1.0, 0.0));',
+    '  float n001 = hash13(i + vec3(0.0, 0.0, 1.0));',
+    '  float n101 = hash13(i + vec3(1.0, 0.0, 1.0));',
+    '  float n011 = hash13(i + vec3(0.0, 1.0, 1.0));',
+    '  float n111 = hash13(i + vec3(1.0, 1.0, 1.0));',
+    '  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),',
+    '             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);',
+    '}',
+    'float fbm3(vec3 p) {',
+    '  float sum = 0.0;',
+    '  float amp = 0.55;',
+    '  for (int i = 0; i < 3; i++) {',
+    '    sum += amp * noise3(p);',
+    '    p = p * 2.07 + vec3(7.3, 1.9, 4.7);',
+    '    amp *= 0.5;',
+    '  }',
+    '  return sum;',
+    '}',
     '',
     '// Near debris: sparse specks drifting across the frame, dark bodies with a lit rim on the side',
     '// that faces the disc. They are the reference the eye needs: without something small and close,',
@@ -464,22 +500,23 @@ var BH_PASS_FS = shadertoyFragment(
     '      float rn = clamp((r - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
     '      float radial = smoothstep(0.0, 0.18, rn) * (1.0 - smoothstep(0.72, 1.0, rn));',
     '      float heat = pow(1.0 - rn, 1.7);',
-    '      // Grain: hashed cells in the disc\'s own rotating frame, so it streaks with the flow.',
-    '      float ang = atan(pos.z, pos.x);',
-    '      float phase = ang - uSpin * iTime * 0.55 / (0.6 + r);',
-    '      vec2 cell = floor(vec2(phase * 7.0, r * 6.0 + iTime * 0.25));',
-    '      float h = hash21(cell);',
-    '      float grain = mix(0.25, 1.75, smoothstep(0.52, 0.94, h));',
-    '      // A second, finer octave: near the hole the fog has wisps, not just cells.',
-    '      float fine = hash21(floor(vec2(phase * 21.0, r * 17.0 + iTime * 0.7)));',
-    '      grain *= mix(1.0, mix(0.45, 1.9, fine), smoothstep(0.55, 0.12, rn));',
+    // The fog is a point field sampled at the marched position, turned with the flow: a ray cuts
+    // through filaments instead of dragging one hashed cell along itself, which is what made the
+    // old grain read as stretched dots.
+    '      float flow = atan(pos.z, pos.x) - uSpin * iTime * 0.55 / (0.6 + r);',
+    '      vec3 q = vec3(cos(flow) * r, sin(flow) * r, side * 4.5) + vec3(0.0, 0.0, iTime * 0.04);',
+    '      float base = fbm3(q * 2.0);',
+    '      float warp = noise3(q * 1.1 + vec3(3.1, 7.7, 1.3));',
+    '      float field = smoothstep(0.34, 0.84, base + (warp - 0.5) * 0.38);',
+    '      field *= 0.30 + 1.15 * (1.0 - abs(2.0 * base - 1.0));',
+    '      float fog = mix(1.0, 0.10 + 1.9 * field, clamp(uWisp, 0.0, 2.0) * 0.7);',
     '      vec2 tangent = normalize(vec2(-pos.z, pos.x));',
     '      vec2 motion = normalize(vec2(vel.x, vel.z));',
     '      float doppler = 1.0 + uSpin * 0.8 * dot(tangent, motion);',
-    '      float density = vert * radial * grain;',
+    '      float density = vert * radial * fog;',
     '      vec3 tint = mix(vec3(1.0, 0.50, 0.18), vec3(1.0, 0.96, 0.88), heat);',
     '      emit += tint * (0.22 + 1.8 * heat) * max(0.10, doppler) * density * dt * uDiscGain * transmit;',
-    '      transmit *= exp(-density * dt * 0.6 * (0.5 + uDiscGain));',
+    '      transmit *= exp(-density * dt * 1.6 * (0.5 + uDiscGain));',
     '    }',
     '    pos += vel * dt;',
     '  }',
@@ -499,8 +536,14 @@ var BH_PASS_FS = shadertoyFragment(
     '  // Inside the shadow nothing behind the hole is seen at all: the disc and the ring are added by',
     '  // the march, but the sky has to go black or the hole has no hole in it.',
     '  float skyMask = smoothstep(uShadowUv * 0.98, uShadowUv * 1.06, qlen);',
-    '  // Only the stars are at infinity, so only they take the bend.',
-    '  vec3 bg = (sampleSky(uv, uSoft) + starField(uv + bend, iTime) * 0.85) * skyMask;',
+    // The scene near the hole is sampled back through the bend: a pixel a little outside the shadow
+    // carries light from closer to the centre, which is how a line behind the hole turns up as an
+    // arc hugging the rim instead of vanishing behind it. Only the strong-lens zone is remapped, so
+    // the frame edges keep their content and the old edge stretch cannot come back.
+    '  float nearMask = 1.0 - smoothstep(uShadowUv * 1.05, uShadowUv * 2.6, qlen);',
+    '  vec2 lensUv = clamp(uv - bend * nearMask * clamp(uTextLens, 0.0, 1.0), 0.0, 1.0);',
+    // Only the stars are at infinity, so only they take the bend.
+    '  vec3 bg = (sampleSky(lensUv, uSoft) + starField(uv + bend, iTime) * 0.85) * skyMask;',
     '',
     '  float rFinal = lastR;',
     '  vec3 color = bg * transmit + emit;',
@@ -516,19 +559,9 @@ var BH_PASS_FS = shadertoyFragment(
     '  vec4 debris = nearDebris(uv, iTime, uDebris);',
   '  color = mix(color, debris.rgb, clamp(debris.a, 0.0, 1.0));',
   '',
-  '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
-    // The text bends only near the shadow. Away from it the pull is small but its gradient is not,
-    // and shearing a resting row by it is what made the letters comb; as a row falls in, the bend
-    // grows and takes the whole line with it.
-    '  float textGravity = 1.0 - smoothstep(uShadowUv * 1.25, uShadowUv * 3.2, qlen);',
-    // The full backdrop pull is more than a third of the frame at the rim: applied to the text it
-    // would sample past the row entirely and the line would vanish before it is swallowed. The
-    // bend is therefore capped at a fraction of the shadow radius - enough to drag the line round
-    // with the field, small enough that it is still a line while it goes in.
-    '  float textBendLen = length(bend) * clamp(uTextLens, 0.0, 1.0) * closeness * textGravity;',
-    '  float textBendCap = uShadowUv * 0.12;',
-    '  vec2 textUv = clamp(uv + (qv / qlen) * min(textBendLen, textBendCap), 0.0, 1.0);',
-    '  vec4 text = texture2D(iChannel1, textUv);',
+  // The near rows are in front of the hole, so they are pasted straight over the picture: the lens
+  // belongs to what is behind the hole, and that is the scene channel above.
+    '  vec4 text = texture2D(iChannel1, uv);',
     '  color = color * (1.0 - text.a) + text.rgb;',
     '  fragColor = vec4(color, 1.0);',
     '}'
@@ -638,14 +671,13 @@ function bhBuildPass() {
       uniforms: {
         iChannel0: { value: rt.texture },
         iChannel1: { value: textRt.texture },
-        uTextLens: { value: 0.75 },
+        uTextLens: { value: 1 },
         uCenter: { value: new THREE.Vector2(0.5, 0.5) },
         uSoft: { value: 3 },
         uShadowUv: { value: 0.3 },
         uShake: { value: new THREE.Vector2() },
         uDolly: { value: 0 },
         uDebris: { value: 0.6 },
-        uDiscThick: { value: 0.9 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
         iFrame: { value: 0 },
@@ -663,6 +695,7 @@ function bhBuildPass() {
         uDiscInner: { value: 2.2 },
         uDiscOuter: { value: 4.2 },
         uDiscThick: { value: 0.9 },
+        uWisp: { value: 1 },
         uDiscTilt: { value: 0.24 },
         uDiscGain: { value: 1.1 },
         uSpin: { value: 0.7 },
@@ -735,6 +768,7 @@ function bhSyncLens(frame) {
   u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
   if (u.uDiscThick) u.uDiscThick.value = Math.max(0.01, bhClamp(bhParam('discThickness'), 0.02, 8) / rs);
   if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 6);
+  if (u.uWisp) u.uWisp.value = bhClamp(bhParam('discWisp'), 0, 2);
   if (u.uShadowUv) u.uShadowUv.value = frame.uvShadow || 0.3;
   if (u.uDebris) u.uDebris.value = bhClamp(bhParam('debris'), 0, 1);
   var drift = bhCameraDrift(blackHoleFlight.time, bhClamp(bhParam('cameraDrift'), 0, 1));
@@ -746,7 +780,7 @@ function bhSyncLens(frame) {
   u.uSpin.value = bhClamp(bhParam('spin'), -1, 1);
   u.uRing.value = bhClamp(bhParam('ringGlow'), 0, 2);
   u.uLevel.value = blackHoleState.level;
-  if (u.uTextLens) u.uTextLens.value = bhClamp(bhParam('textLens'), 0, 1);
+  if (u.uTextLens) u.uTextLens.value = bhClamp(bhParam('textLens'), 0, 1.5);
   if (u.iResolution) u.iResolution.value.set(blackHoleState.width || 1, blackHoleState.height || 1, 1);
   if (u.iFrame) u.iFrame.value = (u.iFrame.value + 1) % 100000;
 }
@@ -818,17 +852,16 @@ function renderBlackHoleFrame() {
   var screenQuad = quads[0];
   var lyrics = (typeof bhLyrics !== 'undefined' && bhLyrics && bhLyrics.layer) ? bhLyrics.layer : null;
   var galaxy = (typeof bhGalaxy !== 'undefined' && bhGalaxy && bhGalaxy.group) ? bhGalaxy.group : null;
-  var lyricsWereVisible = lyrics ? lyrics.visible : false;
   try {
-    // 1. the galaxy, without the text
-    if (lyrics) lyrics.visible = false;
+    // 1. the world: the galaxy and the rows on the far half of the orbit. Those rows are behind the
+    //    hole, so they belong to the scene the lens gets to bend and the disc fog gets to cover.
+    if (lyrics) bhSetLyricSideVisibility(false);
     renderer.setRenderTarget(blackHoleState.rt);
     renderer.render(scene, camera);
-    if (lyrics) lyrics.visible = lyricsWereVisible;
-    // 2. the text alone, from the same camera. The pass samples this target as iChannel1, so the
-    //    lyrics are an input of the shader rather than a layer pasted over its output.
+    // 2. the near half of the orbit, alone, from the same camera: these rows are between the eye
+    //    and the hole, so they are composited in front of the finished picture as iChannel1.
     renderer.setRenderTarget(blackHoleState.textRt);
-    if (lyrics && lyricsWereVisible) {
+    if (lyrics && bhSetLyricSideVisibility(true) > 0) {
       if (galaxy) galaxy.visible = false;
       renderer.render(scene, camera);
       if (galaxy) galaxy.visible = true;
@@ -837,6 +870,7 @@ function renderBlackHoleFrame() {
       // Nothing to draw: clear it, or the pass would sample last frame's text.
       renderer.clear();
     }
+    if (lyrics) bhSetLyricSideVisibility(null);
     renderer.setRenderTarget(null);
     if (screenQuad) screenQuad.visible = true;
     if (firstDraw) {
@@ -849,7 +883,7 @@ function renderBlackHoleFrame() {
   } catch (error) {
     blackHoleState.error = String((error && error.message) || error);
     renderer.setRenderTarget(null);
-    if (lyrics) lyrics.visible = lyricsWereVisible;
+    if (lyrics) bhSetLyricSideVisibility(null);
     if (galaxy) galaxy.visible = true;
     blackHoleState.fallbacks++;
     return false;
@@ -1542,19 +1576,14 @@ function bhPlaceGalaxy(frame, dt) {
 }
 
 
-// ---------------------------------------------------------------- the lyric arc
+// ---------------------------------------------------------------- the lyric orbit
 //
-// The text does not sit in the middle of the frame: it runs along the galaxy's outer rim in curved
-// rows, drifting there, and the sung line is the one at the front. Two pieces are borrowed from
-// the ring preset rather than re-derived - the per-glyph arc maths (haloDrawArcLine draws each
-// glyph with its own rotation and keeps its feet towards the centre) and the lyric timing/palette
-// plumbing (lyricsLines + getActiveLyricTimingOffsetSeconds, the translation the app attached to
-// the line, haloLyricPalette / lyricMotionProfile for colour and motion).
-//
-// The difference is where it is drawn. The ring paints on a DOM canvas, which this preset's post
-// pass cannot refract; here each row is rasterised into its own canvas, uploaded as a texture and
-// mapped onto a plane that stands tangent to the rim inside the render target - so the arc bends
-// with everything else the lens touches.
+// The rows are objects on a circle in the accretion disc's own plane, not a screen-space layer.
+// A line comes round from behind the hole, waits at the point nearest the camera so it can be
+// read, then keeps going the same way while it spirals in; the rows on the far half are behind
+// the hole, so the lens picks their light up and the disc fog passes over them. The timing and
+// palette plumbing is still the app's (lyricsLines + getActiveLyricTimingOffsetSeconds, the
+// translation attached to the line, haloLyricPalette / lyricMotionProfile).
 var bhLyrics = {
   layer: null,
   rows: [],
@@ -1562,6 +1591,7 @@ var bhLyrics = {
   listKey: '',
   sung: -1,
   time: 0,
+  now: 0,
   builtKey: ''
 };
 
@@ -1655,56 +1685,60 @@ function bhSwallowAlpha(distance, shadowRadius) {
   return bhClamp((distance / shadowRadius - 0.15) / 0.4, 0, 1);
 }
 
-// Which side of the hole a line hangs on, as the viewer sees it: the first line on the left, then
-// alternating. The row layer is camera-aligned, so local -x is the viewer's left.
-function bhLyricSide(itemIndex) {
-  return Math.abs(Math.round(Number(itemIndex) || 0)) % 2 === 0 ? -1 : 1;
-}
+var BH_ORBIT_FRONT = -Math.PI / 2;
 
-// The rows live in a camera-facing plane at the hole's world point, so local x/y are screen
-// right/up. Everything is given in fractions of the visible half-frame and converted here, which
-// is what keeps "beside the hole" meaning the same pixel at any camera distance or fov.
-function bhLyricFrame(frame, params) {
-  var unit = Math.max(1e-4, (Number(frame.distance) || 1) * ((frame.camera && frame.camera.tanHalf) || 0.55));
-  var aspect = Math.max(0.2, Number(frame.aspect) || 1.78);
+// The orbit is a circle inside the accretion disc's plane, so it tips with the disc. e1 and e2 are
+// the plane's own axes and n is its normal, in the same world axes the shader marches in. The
+// front of the circle is the point nearest the camera, which is where a line stops to be read.
+function bhOrbitBasis(tiltDeg) {
+  var t = bhClamp(Number(tiltDeg) || 0, -60, 60) * Math.PI / 180;
   return {
-    unit: unit,
-    aspect: aspect,
-    side: bhClamp(Number(params.side) || 0.62, 0.18, 0.98),
-    holdX: bhClamp(Number(params.side) || 0.62, 0.18, 0.98) * unit * aspect,
-    stepY: bhClamp(Number(params.gap) || 0.16, 0.02, 0.5) * unit,
-    rowH: bhClamp(Number(params.height) || 0.15, 0.03, 0.4) * unit,
-    // The shadow's radius on the same scale: a row has been swallowed once its centre is inside it.
-    shadow: Math.max(1e-4, (Number(frame.uvShadow) || 0.3) * unit)
+    n: { x: Math.sin(t), y: Math.cos(t), z: 0 },
+    e1: { x: Math.cos(t), y: -Math.sin(t), z: 0 },
+    e2: { x: 0, y: 0, z: -1 }
   };
 }
 
-// A row slides in from just off its own side of the frame: fast at first and settling, an
-// exponential approach rather than a constant-speed slide.
-function bhLyricEnter(holdX, progress, overshoot) {
-  var u = bhClamp(Number(progress) || 0, 0, 1);
-  var side = holdX < 0 ? -1 : 1;
-  var start = holdX + side * Math.abs(holdX) * Math.max(0.05, Number(overshoot) || 0.55);
-  var k = u >= 1 ? 1 : 1 - Math.pow(2, -10 * u);
-  return { x: start + (holdX - start) * k, alpha: bhClamp(u * 3, 0, 1), scale: 1.2 - 0.2 * k };
+function bhOrbitFrontAngle(basis, towardCamera) {
+  var a = towardCamera.x * basis.e1.x + towardCamera.y * basis.e1.y + towardCamera.z * basis.e1.z;
+  var b = towardCamera.x * basis.e2.x + towardCamera.y * basis.e2.y + towardCamera.z * basis.e2.z;
+  return Math.atan2(b, a);
 }
 
-// The plunge: the same radial free-fall law the row distance always used, d = d0 * (1-u)^curve,
-// with the bearing winding by u^2.5 at the same time. The bearing term has zero slope at the start
-// and its maximum at the end, so the row hangs for a moment and then whips round the hole: the
-// path is longer than the chord, which is the difference between being pulled in and sliding in.
-function bhSuckPoint(holdX, holdY, progress, curve, wind) {
-  var u = bhClamp(Number(progress) || 0, 0, 1);
-  var r0 = Math.sqrt(holdX * holdX + holdY * holdY);
-  var bearing = Math.atan2(holdY, holdX);
-  var k = bhClamp(Number(curve) || 0.66, 0.05, 3);
-  var radius = r0 * Math.pow(Math.max(0, 1 - u), k);
-  var turned = (Number(wind) || 0) * Math.pow(u, 2.5);
+function bhOrbitPoint(basis, radius, angle) {
+  var c = Math.cos(angle);
+  var s = Math.sin(angle);
   return {
-    x: Math.cos(bearing + turned) * radius,
-    y: Math.sin(bearing + turned) * radius,
-    radius: radius,
-    turned: turned
+    x: (basis.e1.x * c + basis.e2.x * s) * radius,
+    y: (basis.e1.y * c + basis.e2.y * s) * radius,
+    z: (basis.e1.z * c + basis.e2.z * s) * radius
+  };
+}
+
+// Where a line is at `now`, as a fraction of the hold radius and an angle on the orbit:
+// - before its first word it comes round from behind at the orbit rate (angle above the front),
+// - while it is being sung it waits at the front, which is where it can be read,
+// - after its last word it keeps going the same way while the radius falls on the free-fall law,
+//   and `wind` adds the extra turn that makes the inward path a spiral. null once it is gone.
+function bhLyricOrbitState(item, now, params, frontAngle) {
+  var t = Number(now) || 0;
+  var start = Number(item && item.startAt) || 0;
+  var end = Number(item && item.endAt) || start;
+  var rate = Math.max(0.001, Number(params.rate) || 0.5);
+  if (t < start) {
+    return { phase: 'approach', angle: frontAngle + rate * (start - t), radius: 1, fall: 0 };
+  }
+  if (t <= end) {
+    return { phase: 'read', angle: frontAngle, radius: 1, fall: 0 };
+  }
+  var u = bhClamp((t - end) / Math.max(0.1, Number(params.swallow) || 1.4), 0, 1);
+  if (u >= 1) return null;
+  var curve = bhClamp(Number(params.curve) || 0.66, 0.05, 3);
+  return {
+    phase: 'fall',
+    angle: frontAngle - rate * (t - end) - (Number(params.wind) || 0) * Math.pow(u, 1.4),
+    radius: Math.pow(Math.max(0, 1 - u), curve),
+    fall: u
   };
 }
 
@@ -1798,7 +1832,7 @@ function bhBuildLyricRow(width, height) {
   var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 60;
-  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, enterAt: 0, exitAt: -1, exitY: 0, y: 0 };
+  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, live: false, front: true };
 }
 
 function bhDisposeLyrics() {
@@ -1814,6 +1848,7 @@ function bhDisposeLyrics() {
   bhLyrics.listKey = '';
   bhLyrics.builtKey = '';
   bhLyrics.sung = -1;
+  bhLyrics.now = 0;
 }
 
 function bhBuildLyrics() {
@@ -1842,31 +1877,43 @@ function bhBuildLyrics() {
 
 function bhLyricParams() {
   return {
-    side: bhClamp(bhParam('lyricSide'), 0.18, 0.98),
-    gap: bhClamp(bhParam('lyricGap'), 0.02, 0.5),
+    orbit: bhClamp(bhParam('lyricOrbit'), 0.3, 20),
+    rate: bhClamp(bhParam('lyricOrbitRate'), 0.05, 2),
     wind: bhClamp(bhParam('lyricWind'), 0, 3),
     curve: bhClamp(bhParam('fallCurve'), 0.05, 3),
+    swallow: Math.max(0.1, bhParam('swallow')),
     drift: bhClamp(bhParam('lyricDrift'), 0, 1.5),
-    // The plane's height, as a fraction of the visible half-height: the glyphs then occupy the
-    // same share of the frame at any fov or camera distance, while the app's own lyric scale still
-    // sets the base size through bhLyricFontPx.
+    // The plane's height as a fraction of the visible half-height at the hole's depth. A row at
+    // the front of the orbit is nearer the eye, so the perspective makes it larger - that is the
+    // same near/far enlargement the rest of the scene gets, not a separate scale animation.
     height: bhClamp(bhLyricFontPx() * 0.008, 0.03, 0.4)
   };
 }
 
-// The rows hang beside the hole in the viewer's own frame - odd lines left, even right - and once a
-// line has been sung it spirals into the hole. The layer is camera-aligned at the hole's world
-// point, so its local x/y are screen right/up: "my left and right", not the galaxy's.
+// The rows orbit inside the disc plane: a line comes round from behind, waits at the point
+// nearest the camera while it is sung, then keeps going the same way while it spirals in. Rows on
+// the near half are composited in front of the picture; rows on the far half are part of the
+// scene target, so the lens bends them and the disc fog passes over them.
 function bhPlaceLyrics(frame, dt) {
   if (!bhLyrics.layer) return false;
+  if (typeof camera === 'undefined' || !camera || !camera.position) return false;
   var params = bhLyricParams();
   bhLyrics.time += Math.max(0, Number(dt) || 0);
   var time = bhLyrics.time;
-  var dtStep = Math.max(0, Math.min(0.2, Number(dt) || 0));
+  var now = isFinite(Number(bhLyrics.now)) ? Number(bhLyrics.now) : time;
   var motion = bhLyricMotionState();
   bhLyrics.layer.position.set(frame.world.x, frame.world.y, frame.world.z);
-  if (typeof camera !== 'undefined' && camera) bhLyrics.layer.quaternion.copy(camera.quaternion);
-  var view = bhLyricFrame(frame, params);
+  var basis = bhOrbitBasis(bhParam('discTilt'));
+  var front = bhOrbitFrontAngle(basis, {
+    x: camera.position.x - frame.world.x,
+    y: camera.position.y - frame.world.y,
+    z: camera.position.z - frame.world.z
+  });
+  var tanHalf = (frame.camera && frame.camera.tanHalf) || 0.55;
+  var aspect = Math.max(0.2, Number(frame.aspect) || 1.78);
+  var fwd = (frame.camera && frame.camera.fwd) || { x: 0, y: 0, z: -1 };
+  var depth = Math.max(0.1, Number(frame.distance) || 1);
+  var shadowWorld = Math.max(1e-4, (Number(frame.uvShadow) || 0.3) * depth * tanHalf);
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
   var anchor = sung < 0 ? 0 : sung;
@@ -1880,34 +1927,23 @@ function bhPlaceLyrics(frame, dt) {
       held[bound.itemIndex] = bound;
     } else {
       bound.itemIndex = -1;
+      bound.live = false;
       bound.mesh.visible = false;
     }
   }
-  // A line keeps its own row while it is in the window, so advancing the song slides a row up a
-  // slot instead of re-entering it - and a row never flips sides halfway through a line.
+  // A line keeps its own row while it is in the window, so advancing the song lets the row keep
+  // orbiting instead of jumping to a new slot.
   for (var idx = lo; idx <= hi; idx++) {
     if (held[idx] || !items.length) continue;
     var free = null;
     for (var f = 0; f < rows.length; f++) if (rows[f].itemIndex < 0) { free = rows[f]; break; }
     if (!free) continue;
     free.itemIndex = idx;
-    free.exitAt = -1;
-    free.exitY = 0;
-    free.enterAt = time;
-    free.y = (idx - anchor) * view.stepY;
-    // A line that is already behind the playhead when the preset comes up is on its way in from
-    // the start, not sliding in: it was sung before there was a row to show it.
-    if (sung >= 0 && idx < sung) {
-      free.enterAt = time - Math.max(0.05, bhParam('flyIn'));
-      free.exitAt = time;
-      free.exitY = free.y;
-    }
+    free.live = true;
+    free.sung = null;
     bhDrawRowCanvas(free, items[idx], idx === sung, bhLyricPaletteState(), motion);
     free.texture.needsUpdate = true;
   }
-  var flyIn = Math.max(0.05, bhParam('flyIn'));
-  var swallowDur = Math.max(0.05, bhParam('swallow'));
-  var wobble = params.drift * 0.02 * view.unit;
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     if (row.itemIndex < 0) continue;
@@ -1919,68 +1955,83 @@ function bhPlaceLyrics(frame, dt) {
       bhDrawRowCanvas(row, items[index], current, bhLyricPaletteState(), motion);
       row.texture.needsUpdate = true;
     }
-    var side = bhLyricSide(index);
-    var holdX = side * view.holdX;
-    var holdY = bhClamp((index - anchor) * view.stepY, -0.82 * view.unit, 0.82 * view.unit);
-    if (current && row.exitAt >= 0) {
-      // The playhead was moved back onto a row that had already started falling.
-      row.exitAt = -1;
-      row.exitY = 0;
-      row.enterAt = time - flyIn;
-      row.y = holdY;
+    var state = bhLyricOrbitState(items[index], now, params, front);
+    if (!state) {
+      row.live = false;
+      row.itemIndex = -1;
+      row.mesh.visible = false;
+      row.material.opacity = 0;
+      continue;
     }
-    if (!current && sung >= 0 && index < sung && row.exitAt < 0) {
-      row.exitAt = time;
-      row.exitY = row.y;
-    }
-    // Rows ease between slots; only the fall is driven directly.
-    row.y += (holdY - row.y) * Math.min(1, dtStep * 9);
-    var x, y, opacity = 1, scale = current ? 1.12 : 0.92;
-    var enterU = bhClamp((time - row.enterAt) / flyIn, 0, 1);
-    if (row.exitAt >= 0) {
-      var u = bhClamp((time - row.exitAt) / swallowDur, 0, 1);
-      var fall = bhSuckPoint(holdX, row.exitY, u, params.curve, params.wind);
-      x = fall.x;
-      y = fall.y;
-      opacity = bhSwallowAlpha(fall.radius, view.shadow);
-      scale *= 1 - 0.35 * u;
-      row.mesh.visible = u < 1;
-    } else if (enterU < 1) {
-      var enter = bhLyricEnter(holdX, enterU, 0.55);
-      x = enter.x;
-      y = row.y + Math.sin(time * 0.6 + index * 0.9) * wobble;
-      opacity = enter.alpha;
-      scale *= enter.scale;
-      row.mesh.visible = true;
-    } else {
-      x = holdX;
-      y = row.y + Math.sin(time * 0.6 + index * 0.9) * wobble;
-      row.mesh.visible = true;
-    }
-    row.mesh.position.set(x, y, 0.02);
-    // The line reads horizontally in the viewer's frame: the row is never turned onto an arc.
-    row.mesh.rotation.z = 0;
-    row.mesh.renderOrder = current ? 62 : 60;
-    // A long line is scaled to the margin it hangs in rather than allowed to run off the frame.
-    var worldH = view.rowH * scale;
-    var widthNdc = worldH * (row.widthRatio || 4) / (view.unit * view.aspect);
-    var limitNdc = 2 * Math.max(0.12, 0.94 - view.side);
-    var fit = widthNdc > limitNdc ? limitNdc / widthNdc : 1;
+    row.live = true;
+    var wobble = Math.sin(time * 0.6 + index * 0.9) * params.drift * 0.02;
+    var angle = state.angle + wobble;
+    var radius = params.orbit * state.radius;
+    var point = bhOrbitPoint(basis, radius, angle);
+    row.mesh.position.set(point.x, point.y, point.z);
+    // The row faces the eye wherever it is on the circle: a line turned edge-on would stop being
+    // text. The layer itself is not rotated, so this is also its world orientation.
+    row.mesh.quaternion.copy(camera.quaternion);
+    var wx = frame.world.x + point.x;
+    var wy = frame.world.y + point.y;
+    var wz = frame.world.z + point.z;
+    var alongRow = (wx - camera.position.x) * fwd.x + (wy - camera.position.y) * fwd.y + (wz - camera.position.z) * fwd.z;
+    // Near side of the orbit: it is between the eye and the hole, so it belongs in front of the
+    // picture. Far side: it is behind the hole's shadow and the lens, so it belongs in the scene.
+    row.front = alongRow < depth;
+    row.mesh.renderOrder = 60;
+    // Sized against the hole's own depth: the front of the orbit is closer to the eye, so it is
+    // drawn bigger by the perspective, and a line on the far side is smaller and hazier.
+    var worldH = params.height * depth * tanHalf * (current ? 1.12 : 0.95);
+    var rowAlong = Math.max(0.05, alongRow);
+    var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
+    var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
     row.mesh.scale.set(worldH * (row.widthRatio || 4) * fit, worldH * fit, 1);
-    // The shadow never paints over the text, so being swallowed has to come from the row: it fades
-    // out as its centre crosses the shadow radius on the way in.
-    row.material.opacity = opacity * (current ? 1 : Math.max(0.3, 0.72 - Math.abs(index - anchor) * 0.14));
+    row.mesh.visible = true;
+    var opacity = current ? 1 : 0.72;
+    if (state.phase === 'read') opacity = current ? 1 : 0.85;
+    if (state.phase === 'fall') opacity = bhSwallowAlpha(radius, shadowWorld);
+    row.material.opacity = opacity;
   }
   return true;
 }
 
+// Which half of the orbit the renderer is drawing right now: the near rows (composited in front of
+// the picture) or the far rows (part of the scene the lens bends). null puts every live row back,
+// which is what the plain fallback render needs.
+function bhSetLyricSideVisibility(side) {
+  var rows = (typeof bhLyrics !== 'undefined' && bhLyrics && bhLyrics.rows) ? bhLyrics.rows : [];
+  var shown = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row || !row.mesh || row.itemIndex < 0 || !row.live) {
+      if (row && row.mesh) row.mesh.visible = false;
+      continue;
+    }
+    var visible = side === null || side === undefined ? true : (!!side === !!row.front);
+    row.mesh.visible = visible;
+    if (visible) shown++;
+  }
+  return shown;
+}
+
 function bhLyricStatus() {
+  var frontRows = 0;
+  var backRows = 0;
+  for (var i = 0; i < bhLyrics.rows.length; i++) {
+    var row = bhLyrics.rows[i];
+    if (row.itemIndex < 0 || !row.live) continue;
+    if (row.front) frontRows++; else backRows++;
+  }
   return {
     built: !!bhLyrics.layer,
     rows: bhLyrics.rows.length,
     items: bhLyrics.items.length,
     sung: bhLyrics.sung,
-    side: Math.round(bhParam('lyricSide') * 100) / 100,
+    orbit: Math.round(bhParam('lyricOrbit') * 100) / 100,
+    rate: Math.round(bhParam('lyricOrbitRate') * 100) / 100,
+    front: frontRows,
+    back: backRows,
     text: bhLyrics.sung >= 0 && bhLyrics.items[bhLyrics.sung] ? bhLyrics.items[bhLyrics.sung].text.slice(0, 20) : ''
   };
 }
@@ -2004,6 +2055,7 @@ function updateBlackHoleLyrics(dt) {
   }
   var t = 0;
   if (typeof audio !== 'undefined' && audio && isFinite(Number(audio.currentTime))) t = Number(audio.currentTime);
+  bhLyrics.now = t;
   bhLyrics.sung = bhLyricSungIndex(bhLyrics.items, t);
   return bhPlaceLyrics(frame, dt);
 }

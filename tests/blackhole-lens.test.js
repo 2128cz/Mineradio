@@ -161,9 +161,24 @@ function load(overrides) {
   assert(/starField\(uv \+ bend, iTime\)/.test(source), 'the stars have to be added to the backdrop');
   assert(!/texel\.x \* r \* 2\.4/.test(source), 'the old isotropic five-tap soft focus must be gone');
   // The subject stays sharp: everything that builds the disc and the ring is added after the blur.
-  const blurAt = source.indexOf('sampleSky(uv, uSoft)');
+  const blurAt = source.indexOf('sampleSky(lensUv, uSoft)');
   const discAt = source.indexOf('emit += tint');
   assert(discAt > 0 && blurAt > 0 && discAt < blurAt, 'the disc is built before the backdrop is sampled, unblurred');
+
+  // The disc is a volume sampled in 3D, not hashed cells in (angle, radius): the cell grain drew
+  // stretched dots because every step along a ray read the same cell.
+  for (const pattern of [/float hash13\(vec3/, /float noise3\(vec3/, /float fbm3\(vec3/]) {
+    assert(pattern.test(source), 'the disc fog needs a 3D noise field: ' + pattern);
+  }
+  assert(/float base = fbm3\(q \* 2\.0\);/.test(source), 'the fog has to be sampled at the marched position');
+  assert(/vec3 q = vec3\(cos\(flow\) \* r, sin\(flow\) \* r, side \* 4\.5\)/.test(source),
+    'the sample has to carry the height inside the slab, or the ray reads one cell all the way through');
+  assert(/float warp = noise3\(q \* 1\.1/.test(source), 'with a low-frequency warp for the filaments');
+  assert(/float fog = mix\(1\.0, 0\.10 \+ 1\.9 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(source),
+    'and the wisp amount has to reach the density');
+  assert(/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(source),
+    'the discWisp knob has to be written to the shader every frame');
+  assert(!/float grain = mix\(0\.25, 1\.75/.test(source), 'the old hashed-cell grain must be gone');
   console.log('backdrop: radial taps ' + JSON.stringify(taps) + ' at ' + sandbox.bhParam('softness') + 'px, four-point stars, no isotropic blur');
 }
 
@@ -190,11 +205,12 @@ function load(overrides) {
   }
   assert(moved, 'the drift has to actually move over a song');
 
-  // The shader applies the drift to the ray, carries the debris pass and a second filament octave.
+  // The shader applies the drift to the ray, carries the debris pass, and builds the disc from a
+  // 3D field sampled at the marched position.
   assert(/vec2 ndc = \(uv - 0\.5\) \* 2\.0 \* \(1\.0 \+ uDolly\) \+ uShake;/.test(source),
     'the drift and dolly have to reach the ray');
   assert(/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(source), 'the near debris pass must exist');
-  assert(/float fine = hash21\(floor\(vec2\(phase \* 21\.0/.test(source), 'the near fog needs its fine octave');
+  assert(/float base = fbm3\(q \* 2\.0\);/.test(source), 'the near fog needs its 3D field');
   assert(/color = mix\(color, debris\.rgb, clamp\(debris\.a, 0\.0, 1\.0\)\)/.test(source),
     'and the debris has to be composited in front');
   console.log('epic: fov ' + sandbox.bhParam('fovDeg') + ' deg, drift ' + on.x.toFixed(5) + '/' + on.y.toFixed(5)
@@ -268,16 +284,18 @@ function load(overrides) {
     + ', shadow radius ' + silhouette.cap.toFixed(4) + ' horizon radii');
 }
 
-// --------------------------------------------- the lyric layer is a channel of the pass now
+// ---------------------------------------- the lyric orbit is split front / back in the pass
 //
-// The text is drawn from the same camera into its own target and handed to the shader as iChannel1,
-// so it is composited inside mainImage: bent by the same field far from the hole, kept where it was
-// drawn near the rim, and never painted out by the shadow.
+// Rows on the near half of the orbit are between the eye and the hole: they go into their own
+// target and are composited over the finished picture. Rows on the far half are behind the hole,
+// so they go into the scene target, where the near-field lens bends them and the shadow hides them.
 {
   const record = { draws: [], seen: [], rtSizes: [], disposed: [], setTarget: [] };
   const scene = { name: 'app-scene' };
   const lyricsLayer = { isLyrics: true, visible: true, children: [] };
   const galaxyGroup = { isGalaxy: true, visible: true, children: [], position: { set: function () {} }, quaternion: { copy: function () { return this; } } };
+  const frontRow = { itemIndex: 1, live: true, front: true, mesh: { visible: false } };
+  const backRow = { itemIndex: 2, live: true, front: false, mesh: { visible: false } };
   const sandbox = load({
     THREE: makeThree(record),
     camera: makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9),
@@ -287,48 +305,51 @@ function load(overrides) {
       autoClear: true,
       drawingSize: { x: 1600, y: 900 },
       getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
-        clear() {},
+      clear() {},
       setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
       render(targetScene) {
         record.draws.push(targetScene === scene ? 'scene' : 'quad');
-        record.seen.push({ scene: targetScene === scene, lyrics: lyricsLayer.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
+        record.seen.push({ scene: targetScene === scene, front: frontRow.mesh.visible, back: backRow.mesh.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
       }
     }
   });
   sandbox.bhLyrics.layer = lyricsLayer;
+  sandbox.bhLyrics.rows = [frontRow, backRow];
   sandbox.bhGalaxy.group = galaxyGroup;
   sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
   assert(sandbox.renderBlackHoleFrame() === true, 'the frame must run');
 
   assert.deepStrictEqual(record.draws, ['scene', 'scene', 'quad'],
-    'galaxy, lyrics, then one quad: ' + JSON.stringify(record.draws));
+    'world, near rows, then one quad: ' + JSON.stringify(record.draws));
   assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'both targets then the screen: ' + JSON.stringify(record.setTarget));
-  const [galaxyPass, textPass, quadPass] = record.seen;
-  assert(galaxyPass.lyrics === false && galaxyPass.galaxy === true, 'the first target is the galaxy without the text');
-  assert(textPass.lyrics === true && textPass.galaxy === false, 'the second is the text alone');
+  const [worldPass, textPass, quadPass] = record.seen;
+  assert(worldPass.front === false && worldPass.back === true && worldPass.galaxy === true,
+    'the first target is the galaxy plus the far rows, never the near ones');
+  assert(textPass.front === true && textPass.back === false && textPass.galaxy === false,
+    'the second is the near rows alone');
   assert(quadPass.scene === false && quadPass.autoClear === true, 'and the pass is one quad, clearing normally');
   assert(sandbox.blackHoleState.textQuads === 1, 'the text render is counted: ' + sandbox.blackHoleState.textQuads);
+  assert(frontRow.mesh.visible === true && backRow.mesh.visible === true,
+    'after the frame both halves are visible again for the fallback render');
 
-  // The binding is the proof: the pass material reads the lyric target as a channel, not as a
-  // texture pasted over its output.
+  // The binding is the proof: the pass material reads the near rows as a channel, not as a texture
+  // pasted over its output.
   const uniforms = sandbox.blackHoleState.material.uniforms;
   assert(uniforms.iChannel1 && uniforms.iChannel1.value === sandbox.blackHoleState.textRt.texture,
-    'iChannel1 must be the lyric target');
+    'iChannel1 must be the near-row target');
   assert(uniforms.iChannel0 && uniforms.iChannel0.value === sandbox.blackHoleState.rt.texture,
-    'iChannel0 must be the galaxy target');
-  assert(uniforms.uTextLens, 'the bend amount must reach the shader');
-  // The composite and the rim damping are shader text: the channel test above proves the binding,
-  // these prove what the shader does with it.
+    'iChannel0 must be the scene target');
+  assert(uniforms.uTextLens, 'the near-field lens amount must reach the shader');
+  // The far rows bend because the scene texture is sampled back through the bend near the hole;
+  // the near rows are in front, so they are pasted straight over the picture.
   assert(/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(source),
-    'the lyric channel must be composited inside the pass, over the shadowed picture');
-  assert(/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(source),
-    'the text bend must fade at the rim, or a row crossing the hole is torn off its own spot');
-  // And it is local to the shadow: the stars take the full pull everywhere, but a resting row at
-  // the side must not be sheared by the gradient of a field that is weak there but not flat.
-  assert(/float textGravity = 1\.0 - smoothstep\(uShadowUv \* 1\.25, uShadowUv \* 3\.2, qlen\);/.test(source),
-    'the text bend has to be local to the shadow');
-  assert(/float textBendCap = uShadowUv \* 0\.12;/.test(source) && /min\(textBendLen, textBendCap\)/.test(source),
-    'and capped, or the rim pull samples past the row and the line vanishes before it is swallowed');
+    'the near rows must be composited over the shadowed picture');
+  assert(/float nearMask = 1\.0 - smoothstep\(uShadowUv \* 1\.05, uShadowUv \* 2\.6, qlen\);/.test(source),
+    'the scene lens has to be local to the strong-field zone');
+  assert(/vec2 lensUv = clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\), 0\.0, 1\.0\);/.test(source),
+    'and sampled through the inverse of the bend, or content behind the hole cannot appear around the rim');
+  assert(/sampleSky\(lensUv, uSoft\)/.test(source), 'the scene sample must use the lensed coordinate');
+  assert(/texture2D\(iChannel1, uv\)/.test(source), 'the near rows are pasted at their own screen position');
   // Without a lyric layer the text target is cleared rather than left holding last frame.
   sandbox.bhLyrics.layer = null;
   record.draws.length = 0;
@@ -337,7 +358,7 @@ function load(overrides) {
   assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'no text means no text pass');
   assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', null], 'but the target is still cleared for the channel');
   sandbox.bhLyrics.layer = lyricsLayer;
-  console.log('channels: ' + record.draws.length + ' draws without text, galaxy+text+quad with it; iChannel1 bound to the lyric target');
+  console.log('channels: ' + record.draws.length + ' draws without text, world+front rows+quad with it; iChannel1 bound to the near rows');
 }
 
 // ---------------------------------------- swallowed by the row, not painted over by the hole
@@ -545,11 +566,11 @@ function load(overrides) {
   // The lens bends text only if the text is inside its target: the takeover owner must leave
   // stageLyrics alone, and the loop must route the render through the pass with a fallback.
   const ownerBlock = source.slice(source.indexOf("registerVisualTakeoverOwner({"));
-  // The straight rows are replaced by this preset's own arc rows, which are meshes inside the
-  // render target - suppressing the app's layer is what stops two copies of the text fighting.
-  assert(/stageLyrics: true/.test(ownerBlock), "the app's straight lyric rows must be taken over by the arc layer");
-  assert(/function bhLyricSide\(/.test(source) && /function bhDrawRowCanvas\(/.test(source),
-    'the rows have to be laid out beside the hole and rasterised');
+  // The app's straight rows are replaced by this preset's own orbiting rows, which are meshes in
+  // the disc plane - suppressing the app's layer is what stops two copies of the text fighting.
+  assert(/stageLyrics: true/.test(ownerBlock), "the app's straight lyric rows must be taken over by the orbit layer");
+  assert(/function bhOrbitBasis\(/.test(source) && /function bhDrawRowCanvas\(/.test(source),
+    'the rows have to be placed on the disc-plane orbit and rasterised');
   assert(/new THREE\.CanvasTexture\(canvas\)/.test(source) && /THREE\.MeshBasicMaterial\(/.test(source),
     'and uploaded as textures on planes, which is what lets the lens bend them');
   assert(/particles: true/.test(ownerBlock), "the app's cover-particle field belongs to the other presets; this one paints its own galaxy");
@@ -709,88 +730,96 @@ function load(overrides) {
     'and dispose it: ' + JSON.stringify(record3.disposed));
 }
 
-// ------------------------------- the rows hang beside the hole and spiral in when sung
+// --------------------------- the rows orbit in the disc plane, split front / back by depth
 //
-// "Left and right of the hole as I see it" is a screen direction, not a galaxy radius: the rows
-// live in a camera-facing layer at the hole's point, so local x is the viewer's right. Odd lines
-// hang on the left, even on the right, and a line that has been sung winds into the hole rather
-// than sliding in a straight line toward it.
+// "From behind the hole, round the side, to the front where it can be read, then round and in" is
+// a circle in the disc's plane. The orbit math is checked as geometry: in-plane, radius-preserving,
+// front = nearest the camera; then the timing (approach, read at the front, fall while the radius
+// drops on the same power law); then the placement flags each row front or back so the renderer
+// knows which target it belongs to.
 {
   const camera = makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9);
   const sandbox = load({ camera: camera, fx: { preset: 15 } });
   const frame = sandbox.bhComputeFrame();
-  assert(frame && frame.world, 'the hole must be placed before the rows can hang beside it');
+  assert(frame && frame.world, 'the hole must be placed before the rows can orbit it');
+  const dot = function (a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+  const len = function (a) { return Math.sqrt(dot(a, a)); };
 
-  // Sides: line 1 (index 0) on the left, line 2 on the right, alternating.
-  assert(sandbox.bhLyricSide(0) === -1, 'line 1 must hang on the viewer left');
-  assert(sandbox.bhLyricSide(1) === 1 && sandbox.bhLyricSide(2) === -1 && sandbox.bhLyricSide(3) === 1,
-    'lines must alternate sides: left, right, left, right');
+  // The orbit plane is the disc's plane: e1 and e2 are unit, orthogonal, in the plane, and the
+  // normal matches the shader's disc normal.
+  const basis = sandbox.bhOrbitBasis(14);
+  assert(Math.abs(len(basis.n) - 1) < 1e-9 && Math.abs(len(basis.e1) - 1) < 1e-9 && Math.abs(len(basis.e2) - 1) < 1e-9,
+    'the orbit basis must be orthonormal');
+  assert(Math.abs(dot(basis.n, basis.e1)) < 1e-9 && Math.abs(dot(basis.n, basis.e2)) < 1e-9 && Math.abs(dot(basis.e1, basis.e2)) < 1e-9,
+    'the plane axes and the normal must be orthogonal');
+  assert(Math.abs(basis.n.x - Math.sin(14 * Math.PI / 180)) < 1e-9 && Math.abs(basis.n.y - Math.cos(14 * Math.PI / 180)) < 1e-9,
+    'the orbit tips with the accretion disc');
+  const orbitR = 2.4;
+  const samplePoint = sandbox.bhOrbitPoint(basis, orbitR, 0.7);
+  assert(Math.abs(len(samplePoint) - orbitR) < 1e-9, 'a point on the orbit is at the orbit radius');
+  assert(Math.abs(dot(samplePoint, basis.n)) < 1e-9, 'and lies in the disc plane');
 
-  // The hold is measured in screen fractions, so it is beside the hole at any distance or fov.
-  const params = sandbox.bhLyricParams();
-  const view = sandbox.bhLyricFrame(frame, params);
-  const unit = frame.distance * Math.tan((frame.fovDeg * Math.PI / 180) * 0.5);
-  assert(Math.abs(view.unit - unit) < 1e-9, 'one screen half-height in world units: ' + view.unit);
-  assert(Math.abs(view.holdX - params.side * unit * frame.aspect) < 1e-9,
-    'the hold must be the side fraction of the visible half-width');
-  // In half-width units the shadow is uvShadow/aspect; the hold must sit outside it.
-  assert(params.side > frame.uvShadow / frame.aspect,
-    'the rows must hang outside the shadow: ' + params.side + ' vs ' + (frame.uvShadow / frame.aspect).toFixed(2));
-  // The row plane is sized in screen fractions too, so a dollied camera does not make it huge.
-  assert(view.rowH > 0.03 * unit && view.rowH < 0.4 * unit, 'the row height must stay a readable fraction of the frame');
-
-  // Entry: from just off its own side of the frame, settling onto the hold, fading in.
-  const enterStart = sandbox.bhLyricEnter(view.holdX, 0, 0.55);
-  const enterEnd = sandbox.bhLyricEnter(view.holdX, 1, 0.55);
-  assert(enterStart.x > view.holdX && enterStart.alpha === 0, 'the row starts outside and invisible');
-  assert(Math.abs(enterEnd.x - view.holdX) < 1e-9 && enterEnd.alpha === 1, 'and settles exactly on the hold');
-  let away = true;
-  let prevEnter = enterStart.x;
-  for (let u = 0.1; u <= 1; u += 0.1) {
-    const at = sandbox.bhLyricEnter(view.holdX, u, 0.55);
-    if (at.x > prevEnter) away = false;
-    prevEnter = at.x;
+  // The front is the point nearest the camera, whichever way the camera looks: a line stops there
+  // to be read.
+  const towardCamera = { x: camera.position.x - frame.world.x, y: camera.position.y - frame.world.y, z: camera.position.z - frame.world.z };
+  const front = sandbox.bhOrbitFrontAngle(basis, towardCamera);
+  const frontPoint = sandbox.bhOrbitPoint(basis, orbitR, front);
+  let nearest = -Infinity;
+  for (let i = 0; i < 64; i++) {
+    const p = sandbox.bhOrbitPoint(basis, orbitR, i * Math.PI / 32);
+    nearest = Math.max(nearest, dot(p, towardCamera));
   }
-  assert(away, 'the entrance must only ever approach the hold');
+  assert(dot(frontPoint, towardCamera) >= nearest - 1e-9, 'the front angle must be the point nearest the eye');
+  assert(frontPoint.z > orbitR * 0.99, 'which is the side of the circle towards the camera');
 
-  // The plunge: starts at the hold, ends at the hole, and winds round it on the way in. A straight
-  // translation would keep the bearing fixed and the path equal to the chord.
-  const holdY = 0;
-  const start = sandbox.bhSuckPoint(view.holdX, holdY, 0, params.curve, params.wind);
-  const end = sandbox.bhSuckPoint(view.holdX, holdY, 1, params.curve, params.wind);
-  assert(Math.abs(start.x - view.holdX) < 1e-9 && Math.abs(start.y - holdY) < 1e-9, 'the fall starts at the hold');
-  assert(Math.abs(end.x) < 1e-9 && Math.abs(end.y) < 1e-9, 'and ends in the hole');
+  // Timing: approach, read, fall. `now` is the audio clock, so the line is at the front exactly
+  // while it is being sung.
+  const params = sandbox.bhLyricParams();
+  const item = { startAt: 10, endAt: 13 };
+  const before = sandbox.bhLyricOrbitState(item, 8, params, front);
+  assert(before && before.phase === 'approach' && before.angle > front && before.radius === 1,
+    'before its first word a line is still coming round, at the hold radius');
+  const atStart = sandbox.bhLyricOrbitState(item, 10, params, front);
+  const during = sandbox.bhLyricOrbitState(item, 12, params, front);
+  assert(atStart.phase === 'read' && Math.abs(atStart.angle - front) < 1e-9, 'at its start the line is at the front');
+  assert(during.phase === 'read' && Math.abs(during.angle - front) < 1e-9, 'and waits there while it is sung');
+  // Approaching: the angle only ever decreases towards the front.
+  let approachAngle = Infinity;
+  for (let t = 5; t <= 10; t += 0.5) {
+    const s = sandbox.bhLyricOrbitState(item, t, params, front);
+    assert(s.angle <= approachAngle + 1e-9, 'the approach must only get closer to the front');
+    approachAngle = s.angle;
+  }
+
+  // After the line: the same direction round the circle, plus the wind, while the radius falls.
+  const fall = sandbox.bhLyricOrbitState(item, 13.5, params, front);
+  assert(fall.phase === 'fall' && fall.angle < front && fall.radius < 1, 'the fall keeps going the same way while it comes in');
+  const later = sandbox.bhLyricOrbitState(item, 14.2, params, front);
+  assert(later.radius < fall.radius, 'the radius must only shrink: ' + fall.radius + ' -> ' + later.radius);
+  assert(later.angle < fall.angle, 'and the angle keep advancing into the spiral');
+  assert(sandbox.bhLyricOrbitState(item, 13 + params.swallow + 0.01, params, front) === null,
+    'once the fall is over the line is gone');
+  const noWind = sandbox.bhLyricOrbitState(item, 14.2, { rate: params.rate, wind: 0, curve: params.curve, swallow: params.swallow }, front);
+  assert(noWind.angle > later.angle, 'wind 0 has to be the plain orbit, with no extra turn');
+  assert(Math.abs(noWind.radius - later.radius) < 1e-9, 'the wind changes the turn, not the fall');
+
+  // The fall is a spiral, not a radial drop: its arc is longer than the straight line from the
+  // hold point to the hole.
   let path = 0;
-  let prev = start;
-  let lastRadius = Math.hypot(start.x, start.y);
-  for (let s = 1; s <= 60; s++) {
-    const p = sandbox.bhSuckPoint(view.holdX, holdY, s / 60, params.curve, params.wind);
-    const radius = Math.hypot(p.x, p.y);
-    assert(radius <= lastRadius + 1e-9, 'the row must only get closer to the hole (u=' + (s / 60).toFixed(2) + ')');
-    lastRadius = radius;
-    path += Math.hypot(p.x - prev.x, p.y - prev.y);
+  let prev = sandbox.bhOrbitPoint(basis, params.orbit * 1, front);
+  for (let i = 1; i <= 60; i++) {
+    const t = 13 + params.swallow * i / 60;
+    const s = sandbox.bhLyricOrbitState(item, t, params, front);
+    if (!s) break;
+    const p = sandbox.bhOrbitPoint(basis, params.orbit * s.radius, s.angle);
+    path += Math.sqrt((p.x - prev.x) * (p.x - prev.x) + (p.y - prev.y) * (p.y - prev.y) + (p.z - prev.z) * (p.z - prev.z));
     prev = p;
   }
-  assert(path > Math.hypot(view.holdX, holdY) * 1.05,
-    'the spiral path must be longer than the straight chord: ' + path.toFixed(3) + ' vs '
-    + Math.hypot(view.holdX, holdY).toFixed(3));
-  const mid = sandbox.bhSuckPoint(view.holdX, holdY, 0.5, params.curve, params.wind);
-  assert(mid.turned > 0 && mid.turned < params.wind, 'the bearing has to wind between the hold and the hole');
-  const straight = sandbox.bhSuckPoint(view.holdX, holdY, 0.5, params.curve, 0);
-  assert(straight.turned === 0 && Math.abs(straight.y) < 1e-9, 'wind 0 is a straight radial approach');
-  // Free fall: the last stretch is the fast one. Compare speeds (distance per unit progress), so
-  // the unequal window widths do not decide the result.
-  const at05 = sandbox.bhSuckPoint(view.holdX, holdY, 0.05, params.curve, params.wind);
-  const at95 = sandbox.bhSuckPoint(view.holdX, holdY, 0.95, params.curve, params.wind);
-  const earlySpeed = (Math.hypot(at05.x, at05.y) - Math.hypot(mid.x, mid.y)) / 0.45;
-  const lateSpeed = Math.hypot(at95.x, at95.y) / 0.05;
-  assert(lateSpeed > earlySpeed * 1.5,
-    'the plunge must accelerate: ' + earlySpeed.toFixed(2) + ' -> ' + lateSpeed.toFixed(2) + ' per unit');
-  console.log('lyric hold: side ' + params.side + ' of the half-width, gap ' + params.gap + ', wind ' + params.wind
-    + ' rad; spiral path ' + path.toFixed(2) + ' vs chord ' + Math.hypot(view.holdX, holdY).toFixed(2));
+  assert(path > params.orbit * 1.15, 'the inward path must be a spiral, not a radius: ' + path.toFixed(2) + ' against ' + params.orbit);
 
-  // Placement: rows hang on the side their line belongs to, stay horizontal, and a line that has
-  // been sung visibly converges on the hole and then disappears.
+  // Placement: a line that is being sung sits at the front and is flagged front (it will be
+  // composited over the picture); a line still on the far half is flagged back (it belongs in the
+  // scene, where the lens and the disc fog own it).
   function fakeRow(index) {
     const ctx = {
       font: '', textAlign: '', textBaseline: '', fillStyle: '',
@@ -798,65 +827,83 @@ function load(overrides) {
       clearRect() {}, fillText() {}
     };
     return {
-      itemIndex: index, enterAt: -10, exitAt: 0, exitY: 0, y: 0, widthRatio: 4, sung: null,
+      itemIndex: index, live: true, front: true, sung: null, widthRatio: 4,
       canvas: { width: 512, height: 128, getContext() { return ctx; } },
       ctx: ctx,
       texture: { needsUpdate: false, dispose() {} },
       material: { opacity: 1, dispose() {} },
       mesh: {
-        position: new V3(), scale: new V3(1, 1, 1), rotation: { z: 9 }, renderOrder: 0, visible: true,
-        geometry: { dispose() {} }
+        position: new V3(), scale: new V3(1, 1, 1), quaternion: { copied: null, copy(q) { this.copied = q; return this; } },
+        renderOrder: 0, visible: false, geometry: { dispose() {} }
       }
     };
   }
-  const items = [0, 1, 2, 3, 4].map(function (i) {
-    return { index: i, text: 'line ' + i, sub: '', startAt: i, endAt: i + 1 };
-  });
+  const items = [
+    { index: 0, text: 'line 0', sub: '', startAt: 0, endAt: 6 },
+    { index: 1, text: 'line 1', sub: '', startAt: 6, endAt: 9 },
+    { index: 2, text: 'line 2', sub: '', startAt: 10, endAt: 13 },
+    { index: 3, text: 'line 3', sub: '', startAt: 14, endAt: 17 },
+    { index: 4, text: 'line 4', sub: '', startAt: 18, endAt: 21 }
+  ];
   const rows = [fakeRow(0), fakeRow(1), fakeRow(2), fakeRow(3), fakeRow(4)];
   sandbox.bhLyrics.layer = { position: new V3(), quaternion: { copy() {} }, visible: true };
   sandbox.bhLyrics.rows = rows;
   sandbox.bhLyrics.items = items;
-  sandbox.bhLyrics.sung = 1;
+  sandbox.bhLyrics.sung = 2;
+  sandbox.bhLyrics.now = 12;
   sandbox.bhLyrics.time = 0;
   sandbox.bhPlaceLyrics(frame, 0.016);
-  const heldX = [rows[0].mesh.position.x, rows[1].mesh.position.x];
-  assert(rows[0].mesh.position.x < -1e-6, 'line 0 is on the left: ' + rows[0].mesh.position.x);
-  assert(rows[1].mesh.position.x > 1e-6, 'line 1 is on the right: ' + rows[1].mesh.position.x);
-  assert(rows[2].mesh.position.x < -1e-6, 'line 2 is back on the left');
-  assert(Math.abs(rows[1].mesh.position.y) < view.stepY * 0.2, 'the sung line sits level with the hole');
-  assert(rows[2].mesh.position.y < 0, 'the line after it hangs below');
-  assert(rows[1].sung === true, 'the sung row is rasterised in its highlight colour');
-  assert(rows[2].sung === false, 'and its neighbours are not');
-  for (const row of rows) {
-    if (row.itemIndex < 0) continue;
-    assert(row.mesh.rotation.z === 0, 'rows are horizontal in the viewer frame');
-  }
-  assert(rows[4].itemIndex === 4 || rows[4].itemIndex === -1, 'a line outside the window is dropped');
 
-  // Advance the playhead: the line that was sung starts winding in and is gone after swallow.
-  sandbox.bhLyrics.sung = 2;
-  const falling = rows[1];
+  assert(rows[2].mesh.position.z > 1.5, 'the sung line is on the near side of the hole: z=' + rows[2].mesh.position.z);
+  assert(rows[2].front === true, 'and flagged front');
+  assert(rows[2].sung === true, 'and rasterised in the highlight colour');
+  assert(rows[3].front === true && rows[4].front === false,
+    'the next line is still on the near half, the one after it is behind the hole');
+  assert(rows[3].mesh.position.z < rows[2].mesh.position.z, 'the near half runs towards the hole as the lines queue');
+  assert(rows[4].mesh.position.z < 0, 'the far line is behind the hole plane: z=' + rows[4].mesh.position.z);
+  assert(rows[2].mesh.quaternion.copied === camera.quaternion, 'every row faces the camera wherever it is on the circle');
+  assert(rows[2].mesh.scale.x > rows[3].mesh.scale.x, 'the sung line is drawn a little larger than the queue');
+  assert(rows[0].itemIndex === -1 && rows[1].itemIndex === -1, 'lines whose fall is over are dropped');
+  // The split is exactly what the renderer uses to choose a target.
+  assert(sandbox.bhSetLyricSideVisibility(true) === 2, 'front half: the sung line and the next one');
+  assert(rows[2].mesh.visible === true && rows[3].mesh.visible === true && rows[4].mesh.visible === false,
+    'and the far row is hidden for the near pass');
+  assert(sandbox.bhSetLyricSideVisibility(false) === 1 && rows[4].mesh.visible === true,
+    'back half: only the far row');
+  assert(sandbox.bhSetLyricSideVisibility(null) === 3, 'the fallback render gets all live rows back');
+
+  // Advancing: the highlight moves, and the line that was sung spirals in and goes out.
+  sandbox.bhLyrics.sung = 3;
+  sandbox.bhLyrics.now = 14.05;
+  sandbox.bhPlaceLyrics(frame, 0.016);
+  assert(rows[3].sung === true && rows[2].sung === false, 'the highlight moves to the new line');
+  const fallingRow = rows[2];
   const distances = [];
-  for (let step = 0; step < 8; step++) {
+  const opacities = [];
+  for (let step = 0; step < 14; step++) {
+    sandbox.bhLyrics.now += 0.1;
     sandbox.bhPlaceLyrics(frame, 0.1);
-    distances.push(Math.hypot(falling.mesh.position.x, falling.mesh.position.y));
+    if (fallingRow.itemIndex < 0) break;
+    distances.push(Math.hypot(fallingRow.mesh.position.x, fallingRow.mesh.position.y, fallingRow.mesh.position.z));
+    opacities.push(fallingRow.material.opacity);
   }
-  assert(rows[2].sung === true && rows[1].sung === false,
-    'the highlight must move to the new line, not stay on the row it was drawn for');
   for (let i = 1; i < distances.length; i++) {
     assert(distances[i] <= distances[i - 1] + 1e-9,
       'the sung line must only ever get closer to the hole (' + distances.map(function (d) { return d.toFixed(2); }).join(' -> ') + ')');
   }
-  assert(distances[distances.length - 1] < distances[0] * 0.2,
+  assert(distances.length >= 3 && distances[distances.length - 1] < distances[0] * 0.4,
     'and be swallowed by the end: ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
-  assert(falling.mesh.visible === false, 'a swallowed row is hidden');
-  assert(falling.material.opacity === 0,
-    'and fully transparent, or a hidden row would still be drawn once it is shown again: ' + falling.material.opacity);
-  console.log('placement: line 0 held at x=' + heldX[0].toFixed(2) + ', line 1 at x=' + heldX[1].toFixed(2)
-    + ', fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
+  assert(opacities[opacities.length - 1] < 0.9,
+    'and fade as it crosses the shadow radius, not stay opaque until the frame it disappears: '
+    + opacities.map(function (o) { return o.toFixed(2); }).join(' -> '));
+  assert(fallingRow.mesh.visible === false && fallingRow.material.opacity === 0,
+    'a swallowed row is hidden and fully transparent');
+  console.log('orbit: radius ' + params.orbit + ', rate ' + params.rate + ' rad/s, wind ' + params.wind
+    + '; front ' + front.toFixed(2) + ', spiral ' + path.toFixed(2) + ' vs radius ' + params.orbit
+    + '; fall ' + distances.map(function (d) { return d.toFixed(2); }).join(' -> '));
   sandbox.bhLyrics.layer = null;
 
-  // One owner for the text: the row flight runs on its own, and stands down the moment the side
+  // One owner for the text: the row flight runs on its own, and stands down the moment the orbit
   // layer exists. Asserted as an A/B so "it returned false anyway" cannot pass for the guard.
   sandbox.stageLyrics = { group: { updateMatrixWorld: function () {}, children: [] }, current: null, outgoing: [] };
   sandbox.bhLyrics.layer = null;
@@ -864,8 +911,8 @@ function load(overrides) {
   sandbox.bhLyrics.layer = { fake: true };
   const flightWithLayer = sandbox.updateBlackHoleLyricFlight(0.016);
   sandbox.bhLyrics.layer = null;
-  assert(flightAlone === true, 'without the side layer the row flight must still run');
-  assert(flightWithLayer === false, 'the side layer must take the text over from the row flight');
+  assert(flightAlone === true, 'without the orbit layer the row flight must still run');
+  assert(flightWithLayer === false, 'the orbit layer must take the text over from the row flight');
 }
 
 // ------------------------------------------------------------------ the lyric flight
@@ -937,7 +984,7 @@ function load(overrides) {
   const holdAtExit = { x: sungRow.mesh.position.x, y: sungRow.mesh.position.y, z: sungRow.mesh.position.z };
   const swallowed = [];
   sungRow.isActive = false;
-  for (let step = 0; step < 6; step++) {
+  for (let step = 0; step < 18; step++) {
     sandbox.blackHoleApplyCamera(0.12);
     sandbox.updateBlackHoleLyricFlight(0.12);
     swallowed.push(Math.hypot(

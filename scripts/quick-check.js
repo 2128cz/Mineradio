@@ -1572,7 +1572,7 @@ function runBlackHolePresetCheck() {
   if (!/id: 'blackhole-pass'/.test(ownerBlock)) fail('the pass must register as a takeover owner');
   if (!/stageLyrics: true/.test(ownerBlock)) fail('the app straight lyric rows must be taken over by the arc layer');
   if (!/particles: true/.test(ownerBlock)) fail('the preset must take the cover-particle field over: it paints its own barred-spiral galaxy');
-  if (!/scene\.add\(layer\);/.test(text) || !/bhLyrics\.layer = layer;/.test(text)) { fail('the arc rows must be added to the scene the lens renders: text outside the render target cannot be bent by the lens'); }
+  if (!/scene\.add\(layer\);/.test(text) || !/bhLyrics\.layer = layer;/.test(text)) { fail('the orbit rows must be added to the scene the lens renders: text outside the render target cannot be bent by the lens'); }
   // The ported kernel has to be in the shader, where it is actually evaluated.
   const shader = text.slice(text.indexOf('var BH_PASS_FS'));
   // The pass integrates a photon through the Schwarzschild field; the shadow is where that ray is
@@ -1595,7 +1595,7 @@ function runBlackHolePresetCheck() {
   if (!/\(1\.0 \+ uDolly\) \+ uShake/.test(shader)) fail('the drift and dolly must reach the ray');
   if (!/vec4 nearDebris\(vec2 uv, float t, float amount\)/.test(shader)) fail('near debris is the reference something small that makes the hole huge');
   if (!/color = mix\(color, debris\.rgb/.test(shader)) fail('the debris has to be composited in front of the field');
-  if (!/phase \* 21\.0/.test(shader)) fail('the near fog needs a fine octave to look wispy');
+  if (!/float warp = noise3\(q \* 1\.1/.test(shader)) fail('the near fog needs its domain warp to look wispy');
   if (/sampleSky\(uv, bend/.test(shader)) fail('the near-field galaxy must not take the far-field bend: it stretched the frame edges into radial streaks');
   if (!/smoothstep\(0\.0, 0\.07, min\(min\(uv\.x, 1\.0 - uv\.x\)/.test(shader)) fail('the backdrop has to fade at the render target border');
   if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the star bend needs its impact parameter floored at the shadow');
@@ -1647,45 +1647,61 @@ function runBlackHolePresetCheck() {
   for (const pattern of [/function bhMarchRay\(/, /function bhSilhouette\(/, /uDiscInner/, /uDiscTilt/, /uSteps/]) {
     if (!pattern.test(text)) fail('the marched black hole is incomplete: ' + pattern);
   }
-  // The lyrics hang beside the hole in the viewer's own frame (odd lines left, even right) and
-  // are pulled into it on a spiral. The side, the gap and the wind are their own knobs, because
-  // "my left and right" is a screen direction, not a world radius.
+  // The lyrics are objects on a circle in the accretion disc's plane: a line comes round from
+  // behind, waits at the point nearest the camera while it is sung, then spirals in. Rows on the
+  // near half are composited over the picture; rows on the far half are part of the scene, where
+  // the near-field lens and the disc fog own them.
   for (const pattern of [
-    /function bhLyricSide\(/,
-    /function bhLyricFrame\(/,
-    /function bhSuckPoint\(/,
+    /function bhOrbitBasis\(/,
+    /function bhOrbitPoint\(/,
+    /function bhOrbitFrontAngle\(/,
+    /function bhLyricOrbitState\(/,
+    /function bhSetLyricSideVisibility\(/,
     /function bhDrawRowCanvas\(/,
     /new THREE\.CanvasTexture\(canvas\)/,
     /new THREE\.MeshBasicMaterial\(/,
     /function updateBlackHoleLyrics\(dt\)/,
   ]) {
-    if (!pattern.test(text)) fail('the lyric side layer is incomplete: ' + pattern);
+    if (!pattern.test(text)) fail('the lyric orbit is incomplete: ' + pattern);
   }
-  for (const key of ['lyricSide', 'lyricGap', 'lyricWind']) {
-    if (!new RegExp(key + ': \\{ def: ').test(text)) fail('the lyric layout needs its own ' + key + ' knob');
+  for (const key of ['lyricOrbit', 'lyricOrbitRate', 'lyricWind', 'discWisp']) {
+    if (!new RegExp(key + ': \\{ def: ').test(text)) fail('the lyric orbit / disc fog needs its own ' + key + ' knob');
   }
-  if (!/bhSuckPoint\(holdX, row\.exitY, u, params\.curve, params\.wind\)/.test(text)) {
-    fail('the fall has to be the spiral, not a straight shrink');
+  if (!/var state = bhLyricOrbitState\(items\[index\], now, params, front\)/.test(text)) {
+    fail('the row position has to come from the orbit timing, not a local slide clock');
   }
-  if (!/row\.mesh\.rotation\.z = 0;/.test(text)) fail('the rows must stay horizontal in the viewer frame');
-  if (!/side = bhLyricSide\(index\)/.test(text)) fail('the row side must come from the line parity');
+  if (!/row\.front = alongRow < depth;/.test(text)) fail('each row has to be flagged front or back by its depth');
+  if (!/bhSetLyricSideVisibility\(true\) > 0/.test(text) || !/bhSetLyricSideVisibility\(false\)/.test(text)) {
+    fail('the renderer must split the near and far rows between the two targets');
+  }
+  if (!/row\.mesh\.quaternion\.copy\(camera\.quaternion\)/.test(text)) fail('every row must face the camera');
   if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric rows too');
-  // The text is a second pass over the finished picture: the shadow lives in the first pass, so a
-  // single-pass text would be painted over by the hole no matter where the row is.
-  if (!/uTextLens/.test(text)) fail('the text bend amount has to reach the shader');
-  // The lyric layer is a channel of the pass: rendered from the same camera into its own target and
-  // sampled inside mainImage, bent by the same field and composited over the shadowed picture.
-  if (!/renderer\.setRenderTarget\(blackHoleState\.textRt\)/.test(text)) fail('the text must render into its own target');
-  if (!/iChannel1: \{ value: textRt\.texture \}/.test(text)) fail('the lyric target must be bound as iChannel1 of the pass');
-  if (!/texture2D\(iChannel1, textUv\)/.test(text)) fail('the shader must sample the lyric channel');
-  if (!/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(text)) fail('the text must be composited inside the pass, over the shadow');
-  if (!/clamp\(\(rFinal - 1\.10\) \/ 0\.60, 0\.0, 1\.0\)/.test(text)) fail('the text bend has to fall off at the rim so a row stays readable');
-  if (!/float textGravity = 1\.0 - smoothstep\(uShadowUv \* 1\.25, uShadowUv \* 3\.2, qlen\);/.test(text)) {
-    fail('the text bend must be local to the shadow, or a resting row is sheared by the field');
+  // The near-field lens: scene content around the hole is sampled back through the bend, so what
+  // is behind the hole shows up around the rim. The near rows are pasted straight over the picture
+  // because they are between the eye and the hole.
+  if (!/uTextLens/.test(text)) fail('the near-field lens amount has to reach the shader');
+  if (!/renderer\.setRenderTarget\(blackHoleState\.textRt\)/.test(text)) fail('the near rows must render into their own target');
+  if (!/iChannel1: \{ value: textRt\.texture \}/.test(text)) fail('the near-row target must be bound as iChannel1 of the pass');
+  if (!/texture2D\(iChannel1, uv\)/.test(text)) fail('the near rows must be sampled at their own screen position');
+  if (!/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(text)) fail('the near rows must be composited inside the pass, over the shadow');
+  if (!/float nearMask = 1\.0 - smoothstep\(uShadowUv \* 1\.05, uShadowUv \* 2\.6, qlen\);/.test(text)) {
+    fail('the scene lens must be local to the strong-field zone');
   }
-  if (!/float textBendCap = uShadowUv \* 0\.12;/.test(text) || !/min\(textBendLen, textBendCap\)/.test(text)) {
-    fail('the text bend must be capped, or a row disappears before it reaches the hole');
+  if (!/vec2 lensUv = clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\), 0\.0, 1\.0\);/.test(text)) {
+    fail('the scene must be sampled through the inverse bend, or nothing behind the hole appears at the rim');
   }
+  if (!/sampleSky\(lensUv, uSoft\)/.test(text)) fail('the scene sample must use the lensed coordinate');
+  // The disc is a volume sampled in 3D along the march, not hashed cells in (angle, radius).
+  for (const pattern of [/float hash13\(vec3/, /float noise3\(vec3/, /float fbm3\(vec3/, /float base = fbm3\(q \* 2\.0\);/, /q = vec3\(cos\(flow\) \* r, sin\(flow\) \* r, side \* 4\.5\)/]) {
+    if (!pattern.test(text)) fail('the disc fog is incomplete: ' + pattern);
+  }
+  if (!/float fog = mix\(1\.0, 0\.10 \+ 1\.9 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(text)) {
+    fail('the wisp amount must reach the disc density');
+  }
+  if (!/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(text)) {
+    fail('the discWisp knob must be written to the shader every frame');
+  }
+  if (/float grain = mix\(0\.25, 1\.75/.test(text)) fail('the old hashed-cell grain must be gone: it drew stretched dots, not fog');
   if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
