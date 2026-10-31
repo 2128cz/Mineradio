@@ -1546,7 +1546,7 @@ function runBlackHolePresetCheck() {
   // renders the scene twice, or that draws nothing when it fails, cannot be shipped.
   for (const [pattern, why] of [
     [/new THREE\.WebGLRenderTarget\(/, 'the pass needs a render target to refract'],
-    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,200}renderer\.render\(scene, camera\)[\s\S]{0,200}setRenderTarget\(null\)[\s\S]{0,120}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
+    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,600}renderer\.render\(scene, camera\)[\s\S]{0,600}setRenderTarget\(null\)[\s\S]{0,600}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
     [/getDrawingBufferSize\(/, 'the target has to follow the renderer drawing buffer, not the window'],
     [/function bhDisposePass\(/, 'leaving the preset must give the GPU memory back'],
   ]) {
@@ -1643,6 +1643,19 @@ function runBlackHolePresetCheck() {
     fail(`the lyric arc radius (${lyricRadius}) must stay outside the galaxy radius (${fieldRadius})`);
   }
   if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric arc too');
+  // The text is a second pass over the finished picture: the shadow lives in the first pass, so a
+  // single-pass text would be painted over by the hole no matter where the row is.
+  if (!/var BH_TEXT_FS = `/.test(text)) fail('the text needs its own lens shader (bend, no shadow)');
+  const textShader = text.slice(text.indexOf('var BH_TEXT_FS = `'));
+  if (/swallowed/.test(textShader.slice(0, textShader.indexOf('`;')))) {
+    fail('the text pass must not multiply by the shadow: the hole would cover the lyrics again');
+  }
+  if (!/renderer\.setRenderTarget\(blackHoleState\.textRt\)/.test(text)) fail('the text must render into its own target');
+  if (/uCenter/.test(text.slice(text.indexOf('var BH_TEXT_FS = `'), text.indexOf('`;', text.indexOf('var BH_TEXT_FS = `'))))) {
+    fail('the text composite must be in place: a lensed text layer moves rows off their own position');
+  }
+  if (!/renderer\.autoClear = false/.test(text)) fail('the composite must not clear the picture it is drawn over');
+  if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');

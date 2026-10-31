@@ -407,6 +407,27 @@ void main() {
 }
 `;
 
+// The text is composited over the finished picture, so the hole can never paint over it: the
+// shadow exists in the scene pass, and by the time these pixels are drawn the lens has already
+// finished. What is left of the lens for the text is the bend itself - no shadow, no ring, no sky -
+// so a line crossing the rim is stretched along it instead of being eaten by it. Being swallowed is
+// the row's own doing: it shrinks into the centre and fades out at the shadow radius.
+var BH_TEXT_FS = `
+precision highp float;
+
+varying vec2 vUv;
+
+uniform sampler2D uSrc;
+
+// In place: the text is a foreground layer, so it is composited where its rows were drawn. Running
+// it through the lens put a row at the centre 70px out to the rim, and a row on its way in has to
+// stay readable until it fades - being eaten is the row's own alpha, not the shadow and not the
+// bend.
+void main() {
+  gl_FragColor = texture2D(uSrc, vUv);
+}
+`;
+
 // ---------------------------------------------------------------- the pass
 //
 // One render target plus one fullscreen quad. Nothing else in the app renders to a target
@@ -416,6 +437,9 @@ void main() {
 var blackHoleState = {
   active: false,
   rt: null,
+  textRt: null,
+  textMaterial: null,
+  textQuads: 0,
   quadScene: null,
   quadCamera: null,
   material: null,
@@ -436,7 +460,9 @@ function blackHolePresetIsActive() {
 
 function bhDisposePass() {
   if (blackHoleState.rt && blackHoleState.rt.dispose) blackHoleState.rt.dispose();
+  if (blackHoleState.textRt && blackHoleState.textRt.dispose) blackHoleState.textRt.dispose();
   if (blackHoleState.material && blackHoleState.material.dispose) blackHoleState.material.dispose();
+  if (blackHoleState.textMaterial && blackHoleState.textMaterial.dispose) blackHoleState.textMaterial.dispose();
   if (blackHoleState.quadScene) {
     for (var i = 0; i < blackHoleState.quadScene.children.length; i++) {
       var child = blackHoleState.quadScene.children[i];
@@ -445,6 +471,8 @@ function bhDisposePass() {
     blackHoleState.quadScene.clear();
   }
   blackHoleState.rt = null;
+  blackHoleState.textRt = null;
+  blackHoleState.textMaterial = null;
   blackHoleState.material = null;
   blackHoleState.quadScene = null;
   blackHoleState.quadCamera = null;
@@ -478,6 +506,17 @@ function bhBuildPass() {
     });
     rt.texture.wrapS = THREE.ClampToEdgeWrapping;
     rt.texture.wrapT = THREE.ClampToEdgeWrapping;
+    var textRt = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.UnsignedByteType,
+      depthBuffer: true,
+      stencilBuffer: false,
+      generateMipmaps: false
+    });
+    textRt.texture.wrapS = THREE.ClampToEdgeWrapping;
+    textRt.texture.wrapT = THREE.ClampToEdgeWrapping;
     var material = new THREE.ShaderMaterial({
       vertexShader: BH_PASS_VS,
       fragmentShader: BH_PASS_FS,
@@ -502,12 +541,32 @@ function bhBuildPass() {
         uTime: bhSharedTimeUniform()
       }
     });
+    var textMaterial = new THREE.ShaderMaterial({
+      vertexShader: BH_PASS_VS,
+      fragmentShader: BH_TEXT_FS,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      // The text is added to the finished picture: additive keeps a glow around letters and cannot
+      // darken the scene, which is exactly what "drawn in front of the hole" means here.
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uSrc: { value: textRt.texture }
+      }
+    });
     var quadScene = new THREE.Scene();
     var quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     var quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
     quad.frustumCulled = false;
+    var textQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), textMaterial);
+    textQuad.frustumCulled = false;
+    textQuad.visible = false;
     quadScene.add(quad);
+    quadScene.add(textQuad);
     blackHoleState.rt = rt;
+    blackHoleState.textRt = textRt;
+    blackHoleState.textMaterial = textMaterial;
+    blackHoleState.textQuads = 0;
     blackHoleState.material = material;
     blackHoleState.quadScene = quadScene;
     blackHoleState.quadCamera = quadCamera;
@@ -536,6 +595,7 @@ function bhAlignPassSize() {
   var h = Math.max(32, Math.round((size.y || 0) * scale));
   if (w === blackHoleState.width && h === blackHoleState.height && scale === blackHoleState.passScale) return;
   blackHoleState.rt.setSize(w, h);
+  if (blackHoleState.textRt) blackHoleState.textRt.setSize(w, h);
   blackHoleState.width = w;
   blackHoleState.height = h;
   blackHoleState.passScale = scale;
@@ -623,10 +683,21 @@ function renderBlackHoleFrame() {
   var started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   var firstDraw = blackHoleState.draws === 0;
   var shaderErrors = [];
+  var quads = blackHoleState.quadScene ? blackHoleState.quadScene.children : [];
+  var screenQuad = quads[0];
+  var textQuad = quads[1];
+  var lyrics = (typeof bhLyrics !== 'undefined' && bhLyrics && bhLyrics.layer) ? bhLyrics.layer : null;
+  var galaxy = (typeof bhGalaxy !== 'undefined' && bhGalaxy && bhGalaxy.group) ? bhGalaxy.group : null;
+  var lyricsWereVisible = lyrics ? lyrics.visible : false;
   try {
+    // 1. the scene without the text, through the lens (shadow, ring, sky)
+    if (lyrics) lyrics.visible = false;
     renderer.setRenderTarget(blackHoleState.rt);
     renderer.render(scene, camera);
+    if (lyrics) lyrics.visible = lyricsWereVisible;
     renderer.setRenderTarget(null);
+    if (screenQuad) screenQuad.visible = true;
+    if (textQuad) textQuad.visible = false;
     if (firstDraw) {
       shaderErrors = bhCaptureShaderErrors(function () {
         renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
@@ -634,9 +705,29 @@ function renderBlackHoleFrame() {
     } else {
       renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
     }
+    // 2. the text alone, bent but never shadowed, added on top of that picture - so the hole can
+    //    never cover a line: the layer is composited after the shadow has already been painted.
+    if (lyrics && lyricsWereVisible) {
+      if (galaxy) galaxy.visible = false;
+      renderer.setRenderTarget(blackHoleState.textRt);
+      renderer.render(scene, camera);
+      renderer.setRenderTarget(null);
+      if (galaxy) galaxy.visible = true;
+      if (screenQuad) screenQuad.visible = false;
+      if (textQuad) textQuad.visible = true;
+      var autoClear = renderer.autoClear;
+      renderer.autoClear = false;
+      renderer.render(blackHoleState.quadScene, blackHoleState.quadCamera);
+      renderer.autoClear = autoClear;
+      if (screenQuad) screenQuad.visible = true;
+      if (textQuad) textQuad.visible = false;
+      blackHoleState.textQuads++;
+    }
   } catch (error) {
     blackHoleState.error = String((error && error.message) || error);
     renderer.setRenderTarget(null);
+    if (lyrics) lyrics.visible = lyricsWereVisible;
+    if (galaxy) galaxy.visible = true;
     blackHoleState.fallbacks++;
     return false;
   }
@@ -1389,6 +1480,17 @@ function bhArcGlyphs(widths, radius, cx, cy) {
   return { glyphs: placed, total: total, span: total / Math.max(1, radius) };
 }
 
+// How much of a row survives at a distance from the hole, in the hole's own shadow radius: it stays
+// whole outside, and is gone by the time it reaches the rim. This is what "gradually swallowed"
+// means now that the shadow does not paint over the text.
+function bhSwallowAlpha(distance, shadowRadius) {
+  if (!(shadowRadius > 1e-6)) return 1;
+  // Whole until 0.55 of the shadow radius and gone by 0.15: a row on its way in stays readable
+  // *over* the hole, which is the whole point of compositing it after the shadow, and only the
+  // last part of the fall - where it is down to a few pixels - is what fades out.
+  return bhClamp((distance / shadowRadius - 0.15) / 0.4, 0, 1);
+}
+
 // Where a row sits in the disc, given how far it is from the sung line. Rotation is signed so the
 // rows advance the same way round the rim, and each row keeps a small radial offset so the text
 // looks scattered around the galaxy instead of ruled onto a circle.
@@ -1619,7 +1721,10 @@ function bhPlaceLyrics(frame, dt) {
     row.mesh.rotation.z = angle + Math.PI / 2;
     var worldH = bhLyricFontPx() * 0.0085;
     row.mesh.scale.set(worldH * (row.widthRatio || 4), worldH, 1);
-    row.material.opacity = place.opacity;
+    // The shadow never covers the text any more, so being swallowed has to come from the row: it
+    // fades out as it crosses the shadow radius on its way in.
+    var shadowWorld = frame.uvShadow * Math.tan((frame.fovDeg * Math.PI / 180) * 0.5) * frame.distance;
+    row.material.opacity = place.opacity * bhSwallowAlpha(Math.sqrt(x * x + y * y), shadowWorld);
   }
   return true;
 }

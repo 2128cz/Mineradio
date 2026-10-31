@@ -41,11 +41,13 @@ function makeThree(record) {
     UnsignedByteType: 3,
     ClampToEdgeWrapping: 4,
     WebGLRenderTarget: function (w, h) {
+      this.id = record.targetIds = (record.targetIds || 0) + 1;
       this.width = w;
       this.height = h;
       this.texture = { wrapS: 0, wrapT: 0 };
       this.setSize = function (nw, nh) { this.width = nw; this.height = nh; record.rtSizes.push([nw, nh]); };
-      this.dispose = function () { record.disposed.push('rt'); };
+      var self = this;
+      this.dispose = function () { record.disposed.push('rt' + self.id); };
     },
     ShaderMaterial: function (opts) {
       this.uniforms = opts.uniforms;
@@ -55,7 +57,7 @@ function makeThree(record) {
     },
     Scene: function () { this.children = []; this.add = function (o) { this.children.push(o); }; this.clear = function () { this.children = []; }; },
     OrthographicCamera: function () {},
-    Mesh: function (geo, mat) { this.geometry = geo; this.material = mat; },
+    Mesh: function (geo, mat) { this.geometry = geo; this.material = mat; this.visible = true; this.frustumCulled = true; },
     PlaneGeometry: function () { this.dispose = function () { record.disposed.push('geometry'); }; },
     Group: function () {
       this.children = [];
@@ -204,6 +206,86 @@ function load(overrides) {
   console.log('plunge: d0=' + d0 + ' speed ' + speedEarly.toFixed(2) + ' -> ' + speedLate.toFixed(2) + ' at the end');
 }
 
+// ------------------------------------------- the text is composited over the finished picture
+//
+// The shadow is painted in the scene pass, so anything inside it is multiplied to black - which
+// made the hole cover the lyrics no matter where the row was. The text therefore renders into its
+// own target, is bent there without the shadow, and is added on top afterwards. This block checks
+// the order of the draws and the fact that the shadow is not part of the text pass at all.
+{
+  const record = { draws: [], seen: [], rtSizes: [], disposed: [], setTarget: [] };
+  const scene = { name: 'app-scene' };
+  const lyricsLayer = { isLyrics: true, visible: true, children: [] };
+  const galaxyGroup = { isGalaxy: true, visible: true, children: [],
+    position: { set: function () {} }, quaternion: { copy: function () { return this; } } };
+  const sandbox = load({
+    THREE: makeThree(record),
+    camera: makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9),
+    scene: scene,
+    fx: { preset: 15 },
+    renderer: {
+      autoClear: true,
+      drawingSize: { x: 1600, y: 900 },
+      getDrawingBufferSize(target) { target.set(this.drawingSize.x, this.drawingSize.y); return target; },
+      setRenderTarget(target) { record.setTarget.push(target ? (target === sandbox.blackHoleState.textRt ? 'text-rt' : 'rt') : null); },
+      // Three would render whatever is visible; record what was visible at that moment instead.
+      render(targetScene) {
+        record.draws.push(targetScene === scene ? 'scene' : 'quad');
+        record.seen.push({ scene: targetScene === scene, lyrics: lyricsLayer.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
+      }
+    }
+  });
+  sandbox.bhLyrics.layer = lyricsLayer;
+  sandbox.bhGalaxy.group = galaxyGroup;
+  sandbox.blackHoleState.frame = sandbox.bhComputeFrame();
+  assert(sandbox.renderBlackHoleFrame() === true, 'the two-pass frame must run');
+
+  assert.deepStrictEqual(record.draws, ['scene', 'quad', 'scene', 'quad'],
+    'scene, lens, text, composite: ' + JSON.stringify(record.draws));
+  const [scenePass, lensPass, textPass, compositePass] = record.seen;
+  assert(scenePass.lyrics === false, 'the scene pass must not contain the text (it would be shadowed there)');
+  assert(scenePass.galaxy === true, 'the scene pass is the field');
+  assert(lensPass.scene === false, 'the second draw is the lens quad, not the scene');
+  assert(textPass.scene === true && textPass.galaxy === false, 'the text pass renders the text alone');
+  assert(textPass.lyrics === true, 'and the text is visible in it');
+  assert(compositePass.autoClear === false, 'the composite must not clear the picture it is drawn over');
+  assert(sandbox.blackHoleState.textQuads === 1, 'the text composite is counted: ' + sandbox.blackHoleState.textQuads);
+  assert(lyricsLayer.visible === true && galaxyGroup.visible === true, 'both layers must be back on when the frame ends');
+
+  // Without a lyric layer the frame is the single pass it was before.
+  sandbox.bhLyrics.layer = null;
+  record.draws.length = 0;
+  sandbox.renderBlackHoleFrame();
+  assert.deepStrictEqual(record.draws, ['scene', 'quad'], 'no text means no second pass');
+  console.log('text pass: ' + record.draws.length + ' draws without text, 4 with; composite autoClear off, shadow absent');
+}
+
+// ---------------------------------------- swallowed by the row, not painted over by the hole
+{
+  const sandbox = load({ fx: { preset: 15 } });
+  const centre = sandbox.bhSwallowAlpha(0.1, 1);
+  const outside = sandbox.bhSwallowAlpha(1.4, 1);
+  const middle = sandbox.bhSwallowAlpha(0.35, 1);
+  const deep = sandbox.bhSwallowAlpha(0.6, 1);
+  assert(outside === 1, 'a row outside the rim must be whole, got ' + outside);
+  assert(centre === 0, 'a row at the centre must be gone, got ' + centre);
+  assert(middle > 0 && middle < 1, 'a row partway in is fading, got ' + middle);
+  assert(deep === 1, 'a row over the hole but not yet at the centre must stay readable, got ' + deep);
+  // Walked from the outside in: getting closer must never make a row brighter.
+  let last = 2;
+  for (let d = 1.5; d >= 0; d -= 0.05) {
+    const a = sandbox.bhSwallowAlpha(d, 1);
+    assert(a <= last + 1e-12, 'the fade must be monotone on the way in');
+    last = a;
+  }
+  // The text shader must not carry the shadow: that is the whole point of the second pass.
+  const textShader = sandbox.BH_TEXT_FS;
+  assert(textShader && !/swallowed/.test(textShader), 'the text pass must not multiply by the shadow');
+  assert(!/uDeflect/.test(textShader) && !/uCenter/.test(textShader),
+    'the text is composited in place: bending it put a centre row 70px out at the rim');
+  console.log('swallow: fade 1.4r=' + outside + ', 0.6r=' + deep + ', 0.35r=' + middle.toFixed(2) + ', 0.1r=' + centre);
+}
+
 // -------------------------------------- the shadow has to be reachable on the screen it bends
 //
 // The first version of the lens took the Kerr-Schild radius of the point ON the screen plane.
@@ -344,9 +426,17 @@ function load(overrides) {
 
   // Leaving the preset gives the memory back.
   sandbox.fx.preset = 15;
+  // The compile-guard check above disposed the pass on purpose, so build it again before the
+  // leave test: otherwise there is nothing to dispose and the assertion would pass for free.
+  sandbox.fx.preset = 15;
+  sandbox.renderBlackHoleFrame();
+  const rtId = sandbox.blackHoleState.rt ? sandbox.blackHoleState.rt.id : null;
+  const textRtId = sandbox.blackHoleState.textRt ? sandbox.blackHoleState.textRt.id : null;
   sandbox.applyBlackHolePresetNow(15, 14);
-  assert(record.disposed.indexOf('rt') >= 0 && record.disposed.indexOf('material') >= 0,
-    'disposing the pass must release the target and the material: ' + JSON.stringify(record.disposed));
+  assert(rtId !== null && record.disposed.indexOf('rt' + rtId) >= 0 && record.disposed.indexOf('material') >= 0,
+    'disposing the pass must release the scene target and the material: ' + JSON.stringify(record.disposed));
+  assert(textRtId !== null && record.disposed.indexOf('rt' + textRtId) >= 0,
+    'and the text target too: ' + JSON.stringify(record.disposed));
   assert(sandbox.blackHoleState.rt === null, 'the target must be gone after leaving');
   console.log('pass: scene->rt->quad, target follows the drawing buffer (' + status.rt.join('x') + '), fallback counted, memory released');
 }
