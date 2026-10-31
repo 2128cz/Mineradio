@@ -185,6 +185,27 @@ function runPvLyricFormatCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+function runLyricParseFormatsCheck() {
+  logStep('Lyric timestamp formats (dot and colon centiseconds)');
+  const testFile = path.join(appRoot, 'tests', 'lyric-parse-formats.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/lyric-parse-formats.test.js is missing; a provider format the parser does not know would look like a song with no lyrics');
+  }
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`lyric parse formats failed: ${rel(testFile)}`);
+  }
+  // The colon form is the one that shipped broken: pin it on the parser itself, not only on the
+  // fixture list, so a regex rewrite cannot quietly drop it again.
+  const parser = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '00-lyrics-fetch-parse.js'), 'utf8');
+  if (parser.indexOf('(?:[.:](\\d{1,3}))?') < 0) {
+    fail('the LRC parser must accept both [mm:ss.xx] and [mm:ss:xx]');
+  }
+  console.log('[OK] lyric timestamps parse in both the dot and colon centisecond forms.');
+}
+
 function runJizuraVendorCheck() {
   logStep('Vendored JIZURA engine integrity (single-file, licence, packaging)');
   const vendorDir = path.join(appRoot, 'vendor', 'jizura');
@@ -1760,8 +1781,8 @@ function runBlackHolePresetCheck() {
   if (!/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(text)) fail('the placement must use the tidal width, not shrink the row');
   if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
   if (!/bhSwallowAlpha\(radius, horizonWorld\)/.test(text)) fail('the row has to live until the horizon, not fade at the shadow');
-  if (!/for \(var i = 0; i < 7; i\+\+\)/.test(text)) fail('seven row slots: an inspiral longer than a line needs its mesh kept');
-  if (!/Math\.max\(0, sung - 4\)/.test(text)) fail('the window has to keep four lines of history for the long falls');
+  if (!/for \(var i = 0; i < 9; i\+\+\)/.test(text)) fail('nine row slots: an inspiral longer than a line needs its mesh kept');
+  if (!/Math\.max\(0, sung - 6\)/.test(text)) fail('the window has to keep six lines of history for the long falls and fast songs');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');
@@ -7434,6 +7455,7 @@ async function main() {
   runBuiltInPlaylistRegressionCheck();
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
+  runLyricParseFormatsCheck();
   runJizuraVendorCheck();
   runPvPlannerCheck();
   runPvPipelineCheck();

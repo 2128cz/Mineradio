@@ -2194,9 +2194,10 @@ function bhBuildLyrics() {
   var rows = [];
   var fontPx = bhLyricFontPx();
   var worldHeight = fontPx * 0.045;
-  // Seven slots: a row keeps orbiting for its whole inspiral, so several lines are in the disc at
-  // once and the queue at the front is a queue of falls, not a single row being recycled.
-  for (var i = 0; i < 7; i++) {
+  // Nine slots: a row keeps orbiting for its whole inspiral, so several lines are in the disc at
+  // once. Fast songs need the wider window (six lines of history) or a row that is still visibly
+  // falling is dropped when the window moves on.
+  for (var i = 0; i < 9; i++) {
     var row = bhBuildLyricRow(1024, 256);
     row.mesh.scale.set(worldHeight * (row.widthRatio || 4), worldHeight, 1);
     row.mesh.visible = false;
@@ -2260,9 +2261,10 @@ function bhPlaceLyrics(frame, dt) {
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
   var anchor = sung < 0 ? 0 : sung;
-  // Four lines of history: the inspiral is long by design, so a row that has left the front has to
-  // stay alive while it winds in - three lines behind is not enough.
-  var lo = sung < 0 ? 0 : Math.max(0, sung - 4);
+  // Six lines of history: the inspiral is long by design and fast songs can put a line every second,
+  // so a row that has left the front has to stay alive while it winds in - four lines behind cut
+  // rows mid-fall on the fast sections.
+  var lo = sung < 0 ? 0 : Math.max(0, sung - 6);
   var hi = Math.min(items.length - 1, anchor + 2);
   var rows = bhLyrics.rows;
   var held = {};

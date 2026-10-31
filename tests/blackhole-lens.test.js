@@ -1096,8 +1096,8 @@ function load(overrides) {
   // four lines of history so a row is not cut off mid-inspiral.
   assert(/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(source),
     'the placement has to bend each row to its own radius');
-  assert(/var lo = sung < 0 \? 0 : Math\.max\(0, sung - 4\);/.test(source),
-    'the window has to keep four lines of history');
+  assert(/var lo = sung < 0 \? 0 : Math\.max\(0, sung - 6\);/.test(source),
+    'the window has to keep six lines of history for the long falls');
   // A long line is wrapped into a block instead of being fitted to the screen width, which made it
   // a two-pixel strip (and read as "the lyrics stopped showing").
   const measurer = { measureText: function (s) { return { width: String(s).length * 10 }; } };
@@ -1125,7 +1125,7 @@ function load(overrides) {
   assert(Math.abs(bobA) <= 0.02 + 0.25 * 0.12 + 1e-9, 'an idle bob stays inside the disc: ' + bobA);
   assert(Math.abs(sandbox.bhLyricBob(0, 5, 1, 0.25)) <= (0.02 + 0.25 * 0.12) * 1.9 + 1e-9,
     'and even the falling swing is bounded');
-  assert(/for \(var i = 0; i < 7; i\+\+\)/.test(source), 'seven rows, so the older inspiral keeps its mesh');
+  assert(/for \(var i = 0; i < 9; i\+\+\)/.test(source), 'nine rows, so the older inspiral keeps its mesh on fast songs');
 
   // While the previous line is still on the front, the next is not shown: the gap the user asked
   // for. Two tenths of a second later it starts to come in.
