@@ -42,7 +42,7 @@ var BH_TUNING_SCHEMA = {
   // World units: the hole is a scene point, so these are positions in the scene and the horizon
   // radius is a length, not a fraction of the viewport.
   holeX: { def: 0.0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
-  holeY: { def: 0.2, min: -6, max: 6, kind: 'unit', rebuild: 'live' },
+  holeY: { def: -0.55, min: -6, max: 6, kind: 'unit', rebuild: 'live' },
   holeDepth: { def: 0, min: -8, max: 8, kind: 'unit', rebuild: 'live' },
   mass: { def: 0.9, min: 0.05, max: 6, kind: 'unit', rebuild: 'live' },
   spin: { def: 0.7, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
@@ -57,7 +57,11 @@ var BH_TUNING_SCHEMA = {
   discOuter: { def: 4.2, min: 0.6, max: 24, kind: 'unit', rebuild: 'live' },
   discTilt: { def: 14, min: -60, max: 60, kind: 'deg', rebuild: 'live' },
   discGain: { def: 0.85, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
-  marchSteps: { def: 110, min: 24, max: 256, kind: 'count', rebuild: 'live' },
+  // The disc is a volume of this world thickness: the camera can be inside it and still see it.
+  discThickness: { def: 0.6, min: 0.05, max: 6, kind: 'unit', rebuild: 'live' },
+  // One softness for the whole backdrop: the galaxy, the streaks and the glow move together.
+  softness: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
   textLens: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
@@ -167,6 +171,7 @@ function bhMarchRay(origin, dir, options) {
   var deflect = options.deflect === undefined ? 1 : Number(options.deflect);
   var inner = Number(options.discInner) || 2.2;
   var outer = Number(options.discOuter) || 7.5;
+  var thickness = options.discThickness === undefined ? 0.9 : Number(options.discThickness);
   var tilt = Number(options.discTilt) || 0.14;
   var n = { x: Math.sin(tilt), y: Math.cos(tilt), z: 0 };
   var pos = { x: origin.x, y: origin.y, z: origin.z };
@@ -177,33 +182,31 @@ function bhMarchRay(origin, dir, options) {
     z: pos.x * vel.y - pos.y * vel.x
   };
   var h2 = cross.x * cross.x + cross.y * cross.y + cross.z * cross.z;
-  var prevSide = pos.x * n.x + pos.y * n.y + pos.z * n.z;
-  var discRadius = -1;
   var captured = false;
+  var optical = 0;
   var used = 0;
+  var halfThick = Math.max(0.002, thickness * 0.5);
   for (var i = 0; i < steps; i++) {
     used = i + 1;
     var r2 = pos.x * pos.x + pos.y * pos.y + pos.z * pos.z;
     if (r2 < 1) { captured = true; break; }
     if (r2 > 3600 && pos.x * vel.x + pos.y * vel.y + pos.z * vel.z > 0) break;
     var r = Math.sqrt(r2);
-    var dt = Math.min(0.4, Math.max(0.008, 0.05 * r)) * deflect;
+    var dt = Math.min(0.38, Math.max(0.008, 0.05 * r)) * deflect;
     var k = -1.5 * h2 / (r2 * r2 * r) * dt;
     vel.x += pos.x * k; vel.y += pos.y * k; vel.z += pos.z * k;
-    pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
+    // The disc is a slab: every step that is inside it contributes, which is what gives the fog
+    // its thickness in the shader. The twin records the same optical depth.
     var side = pos.x * n.x + pos.y * n.y + pos.z * n.z;
-    if (discRadius < 0 && prevSide * side < 0) {
-      var f = prevSide / (prevSide - side);
-      var cx = pos.x - vel.x * dt * (1 - f);
-      var cy = pos.y - vel.y * dt * (1 - f);
-      var cz = pos.z - vel.z * dt * (1 - f);
-      var rc = Math.sqrt(cx * cx + cy * cy + cz * cz);
-      if (rc > inner && rc < outer) discRadius = rc;
+    if (Math.abs(side) < halfThick && r > inner && r < outer) {
+      var vert = 1 - Math.abs(side) / halfThick;
+      var rn = Math.min(1, Math.max(0, (r - inner) / Math.max(0.001, outer - inner)));
+      optical += vert * rn * (1 - rn) * dt;
     }
-    prevSide = side;
+    pos.x += vel.x * dt; pos.y += vel.y * dt; pos.z += vel.z * dt;
   }
   var len = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) || 1;
-  return { captured: captured, discRadius: discRadius, steps: used, dirOut: { x: vel.x / len, y: vel.y / len, z: vel.z / len } };
+  return { captured: captured, discOptical: optical, steps: used, dirOut: { x: vel.x / len, y: vel.y / len, z: vel.z / len } };
 }
 
 // ---------------------------------------------------------------- the hole on screen
@@ -311,17 +314,12 @@ void main() {
 }
 `;
 
-// The scene pass, written as a Shadertoy body: a ray is marched through the Schwarzschild field and
-// what it does decides the pixel - falls in (black), hits the accretion disc (bright, dopplered),
-// or escapes (the galaxy is sampled along the direction it actually left in, so the background is
-// lensed rather than merely hidden behind a dark circle).
-//
-// Units: one horizon radius. The camera and the hole arrive in world space and are divided by uRs
-// here, so `mass` staying a world length means the picture keeps its physics when you zoom.
-//
-// This is our own implementation. The driver above can run a shader lifted from Shadertoy, but those
-// carry their authors' licences (often CC BY-NC-SA) and this build ships under GPL; anything pasted
-// through it has to be checked before it goes in.
+// Volumetric version of the pass. The disc is no longer a plane the ray crosses: every step that
+// finds itself inside a slab of thickness uDiscThick around the disc plane adds emission and eats
+// some transparency, so the disc has depth, the camera can be inside it, and the grain lives in the
+// volume. The galaxy is sampled with a *bounded* screen-space bend plus a few taps of blur - a
+// direction-based lookup squeezed the whole sky into vertical strips, which is what made the
+// background look like a tube.
 var BH_PASS_FS = shadertoyFragment(
   [
     'uniform float uTextLens;',
@@ -331,89 +329,115 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform vec3 uCamUp;',
     'uniform float uTanHalf;',
     'uniform float uAspect;',
+    'uniform vec2 uCenter;',
     'uniform vec3 uHole;',
     'uniform float uRs;',
     'uniform float uSteps;',
     'uniform float uDeflect;',
     'uniform float uDiscInner;',
     'uniform float uDiscOuter;',
+    'uniform float uDiscThick;',
     'uniform float uDiscTilt;',
     'uniform float uDiscGain;',
     'uniform float uSpin;',
     'uniform float uRing;',
+    'uniform float uSoft;',
     'uniform float uLevel;',
+    '',
+    'float hash21(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }',
+    '',
+    '// The galaxy, bent by the field and softened: `bend` is how far the marched direction is from the',
+    '// straight one, clamped so the sky cannot be squeezed into strips, and the lookup is blurred so',
+    '// the background sits at the same softness as the disc instead of looking pin-sharp beside it.',
+    'vec3 sampleSky(vec2 uv, vec2 bend, float blurPx) {',
+    '  vec2 base = clamp(uv + bend, vec2(0.0), vec2(1.0));',
+    '  vec2 texel = 1.0 / max(iResolution.xy, vec2(1.0));',
+    '  float r = (0.75 + blurPx) * 1.0;',
+    '  vec3 sum = texture2D(iChannel0, base).rgb;',
+    '  sum += texture2D(iChannel0, clamp(base + vec2(texel.x * r * 2.4, 0.0), 0.0, 1.0)).rgb;',
+    '  sum += texture2D(iChannel0, clamp(base - vec2(texel.x * r * 2.4, 0.0), 0.0, 1.0)).rgb;',
+    '  sum += texture2D(iChannel0, clamp(base + vec2(0.0, texel.y * r * 2.4), 0.0, 1.0)).rgb;',
+    '  sum += texture2D(iChannel0, clamp(base - vec2(0.0, texel.y * r * 2.4), 0.0, 1.0)).rgb;',
+    '  return sum / 5.0;',
+    '}',
     '',
     'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
     '  vec2 uv = fragCoord.xy / iResolution.xy;',
     '  vec2 ndc = (uv - 0.5) * 2.0;',
     '  vec3 dir = normalize(uCamFwd + uCamRight * ndc.x * uTanHalf * uAspect + uCamUp * ndc.y * uTanHalf);',
     '',
-    '  // Everything in horizon radii, with the hole at the origin.',
     '  vec3 pos = (uCamPos - uHole) / max(0.0001, uRs);',
     '  vec3 vel = dir;',
     '  float h2 = dot(cross(pos, vel), cross(pos, vel));',
     '  vec3 discN = normalize(vec3(sin(uDiscTilt), cos(uDiscTilt), 0.0));',
-    '  float prevSide = dot(pos, discN);',
-    '  float discR = -1.0;',
-    '  vec3 discPos = vec3(0.0);',
     '  bool captured = false;',
+    '  vec3 emit = vec3(0.0);',
+    '  float transmit = 1.0;',
+    '  float lastR = length(pos);',
     '  int steps = int(uSteps);',
     '  for (int i = 0; i < 256; i++) {',
     '    if (i >= steps) break;',
     '    float r2 = dot(pos, pos);',
     '    if (r2 < 1.0) { captured = true; break; }',
     '    if (r2 > 3600.0 && dot(pos, vel) > 0.0) break;',
-    '    float dt = clamp(0.05 * sqrt(r2), 0.008, 0.4) * uDeflect;',
-    '    vec3 force = -1.5 * h2 * pos / (r2 * r2 * sqrt(r2));',
+    '    float r = sqrt(r2);',
+    '    lastR = r;',
+    // Quadratic: tiny steps near the hole (a linear step left the photon ring polygonal), coarse
+    '    float dt = clamp(0.02 * r * r, 0.004, 0.30) * uDeflect;',
+    '    vec3 force = -1.5 * h2 * pos / (r2 * r2 * r);',
     '    vel += force * dt;',
-    '    vec3 next = pos + vel * dt;',
-    '    float side = dot(next, discN);',
-    '    if (discR < 0.0 && prevSide * side < 0.0) {',
-    '      float k = prevSide / (prevSide - side);',
-    '      vec3 crossing = mix(pos, next, k);',
-    '      float rc = length(crossing);',
-    '      if (rc > uDiscInner && rc < uDiscOuter) { discR = rc; discPos = crossing; }',
+    '',
+    '    // The disc as a volume: every step inside the slab contributes, so its thickness is real and',
+    '    // a camera that cuts through it sees the fog rather than an infinitely thin sheet.',
+    '    float side = dot(pos, discN);',
+    '    float halfThick = max(0.002, uDiscThick * 0.5);',
+    '    if (abs(side) < halfThick && r > uDiscInner && r < uDiscOuter) {',
+    '      float vert = 1.0 - abs(side) / halfThick;',
+    '      float rn = clamp((r - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
+    '      float radial = smoothstep(0.0, 0.18, rn) * (1.0 - smoothstep(0.72, 1.0, rn));',
+    '      float heat = pow(1.0 - rn, 1.7);',
+    '      // Grain: hashed cells in the disc\'s own rotating frame, so it streaks with the flow.',
+    '      float ang = atan(pos.z, pos.x);',
+    '      float phase = ang - uSpin * iTime * 0.55 / (0.6 + r);',
+    '      vec2 cell = floor(vec2(phase * 7.0, r * 6.0 + iTime * 0.25));',
+    '      float h = hash21(cell);',
+    '      float grain = mix(0.25, 1.75, smoothstep(0.52, 0.94, h));',
+    '      vec2 tangent = normalize(vec2(-pos.z, pos.x));',
+    '      vec2 motion = normalize(vec2(vel.x, vel.z));',
+    '      float doppler = 1.0 + uSpin * 0.8 * dot(tangent, motion);',
+    '      float density = vert * radial * grain;',
+    '      vec3 tint = mix(vec3(1.0, 0.50, 0.18), vec3(1.0, 0.96, 0.88), heat);',
+    '      emit += tint * (0.22 + 1.8 * heat) * max(0.10, doppler) * density * dt * uDiscGain * transmit;',
+    '      transmit *= exp(-density * dt * 0.6 * (0.5 + uDiscGain));',
     '    }',
-    '    pos = next;',
-    '    prevSide = side;',
+    '    pos += vel * dt;',
     '  }',
     '',
-    '  // Where this ray would land on the text layer if nothing bent it, and where it actually went.',
-    '  vec3 outDir = normalize(vel);',
-    '  float cosF = dot(outDir, uCamFwd);',
-    '  vec2 off = vec2(dot(outDir, uCamRight), dot(outDir, uCamUp)) / max(0.001, cosF * uTanHalf);',
-    '  vec2 lensedUv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
-    '  float rFinal = length(pos);',
-    '',
-    '  vec3 color = vec3(0.0);',
-    '  if (captured) {',
-    '    color = vec3(0.0);',
-    '  } else if (discR > 0.0) {',
-    '    // The disc: hot towards its inner edge, and brighter on the side that is coming at the eye.',
-    '    float rn = clamp((discR - uDiscInner) / max(0.001, uDiscOuter - uDiscInner), 0.0, 1.0);',
-    '    float heat = pow(1.0 - rn, 1.7);',
-    '    vec2 tangent = normalize(vec2(-discPos.z, discPos.x));',
-    '    vec2 motion = normalize(vec2(vel.x, vel.z));',
-    '    float doppler = 1.0 + uSpin * 0.85 * dot(tangent, motion);',
-    '    vec3 tint = mix(vec3(1.0, 0.52, 0.20), vec3(1.0, 0.96, 0.86), heat);',
-    '    color = tint * (0.22 + 1.9 * heat) * max(0.10, doppler) * uDiscGain;',
-    '  } else {',
-    '    // Escaped: the galaxy is sampled along the direction the ray actually left in.',
-    '    vec4 scene = texture2D(iChannel0, clamp(lensedUv, 0.0, 1.0));',
-    '    float inside = step(0.0, lensedUv.x) * step(lensedUv.x, 1.0) * step(0.0, lensedUv.y) * step(lensedUv.y, 1.0);',
-    '    color = scene.rgb * inside;',
+    '  vec3 bg = vec3(0.0);',
+    '  vec2 bend = vec2(0.0);',
+    '  if (!captured) {',
+    '    vec3 outDir = normalize(vel);',
+    '    float cosF = dot(outDir, uCamFwd);',
+    '    vec2 off = vec2(dot(outDir, uCamRight), dot(outDir, uCamUp)) / max(0.001, cosF * uTanHalf);',
+    '    vec2 lensedUv = 0.5 + 0.5 * vec2(off.x / uAspect, off.y);',
+    '    // Bounded: the sky can bend, not fold into a tube.',
+    '    bend = clamp(lensedUv - uv, vec2(-0.28), vec2(0.28));',
+    '    bg = sampleSky(uv, bend, uSoft * 5.0);',
     '  }',
     '',
-    '  // Photon ring: light that skirted the horizon lands in a thin bright rim just outside it.',
+    '  float rFinal = lastR;',
+    '  vec3 color = bg * transmit + emit;',
+    '',
+    '  // Photon ring and a faint halo: the pressure of the thing comes from the ring being crisp',
+    '  // against a soft field, and from the frame darkening towards its corners.',
     '  float rim = exp(-pow((rFinal - 1.32) / 0.11, 2.0));',
     '  color += uRing * rim * vec3(1.0, 0.87, 0.64) * (0.6 + 0.4 * uLevel);',
+    '  float dUv = length((uv - uCenter) * vec2(uAspect, 1.0));',
+    '  color += uRing * 0.05 * vec3(0.45, 0.62, 0.95) * exp(-pow((dUv - 0.34) / 0.22, 2.0));',
+    '  color *= 1.0 - 0.28 * smoothstep(0.42, 1.05, dUv);',
     '',
-    '  // The lyric layer is a channel of this shader: it is drawn from the same camera into its own',
-    '  // target and arrives here as iChannel1. Far from the hole it is sampled where the bent ray',
-    '  // lands; at the rim it stays where it was drawn, so a line crossing the shadow is still',
-    '  // readable and its own alpha does the fading. Composited over, not pasted after the pass.',
     '  float closeness = captured ? 0.0 : clamp((rFinal - 1.10) / 0.60, 0.0, 1.0);',
-    '  vec2 textUv = clamp(mix(uv, lensedUv, clamp(uTextLens, 0.0, 1.0) * closeness), 0.0, 1.0);',
+    '  vec2 textUv = clamp(mix(uv, uv + bend, clamp(uTextLens, 0.0, 1.0) * closeness), 0.0, 1.0);',
     '  vec4 text = texture2D(iChannel1, textUv);',
     '  color = color * (1.0 - text.a) + text.rgb;',
     '  fragColor = vec4(color, 1.0);',
@@ -525,6 +549,9 @@ function bhBuildPass() {
         iChannel0: { value: rt.texture },
         iChannel1: { value: textRt.texture },
         uTextLens: { value: 0.75 },
+        uCenter: { value: new THREE.Vector2(0.5, 0.5) },
+        uSoft: { value: 0.6 },
+        uDiscThick: { value: 0.9 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
         iFrame: { value: 0 },
@@ -540,8 +567,9 @@ function bhBuildPass() {
         uSteps: { value: 110 },
         uDeflect: { value: 1 },
         uDiscInner: { value: 2.2 },
-        uDiscOuter: { value: 7.5 },
-        uDiscTilt: { value: 0.14 },
+        uDiscOuter: { value: 4.2 },
+        uDiscThick: { value: 0.9 },
+        uDiscTilt: { value: 0.24 },
         uDiscGain: { value: 1.1 },
         uSpin: { value: 0.7 },
         uRing: { value: 0.45 },
@@ -611,6 +639,9 @@ function bhSyncLens(frame) {
   // Disc radii arrive in world units and are used in horizon radii, like everything inside the march.
   u.uDiscInner.value = Math.max(1.02, bhClamp(bhParam('discInner'), 0.2, 40) / rs);
   u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
+  if (u.uDiscThick) u.uDiscThick.value = Math.max(0.01, bhClamp(bhParam('discThickness'), 0.02, 8) / rs);
+  if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 1);
+  if (u.uCenter) u.uCenter.value.set(frame.uv ? frame.uv.u : 0.5, frame.uv ? frame.uv.v : 0.5);
   u.uDiscTilt.value = bhClamp(bhParam('discTilt'), -60, 60) * Math.PI / 180;
   u.uDiscGain.value = bhClamp(bhParam('discGain'), 0, 3);
   u.uSpin.value = bhClamp(bhParam('spin'), -1, 1);

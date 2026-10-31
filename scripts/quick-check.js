@@ -1579,9 +1579,9 @@ function runBlackHolePresetCheck() {
   // captured, and the background is sampled along the direction the ray escaped in.
   if (!/shadertoyFragment\(/.test(text)) fail('the pass must be written against the Shadertoy driver');
   if (loaderText.indexOf("'js/modules/02-visual/20-shadertoy-driver.js'") < 0) fail('the Shadertoy driver must be loaded, or the pass cannot compile');
-  if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* sqrt\(r2\)\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
+  if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
   if (!/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader)) fail('a ray inside the horizon has to be captured');
-  if (!/prevSide \* side < 0\.0/.test(shader)) fail('the disc is found by crossing the plane, or there is no disc');
+  if (!/abs\(side\) < halfThick/.test(shader)) fail('the disc has to be a volume: a plane crossing has no thickness to see through');
   if (!/dot\(outDir, uCamRight\)/.test(shader)) fail('an escaped ray must sample the galaxy along its own direction (that is the lensing)');
   if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
   // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the

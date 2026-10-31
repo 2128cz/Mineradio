@@ -166,13 +166,19 @@ function load(overrides) {
     assert(shot.captured === false, 'a photon with impact parameter ' + b + ' must escape');
   });
 
-  // The disc is found by the plane crossing inside its radii, and only then.
-  const throughDisc = march({ x: -30, y: 3.2, z: 0 }, { x: 0.97, y: -0.24, z: 0 }, { steps: 4000, discInner: 2.2, discOuter: 7.5 });
-  assert(throughDisc.discRadius > 2.2 && throughDisc.discRadius < 7.5,
-    'a ray through the disc must record a radius inside it: ' + throughDisc.discRadius);
-  // A disc that ends inside that crossing radius is not hit by the same ray.
-  const outsideDisc = march({ x: -30, y: 3.2, z: 0 }, { x: 0.97, y: -0.24, z: 0 }, { steps: 4000, discInner: 1.05, discOuter: 2.0 });
-  assert(outsideDisc.discRadius < 0, 'a ray crossing outside the disc radii must not be a hit: ' + outsideDisc.discRadius);
+  // The disc is a volume now: a ray that passes through the slab accumulates optical depth, a
+  // zero-thickness slab accumulates none, and the depth grows with the thickness - that is what
+  // makes it a fog the camera can be inside of instead of a sheet.
+  const thin = march({ x: -30, y: 3.2, z: 0 }, { x: 0.97, y: -0.24, z: 0 }, { steps: 4000, discInner: 1.05, discOuter: 12, discThickness: 0.02 });
+  const thick = march({ x: -30, y: 3.2, z: 0 }, { x: 0.97, y: -0.24, z: 0 }, { steps: 4000, discInner: 1.05, discOuter: 12, discThickness: 1.6 });
+  assert(thin.discOptical >= 0 && thick.discOptical > thin.discOptical * 4,
+    'a thicker slab must accumulate more: ' + thin.discOptical + ' vs ' + thick.discOptical);
+  const outsideDisc = march({ x: -30, y: 3.2, z: 0 }, { x: 0.97, y: -0.24, z: 0 }, { steps: 4000, discInner: 1.05, discOuter: 2, discThickness: 1.6 });
+  assert(outsideDisc.discOptical === 0, 'a ray that passes outside the disc radii must not accumulate: ' + outsideDisc.discOptical);
+  // A camera sitting inside the slab sees it immediately, which is the case that used to be a
+  // single crossing or nothing at all.
+  const inside = march({ x: -8, y: 0.1, z: 0.1 }, { x: 1, y: 0.02, z: 0 }, { steps: 4000, discInner: 1.05, discOuter: 12, discThickness: 1.6 });
+  assert(inside.discOptical > 0, 'a camera inside the disc must see it');
 
   // The fall the arc rows use when a line stops being sung: exponential-looking, and faster at the
   // end (the row covers more ground in its last tenth than in its first half).
@@ -194,7 +200,7 @@ function load(overrides) {
   assert(spread < 1e-9, 'the marched shadow is a circle, spread ' + spread);
   assert(Math.abs(silhouette.cap - 2.598076) < 1e-6, 'and its radius is 3*sqrt(3)/2, got ' + silhouette.cap);
   console.log('march: deflection at b=30 ' + weak.toFixed(5) + ' (2/b ' + (2 / 30).toFixed(5) + ')'
-    + ', captured for b<=2.4 / escaped for b>=4, disc hit at r=' + throughDisc.discRadius.toFixed(2)
+    + ', captured for b<=2.4 / escaped for b>=4, disc optical ' + thin.discOptical.toFixed(3) + ' -> ' + thick.discOptical.toFixed(3)
     + ', shadow radius ' + silhouette.cap.toFixed(4) + ' horizon radii');
 }
 
@@ -790,9 +796,9 @@ function load(overrides) {
 {
   const shader = source.slice(source.indexOf('var BH_PASS_FS'));
   assert(/shadertoyFragment\(/.test(source), 'the pass must be written against the Shadertoy driver');
-  assert(/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* sqrt\(r2\)\)/.test(shader), 'the march must integrate the Schwarzschild acceleration');
+  assert(/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader), 'the march must integrate the Schwarzschild acceleration');
   assert(/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader), 'a ray inside the horizon must be captured');
-  assert(/prevSide \* side < 0\.0/.test(shader), 'the disc is found by the plane crossing');
+  assert(/Math.abs\(side\) < halfThick/.test(shader) || /abs\(side\) < halfThick/.test(shader), 'the disc must be a volume, not a plane crossing');
   assert(/dot\(outDir, uCamRight\)/.test(shader), 'an escaped ray samples the galaxy along its own direction');
   assert(/uDiscInner/.test(shader) && /uDiscTilt/.test(shader), 'the disc has to be in the shader and tiltable');
   // The driver itself: a Shadertoy body is wrapped with its own main().
