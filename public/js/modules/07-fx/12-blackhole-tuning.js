@@ -22,6 +22,12 @@ var blackHoleTuning = (function () {
   var out = {};
   var saved = null;
   try { saved = JSON.parse(window.localStorage.getItem(BLACKHOLE_TUNING_STORE_KEY) || 'null'); } catch (_) {}
+  // The orbit used to be a world radius; it is a fraction of the camera distance now, so a value
+  // outside the new range is converted once (6.6 units was the reference) instead of being clamped
+  // to the top of the range.
+  if (saved && isFinite(Number(saved.lyricOrbit)) && Number(saved.lyricOrbit) > 0.7) {
+    saved.lyricOrbit = Number(saved.lyricOrbit) / 6.6;
+  }
   Object.keys(BH_TUNING_SCHEMA).forEach(function (key) {
     var raw = saved && saved[key] !== undefined ? saved[key] : BH_TUNING_SCHEMA[key].def;
     var next = bhTuningClamp(key, raw);

@@ -110,7 +110,11 @@ var BH_TUNING_SCHEMA = {
   // The lyrics orbit inside the accretion disc's plane, so "where they are" is a world circle, not
   // a screen offset: lyricOrbit is its radius in scene units, lyricOrbitRate how fast a line comes
   // round (radians per second), lyricWind how many extra radians it turns while falling in.
-  lyricOrbit: { def: 2.4, min: 0.4, max: 12, kind: 'unit', rebuild: 'live' },
+  // A fraction of the camera-to-hole distance, not a length: the same world radius would hug the
+  // hole when the camera is close and swallow the frame when it is far. 0.58 keeps the near half in
+  // front of the eye and puts the far half 1.6x the distance away, which is the near/far spread the
+  // signs need in order to read as small objects around something huge.
+  lyricOrbit: { def: 0.58, min: 0.15, max: 0.7, kind: 'ratio', rebuild: 'live' },
   lyricOrbitRate: { def: 0.5, min: 0.05, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricWind: { def: 5.0, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
@@ -2452,7 +2456,7 @@ function bhBuildLyrics() {
 
 function bhLyricParams() {
   return {
-    orbit: bhClamp(bhParam('lyricOrbit'), 0.3, 20),
+    orbit: bhClamp(bhParam('lyricOrbit'), 0.05, 0.8),
     rate: bhClamp(bhParam('lyricOrbitRate'), 0.05, 2),
     wind: bhClamp(bhParam('lyricWind'), 0, 8),
     curve: bhClamp(bhParam('fallCurve'), 0.05, 3),
@@ -2499,6 +2503,9 @@ function bhPlaceLyrics(frame, dt) {
   // the shadow the row is either hidden or sitting on the centre where front/back has no meaning.
   var shadowWorld = Math.max(0, (Number(frame.uvShadow) || 0) * depth * tanHalf);
   var rimWorld = Math.max(horizonWorld * 1.02, shadowWorld * 0.98);
+  // The knob is a fraction of the distance; it becomes a world radius here, where the distance is
+  // known. The cap keeps the near half in front of the eye whatever the camera does.
+  params.orbit = bhClamp(params.orbit * depth, 0.4, depth * 0.62);
   params.rim = bhClamp(rimWorld / Math.max(1e-4, params.orbit), 0.01, 1);
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
@@ -2607,8 +2614,15 @@ function bhPlaceLyrics(frame, dt) {
     // Sized against the hole's own depth: the front of the orbit is closer to the eye, so it is
     // drawn bigger by the perspective, and a line on the far side is smaller and hazier.
     // A wrapped line is a taller sign, not four lines squeezed into the height of one.
-    var worldH = params.height * depth * tanHalf * (current ? 1.12 : 0.95) * (row.lineScale || 1);
+    // The sign is sized against the distance it is seen at, not against the ring: a bigger orbit
+    // puts the front of the ring closer to the eye, and the sign has to shrink with it or the near
+    // half would fill the frame. Behind the hole the perspective then does the shrinking on its own.
+    var frontShare = Math.max(0.15, (depth - params.orbit) / Math.max(1e-4, depth));
+    var worldH = params.height * depth * tanHalf * frontShare * (current ? 1.12 : 0.95) * (row.lineScale || 1);
     var rowAlong = Math.max(0.05, alongRow);
+    // A speck, not a vanishing point: the far half shrinks by perspective until it is unreadable,
+    // and that is the point - but it may not disappear while it is still turning.
+    worldH = Math.max(worldH, 0.006 * 2 * rowAlong * tanHalf);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
     var worldW = worldH * (row.widthRatio || 4) * fit;

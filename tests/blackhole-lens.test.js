@@ -960,6 +960,9 @@ function load(overrides) {
   // Timing: wait, ease to the front, read, leave early enough for the next. The ease has zero
   // angular speed at both ends, so the line settles instead of stopping dead.
   const params = sandbox.bhLyricParams();
+  // The knob is a fraction of the distance; the placement turns it into a world radius, so the arms
+  // below work in world units the same way the shot does.
+  params.orbit = Math.min(Math.max(params.orbit * frame.distance, 0.4), frame.distance * 0.62);
   const item = { startAt: 10, endAt: 13 };
   const waiting = sandbox.bhLyricOrbitState(item, 5, params, front, null);
   assert(waiting.phase === 'wait' && waiting.alpha === 0, 'a line waits off the front, invisible, until its turn');

@@ -215,7 +215,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhgalaxySpin', '星系自转', '银河黑洞 星系 自转 旋转 较差 转动'),
         fxConsoleItem('fx-bhgalaxyGlow', '星光亮度', '银河黑洞 星点 亮度 星光 粒子 亮'),
         fxConsoleItem('fx-bhnebulaAmount', '星云浓度', '银河黑洞 星云 雾 浓度 弥漫 背景'),
-        fxConsoleItem('fx-bhlyricOrbit', '歌词轨道半径', '银河黑洞 歌词 轨道 半径 公转 吸积盘 圆'),
+        fxConsoleItem('fx-bhlyricOrbit', '歌词轨道半径（占镜头距离）', '银河黑洞 歌词 轨道 半径 公转 吸积盘 圆 距离 比例'),
         fxConsoleItem('fx-bhlyricOrbitRate', '歌词公转速度', '银河黑洞 歌词 公转 轨道 速度 弧度 绕'),
         fxConsoleItem('fx-bhlyricWind', '歌词旋入', '银河黑洞 歌词 吸入 螺旋 旋入 绕转 引力'),
         fxConsoleItem('fx-bhlyricDrift', '歌词飘散', '银河黑洞 歌词 漂移 漂浮 飘散 缓慢'),
