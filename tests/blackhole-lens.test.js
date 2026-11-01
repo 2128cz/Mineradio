@@ -1354,6 +1354,24 @@ function load(overrides) {
   assert(wrappedShort.join('').indexOf('…') < 0, 'a line that wrapped is not truncated, so it gets no ellipsis');
   const tooLong = sandbox.bhWrapText(wrapShortCtx, 'aaaa bbbb cccc dddd eeee ffff gggg hhhh', 100, 2);
   assert(tooLong.length === 2 && tooLong[1].indexOf('…') >= 0, 'a cut line has to end in an ellipsis: ' + JSON.stringify(tooLong));
+  // And the class of bug, not just this instance: a throw in the per-frame lyric path must not
+  // reach the frame loop, or the preset freezes while everything else keeps working.
+  {
+    const originalPlace = sandbox.bhPlaceLyrics;
+    const savedLyrics = { items: sandbox.bhLyrics.items, sung: sandbox.bhLyrics.sung, now: sandbox.bhLyrics.now };
+    sandbox.bhPlaceLyrics = function () { throw new Error("probe-throw"); };
+    let escaped = null;
+    let stopped = null;
+    try { stopped = sandbox.updateBlackHoleLyrics(0.016); } catch (e) { escaped = e; }
+    sandbox.bhPlaceLyrics = originalPlace;
+    sandbox.bhLyrics.items = savedLyrics.items;
+    sandbox.bhLyrics.sung = savedLyrics.sung;
+    sandbox.bhLyrics.now = savedLyrics.now;
+    assert(escaped === null, 'a throw in the lyric path must not escape into the frame loop: ' + (escaped && escaped.message));
+    assert(stopped === false, 'the frame has to fall back without lyrics instead of dying');
+    assert(sandbox.blackHoleState.lyricError === 'probe-throw' && sandbox.blackHoleState.lyricErrors > 0,
+      'and the throw has to be reported and counted: ' + sandbox.blackHoleState.lyricError);
+  }
   assert(sandbox.bhLyricWindowRange(0, 0, 9).hi === -1, 'no lines means no window');
   assert(/lyricRows: \{ def: 24, min: 9, max: 48/.test(source), 'the row cap has to be a knob');
   assert(/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(source),

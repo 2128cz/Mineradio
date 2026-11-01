@@ -2788,7 +2788,26 @@ function bhLyricStatus() {
 
 // The arc layer owns the text while it exists; the app's own row flight only runs when it does not,
 // so there is exactly one thing moving lyric meshes at a time.
+// The lyric path runs before the render and only this preset owns it, so anything that throws in
+// here stops the picture for good (the app, the audio and every other preset are unaffected, which
+// makes it look like "only the black hole froze"). A throw is reported once, counted, and the frame
+// falls back to the preset without lyrics instead of dying.
 function updateBlackHoleLyrics(dt) {
+  if (!blackHolePresetIsActive()) return false;
+  try {
+    return bhUpdateBlackHoleLyrics(dt);
+  } catch (error) {
+    var message = String((error && error.message) || error);
+    blackHoleState.lyricErrors = (blackHoleState.lyricErrors || 0) + 1;
+    if (blackHoleState.lyricError !== message) {
+      blackHoleState.lyricError = message;
+      try { console.error('[BlackHole] lyric path threw, frame skipped:', message); } catch (e) {}
+    }
+    return false;
+  }
+}
+
+function bhUpdateBlackHoleLyrics(dt) {
   if (!blackHolePresetIsActive()) return false;
   var frame = blackHoleState.frame || bhComputeFrame();
   if (!frame || !frame.uv) return false;
