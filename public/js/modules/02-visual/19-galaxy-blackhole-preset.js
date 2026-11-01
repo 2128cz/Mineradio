@@ -49,7 +49,6 @@ var BH_TUNING_SCHEMA = {
   charge: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   deflect: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   shadowScale: { def: 1, min: 0.5, max: 1.6, kind: 'ratio', rebuild: 'live' },
-  swirl: { def: 1, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   ringGlow: { def: 0.45, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // The accretion disc is horizontal (a small tilt only, so it is seen slightly from above), and its
   // radii are world lengths like every other size in this preset.
@@ -78,8 +77,6 @@ var BH_TUNING_SCHEMA = {
   marchSteps: { def: 160, min: 24, max: 256, kind: 'count', rebuild: 'live' },
   // How much the lyric layer is bent by the same field it is drawn into; 0 keeps it straight.
   textLens: { def: 1, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  skyStars: { def: 0.35, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  skyBand: { def: 0.12, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   // A long lens: the narrower the fov, the flatter the perspective and the more the hole reads as
   // a distant object with mass rather than as something close and small.
   fovDeg: { def: 40, min: 24, max: 92, kind: 'deg', rebuild: 'live' },
