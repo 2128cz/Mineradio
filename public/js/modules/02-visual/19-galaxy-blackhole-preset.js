@@ -66,6 +66,12 @@ var BH_TUNING_SCHEMA = {
   // Radial blur of the star field, in pixels: a little is depth, a lot is a smeared plate.
   softness: { def: 3, min: 0, max: 6, kind: 'px', rebuild: 'live' },
   cameraDrift: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  // A fast, three-axis jolt on top of the slow drift: the camera is caught in the hole's field. It
+  // grows as the hole fills more of the frame and the music gets louder, and the beat speeds it up
+  // rather than striking it - the shake never jumps, it just gets shaken harder.
+  shock: { def: 0.8, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  shockRate: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
+  shockAudio: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // Shards inside the disc: how many lattice cells carry one. They ride the Keplerian flow and are
   // dimmed by the fog in front of them, so they are part of the disc rather than a screen overlay.
   debris: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
@@ -366,6 +372,7 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform float uShadowUv;',
     'uniform vec2 uShake;',
     'uniform float uDolly;',
+    'uniform vec3 uJolt;',
     'uniform float uDebris;',
     'uniform float uLevel;',
     '',
@@ -493,10 +500,12 @@ var BH_PASS_FS = shadertoyFragment(
     '}',
     '',
     'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
-    '  vec2 uv = fragCoord.xy / iResolution.xy;',
+    '  // The whole picture shakes: the sky, the disc and both text channels sample through this uv,',
+    '  // so one offset moves them together instead of sliding the disc out of its own background.',
+    '  vec2 uv = fragCoord.xy / iResolution.xy + uJolt.xy;',
     // A long lens with a slow, small drift: the frame breathes instead of sitting still, which is
   // most of what separates a plate of a huge thing from a screenshot of a shader.
-  '  vec2 ndc = (uv - 0.5) * 2.0 * (1.0 + uDolly) + uShake;',
+  '  vec2 ndc = (uv - 0.5) * 2.0 * (1.0 + uDolly + uJolt.z) + uShake;',
     '  vec3 dir = normalize(uCamFwd + uCamRight * ndc.x * uTanHalf * uAspect + uCamUp * ndc.y * uTanHalf);',
     '',
     '  vec3 pos = (uCamPos - uHole) / max(0.0001, uRs);',
@@ -759,6 +768,7 @@ function bhBuildPass() {
         uShadowUv: { value: 0.3 },
         uShake: { value: new THREE.Vector2() },
         uDolly: { value: 0 },
+        uJolt: { value: new THREE.Vector3() },
         uDebris: { value: 0.6 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
@@ -858,6 +868,16 @@ function bhSyncLens(frame) {
   var drift = bhCameraDrift(blackHoleFlight.time, bhClamp(bhParam('cameraDrift'), 0, 1));
   if (u.uShake) u.uShake.value.set(drift.x, drift.y);
   if (u.uDolly) u.uDolly.value = drift.dolly;
+  // The jolt: three axes of fast wobble, harder the closer the hole is and the louder the music,
+  // with the beat raising the rate rather than striking it.
+  if (u.uJolt) {
+    var joltEnergy = (typeof audioEnergy !== 'undefined') ? Number(audioEnergy) || 0 : 0;
+    var joltHeat = (typeof beatPulse !== 'undefined') ? Number(beatPulse) || 0 : 0;
+    var joltGain = bhShockGain(frame.uvShadow, joltEnergy, joltHeat, bhParam('shock'), bhParam('shockAudio'));
+    var joltRate = bhClamp(bhParam('shockRate'), 0.3, 3) * (1 + joltHeat * 1.2);
+    var jolt = bhShockJolt(blackHoleFlight.time, joltGain, joltRate);
+    u.uJolt.value.set(jolt.x, jolt.y, jolt.z);
+  }
   if (u.uCenter) u.uCenter.value.set(frame.uv ? frame.uv.u : 0.5, frame.uv ? frame.uv.v : 0.5);
   u.uDiscTilt.value = bhClamp(bhParam('discTilt'), -60, 60) * Math.PI / 180;
   u.uDiscGain.value = bhClamp(bhParam('discGain'), 0, 3);
@@ -1766,6 +1786,33 @@ function bhCameraDrift(time, amount) {
     x: amp * (Math.sin(t * 0.43) * 0.0016 + Math.sin(t * 1.13 + 1.7) * 0.0008),
     y: amp * (Math.sin(t * 0.61 + 0.4) * 0.0014 + Math.sin(t * 1.71 + 2.3) * 0.0007),
     dolly: amp * (Math.sin(t * 0.23 + 1.1) * 0.006 + Math.sin(t * 0.77 + 0.2) * 0.002)
+  };
+}
+
+// How close the hole is, read off how much of the frame its shadow takes: bigger on screen means
+// the camera is deeper in the field, and that is what the jolt has to answer to.
+function bhShockProximity(uvShadow) {
+  return bhClamp(((Number(uvShadow) || 0) - 0.10) / 0.30, 0, 1);
+}
+
+// The jolt's amplitude in uv. Louder music shakes harder; the beat only feeds the same number.
+function bhShockGain(uvShadow, energy, heat, amount, audio) {
+  var loud = bhClamp(Number(amount) || 0, 0, 2) * bhShockProximity(uvShadow);
+  var audioAmt = bhClamp(Number(audio) || 0, 0, 2);
+  return loud * (1 + audioAmt * (bhClamp(Number(energy) || 0, 0, 1) * 0.6
+    + bhClamp(Number(heat) || 0, 0, 1) * 0.8)) * 0.012;
+}
+
+// Three axes of fast, incommensurable wobble. The beat does not strike the camera: it raises the
+// rate, so the same shake comes at you faster while the music is hot.
+function bhShockJolt(time, gain, rate) {
+  var t = Number(time) || 0;
+  var f = Math.max(0.2, Number(rate) || 1) * 4.2;
+  var g = Math.max(0, Number(gain) || 0);
+  return {
+    x: g * (Math.sin(t * f + 0.7) * 0.6 + Math.sin(t * f * 2.31 + 1.9) * 0.4),
+    y: g * (Math.sin(t * f * 1.37 + 2.6) * 0.6 + Math.sin(t * f * 2.93 + 0.4) * 0.4),
+    z: g * Math.sin(t * f * 1.71 + 4.1) * 0.55
   };
 }
 

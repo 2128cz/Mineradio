@@ -1614,7 +1614,17 @@ function runBlackHolePresetCheck() {
   // band-limited by the step, and the debris has to live inside the disc (shards on the orbital
   // lattice, dimmed by the fog), not as specks on the screen.
   if (!/function bhCameraDrift\(/.test(text)) fail('the shot needs its slow camera drift');
-  if (!/\(1\.0 \+ uDolly\) \+ uShake/.test(shader)) fail('the drift and dolly must reach the ray');
+  if (!/\(1\.0 \+ uDolly \+ uJolt\.z\) \+ uShake/.test(shader)) fail('the drift, the dolly and the jolt must reach the ray');
+  // The jolt shakes everything through the sampled uv, and the beat raises its rate - never strikes it.
+  if (!/function bhShockJolt\(/.test(text) || !/function bhShockGain\(/.test(text)) {
+    fail('the jolt has to be its own three-axis function with the audio feeding its gain');
+  }
+  if (!/vec2 uv = fragCoord\.xy \/ iResolution\.xy \+ uJolt\.xy;/.test(shader)) {
+    fail('the jolt has to offset the uv every channel samples, or the disc slides out of its background');
+  }
+  if (!/var joltRate = bhClamp\(bhParam\('shockRate'\), 0\.3, 3\) \* \(1 \+ joltHeat \* 1\.2\);/.test(text)) {
+    fail('the beat has to speed the jolt up instead of punching it');
+  }
   if (!/float discFbm\(float flow, float ringR, float rad, float lod\)/.test(shader)) fail('the disc fog has to be a fractal sum, not one hashed cell');
   if (!/float a = flow \+ 1\.73 \* float\(i\) \+ 0\.37;/.test(shader)) fail('the fog octaves must not share a lattice, or the cloud is a grid');
   if (!/if \(i == 3\) keep = 1\.0 - lod;/.test(shader)) fail('the finest octave has to be band-limited, or the disc moires at grazing angles');

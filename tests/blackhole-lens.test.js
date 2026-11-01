@@ -263,8 +263,51 @@ function load(overrides) {
   // The shader applies the drift to the ray and puts the debris *inside* the disc: shards on a
   // lattice keyed on the orbital phase, looked up at the point of the march nearest the disc plane,
   // and dimmed by the fog the ray already crossed. Screen-space specks are not debris.
-  assert(/vec2 ndc = \(uv - 0\.5\) \* 2\.0 \* \(1\.0 \+ uDolly\) \+ uShake;/.test(source),
-    'the drift and dolly have to reach the ray');
+  assert(/vec2 ndc = \(uv - 0\.5\) \* 2\.0 \* \(1\.0 \+ uDolly \+ uJolt\.z\) \+ uShake;/.test(source),
+    'the drift, the dolly and the jolt have to reach the ray');
+  // The jolt offsets the uv that every channel samples through, so the hole, the disc, the sky and
+  // both text channels shake together - the disc must not slide out of its own background.
+  assert(/vec2 uv = fragCoord\.xy \/ iResolution\.xy \+ uJolt\.xy;/.test(source),
+    'the jolt has to offset the uv every channel samples through');
+  assert(/uniform vec3 uJolt;/.test(source), 'the jolt needs its own uniform');
+  // The jolt answers to how much of the frame the hole takes, and to the music - the beat raises
+  // the rate instead of striking the camera.
+  assert(sandbox.bhShockProximity(0.10) === 0 && sandbox.bhShockProximity(0.40) === 1,
+    'the jolt has to be off for a tiny hole and full for a big one');
+  assert(sandbox.bhShockProximity(0.25) > 0 && sandbox.bhShockProximity(0.25) < 1, 'and ramp in between');
+  assert(sandbox.bhShockGain(0.32, 1, 1, 0, 1) === 0, 'the knob at zero means no jolt');
+  assert(sandbox.bhShockGain(0.32, 0, 0, 1, 1) === sandbox.bhShockGain(0.32, 0, 0, 1, 0),
+    'with 抖动随节奏 at zero the music must not touch it');
+  assert(sandbox.bhShockGain(0.32, 1, 1, 1, 1) > sandbox.bhShockGain(0.32, 0, 0, 1, 1),
+    'but loud, beaty music has to shake harder');
+  assert(sandbox.bhShockGain(0.38, 0.5, 0.5, 1, 1) > sandbox.bhShockGain(0.20, 0.5, 0.5, 1, 1),
+    'and a hole that fills more of the frame has to shake harder');
+  {
+    const g = sandbox.bhShockGain(0.32, 1, 1, 1, 1);
+    const slow = sandbox.bhShockJolt(1.0, g, 1);
+    const fast = sandbox.bhShockJolt(1.0, g, 2.6);
+    assert(Math.abs(slow.x) <= g + 1e-12 && Math.abs(slow.y) <= g + 1e-12
+      && Math.abs(slow.z) <= g * 0.55 + 1e-12, 'every axis has to stay inside the gain');
+    assert(Math.abs(slow.x) + Math.abs(slow.y) + Math.abs(slow.z) > 1e-6, 'and actually move');
+    const crossings = function (rate) {
+      let n = 0;
+      let prev = sandbox.bhShockJolt(0, g, rate).x;
+      for (let i = 1; i <= 200; i++) {
+        const cur = sandbox.bhShockJolt(i * 0.01, g, rate).x;
+        if ((cur > 0) !== (prev > 0)) n++;
+        prev = cur;
+      }
+      return n;
+    };
+    assert(crossings(2.6) > crossings(1) * 1.8,
+      'the beat has to come at the camera faster, not harder: ' + crossings(1) + ' -> ' + crossings(2.6));
+    const still = sandbox.bhShockJolt(1.0, 0, 1);
+    assert(still.x === 0 && still.y === 0 && still.z === 0, 'no gain means the frame is still');
+  }
+  // The beat has to reach the rate through the frame wiring, not only through the pure function.
+  assert(/var joltRate = bhClamp\(bhParam\('shockRate'\), 0\.3, 3\) \* \(1 \+ joltHeat \* 1\.2\);/.test(source),
+    'the frame has to hand the beat-driven rate to the jolt');
+  assert(/u\.uJolt\.value\.set\(jolt\.x, jolt\.y, jolt\.z\);/.test(source), 'and write all three axes to the shader');
   assert(/float discFragment\(vec3 p, float r, float rn, float amount\)/.test(source),
     'the disc fragments must exist');
   assert(/float phase = atan\(p\.z, p\.x\) - uSpin \* 1\.6 \* iTime \/ pow\(max\(r, 0\.42\), 1\.5\);/.test(source),
