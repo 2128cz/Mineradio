@@ -147,6 +147,44 @@ function isHiddenForBackgroundOptimization() {
 function isVisibleBackgroundMode() {
   return false;
 }
+// The native window state can go stale - a tray restore, or the app minimising itself and the
+// window coming back without a fresh show event. When it does, the frame loop parks and the renderer
+// is resized to 4x4, which reads as a black, frozen picture that no preset switch can bring back.
+// A hidden window gets no animation frames, so frames arriving at a normal cadence are proof the
+// flag is wrong; ten in a row is enough to stop believing it.
+var renderPresentedStreak = 0;
+var renderStaleSleepFixes = 0;
+var RENDER_SLEEP_GAP_MS = 120;
+var RENDER_SLEEP_STREAK = 10;
+
+function renderSleepClaimIsStale(nativeSleeping, gapMs, streak) {
+  var gap = Number(gapMs);
+  return !!nativeSleeping && gap > 0 && gap <= RENDER_SLEEP_GAP_MS && Number(streak) >= RENDER_SLEEP_STREAK;
+}
+
+// Called once per animation frame with the gap since the previous one, before the sleep branch.
+function notePresentedFrame(now, previousFrameAt) {
+  var gap = Number(now) - Number(previousFrameAt);
+  if (!(gap > 0) || gap > RENDER_SLEEP_GAP_MS || !isDeepBackgroundMode()) {
+    renderPresentedStreak = 0;
+    return false;
+  }
+  renderPresentedStreak++;
+  if (!renderSleepClaimIsStale(true, gap, renderPresentedStreak)) return false;
+  renderPresentedStreak = 0;
+  renderStaleSleepFixes++;
+  desktopRuntimeState.minimized = false;
+  desktopRuntimeState.visible = true;
+  if (typeof updateRenderPowerClasses === 'function') updateRenderPowerClasses();
+  applyRendererPowerMode();
+  if (typeof renderPerfState !== 'undefined' && renderPerfState) renderPerfState.staleSleepFixes = renderStaleSleepFixes;
+  try {
+    console.warn('[RenderPower] sleep was claimed while frames were being presented; the renderer was woken ('
+      + renderStaleSleepFixes + ')');
+  } catch (e) {}
+  return true;
+}
+
 function updateRenderPowerClasses() {
   document.body.classList.toggle('render-deep-sleep', isDeepBackgroundMode());
   document.body.classList.toggle('render-background-eco', isVisibleBackgroundMode());

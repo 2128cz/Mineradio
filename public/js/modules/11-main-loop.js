@@ -295,6 +295,7 @@ function targetMainDesktopOverlayFps(now) {
   }
   return 6;
 }
+var mainLoopSleepLogged = false;
 function animate() {
   mainLoopAnimationRequested = false;
   scheduleNextMainLoopFrame();
@@ -304,12 +305,24 @@ function animate() {
   var perfProbe = window.__mineradioPerf;
   var framePerfStart = performance.now();
   var now = performance.now();
+  // Before the sleep branch: frames that are actually being presented disprove a stale "hidden"
+  // flag, and believing it costs a black frozen picture that no preset switch recovers from.
+  if (typeof notePresentedFrame === 'function') notePresentedFrame(now, prevTime);
   if (mainLoopDeepBackgroundSleeping()) {
+    // One line per park, naming the state that caused it: a frozen picture with nothing in the log
+    // is what made the last report impossible to attribute.
+    if (!mainLoopSleepLogged) {
+      mainLoopSleepLogged = true;
+      try {
+        console.info('[RenderPower] loop parked: ' + JSON.stringify(desktopRuntimeState));
+      } catch (e) {}
+    }
     var deepDt = Math.min((now - prevTime) / 1000, 0.25);
     prevTime = now;
     tickDeepBackgroundFrame(now, deepDt);
     return;
   }
+  mainLoopSleepLogged = false;
   if (shouldSkipAdaptiveRenderFrame(now)) return;
   var dt = Math.min((now - prevTime) / 1000, 0.05);
   prevTime = now;

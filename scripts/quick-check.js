@@ -185,6 +185,30 @@ function runPvLyricFormatCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+// The renderer parks itself (and drops to 4x4) when the native window state says hidden. If that
+// flag goes stale while frames are still being presented the picture is black and frozen, and no
+// preset switch recovers it - so the correction is gated, not just written.
+function runRenderSleepStaleCheck() {
+  logStep('Render power: a stale sleep claim is corrected');
+  const testFile = path.join(appRoot, 'tests', 'render-sleep-stale.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/render-sleep-stale.test.js is missing; a stale window flag would freeze the picture with no trace');
+  }
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`render sleep staleness failed: ${rel(testFile)}`);
+  }
+  const loop = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const hook = loop.indexOf("notePresentedFrame(now, prevTime)");
+  const sleep = loop.indexOf('if (mainLoopDeepBackgroundSleeping())');
+  if (hook < 0 || sleep < 0 || hook > sleep) {
+    fail('the frame loop has to ask whether a sleep claim is stale before it parks');
+  }
+  process.stdout.write(result.stdout || '');
+}
+
 function runLyricParseFormatsCheck() {
   logStep('Lyric timestamp formats (dot and colon centiseconds)');
   const testFile = path.join(appRoot, 'tests', 'lyric-parse-formats.test.js');
@@ -7504,6 +7528,7 @@ async function main() {
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
   runLyricParseFormatsCheck();
+  runRenderSleepStaleCheck();
   runJizuraVendorCheck();
   runPvPlannerCheck();
   runPvPipelineCheck();
