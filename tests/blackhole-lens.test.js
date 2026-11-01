@@ -68,7 +68,12 @@ function makeThree(record) {
     },
     Scene: function () { this.children = []; this.add = function (o) { this.children.push(o); }; this.clear = function () { this.children = []; }; },
     OrthographicCamera: function () {},
-    Mesh: function (geo, mat) { this.geometry = geo; this.material = mat; this.visible = true; this.frustumCulled = true; },
+    Mesh: function (geo, mat) {
+      this.geometry = geo; this.material = mat; this.visible = true; this.frustumCulled = true;
+      this.position = new V3();
+      this.scale = new V3(1, 1, 1);
+      this.quaternion = { copy: function (source) { this.copiedFrom = source; return this; } };
+    },
     PlaneGeometry: function () { this.dispose = function () { record.disposed.push('geometry'); }; },
     Group: function () {
       this.children = [];
@@ -329,8 +334,8 @@ function load(overrides) {
   const scene = { name: 'app-scene' };
   const lyricsLayer = { isLyrics: true, visible: true, children: [] };
   const galaxyGroup = { isGalaxy: true, visible: true, children: [], position: { set: function () {} }, quaternion: { copy: function () { return this; } } };
-  const frontRow = { itemIndex: 1, live: true, front: true, mesh: { visible: false } };
-  const backRow = { itemIndex: 2, live: true, front: false, mesh: { visible: false } };
+  const frontRow = { itemIndex: 1, live: true, front: true, mesh: { visible: false }, farMesh: { visible: true } };
+  const backRow = { itemIndex: 2, live: true, front: false, mesh: { visible: true }, farMesh: { visible: true } };
   const sandbox = load({
     THREE: makeThree(record),
     camera: makeCamera({ x: 0, y: 0, z: 6.6 }, { x: 0, y: 0, z: -1 }, 58, 16 / 9),
@@ -348,7 +353,12 @@ function load(overrides) {
       },
       render(targetScene) {
         record.draws.push(targetScene === scene ? 'scene' : 'quad');
-        record.seen.push({ scene: targetScene === scene, front: frontRow.mesh.visible, back: backRow.mesh.visible, galaxy: galaxyGroup.visible, autoClear: this.autoClear });
+        record.seen.push({
+          scene: targetScene === scene,
+          front: frontRow.mesh.visible, back: backRow.mesh.visible,
+          frontFar: frontRow.farMesh.visible, backFar: backRow.farMesh.visible,
+          galaxy: galaxyGroup.visible, autoClear: this.autoClear
+        });
       }
     }
   });
@@ -363,17 +373,21 @@ function load(overrides) {
   assert.deepStrictEqual(record.setTarget, ['rt', 'text-rt', 'far-rt', null],
     'three targets then the screen: ' + JSON.stringify(record.setTarget));
   const [worldPass, textPass, farPass, quadPass] = record.seen;
-  assert(worldPass.front === false && worldPass.back === false && worldPass.galaxy === true,
+  assert(worldPass.front === false && worldPass.back === false && worldPass.galaxy === true
+    && worldPass.frontFar === false && worldPass.backFar === false,
     'the first target is the galaxy alone: a row baked into it would take the galaxy blur');
-  assert(textPass.front === true && textPass.back === false && textPass.galaxy === false,
-    'the second is the near rows alone');
-  assert(farPass.front === false && farPass.back === true && farPass.galaxy === false,
-    'the third is the far rows alone, in their own channel');
+  assert(textPass.front === true && textPass.back === false && textPass.galaxy === false
+    && textPass.frontFar === false && textPass.backFar === false,
+    'the second is the near copies alone, at their true positions');
+  assert(farPass.front === false && farPass.back === false && farPass.galaxy === false
+    && farPass.frontFar === false && farPass.backFar === true,
+    'the third is the far copies alone, in their own channel');
   assert(quadPass.scene === false && quadPass.autoClear === true, 'and the pass is one quad, clearing normally');
   assert(sandbox.blackHoleState.textQuads === 1 && sandbox.blackHoleState.farQuads === 1,
     'both text renders are counted: ' + sandbox.blackHoleState.textQuads + '/' + sandbox.blackHoleState.farQuads);
-  assert(frontRow.mesh.visible === true && backRow.mesh.visible === true,
-    'after the frame both halves are visible again for the fallback render');
+  assert(frontRow.mesh.visible === true && backRow.mesh.visible === true
+    && frontRow.farMesh.visible === false && backRow.farMesh.visible === false,
+    'after the frame the fallback keeps one copy per row, or the plain render would draw the text twice');
 
   // The binding is the proof: the pass material reads the near rows as a channel, not as a texture
   // pasted over its output.
@@ -988,6 +1002,11 @@ function load(overrides) {
         position: new V3(), scale: new V3(1, 1, 1),
         quaternion: { value: null, set(x, y, z, w) { this.value = [x, y, z, w]; return this; } },
         renderOrder: 0, visible: false, geometry: { dispose() {} }
+      },
+      farMesh: {
+        position: new V3(), scale: new V3(1, 1, 1),
+        quaternion: { copy() { return this; } },
+        renderOrder: 0, visible: true, geometry: { dispose() {} }
       }
     };
   }
@@ -1060,6 +1079,73 @@ function load(overrides) {
   });
   assert(rows[2].sung === true && rows[3].sung === false, 'the line still being sung keeps the highlight');
 
+  // ------------------------------------------- the far copy is bent by its own depth, not the sky's
+  //
+  // The pass pulls every pixel of the far channel towards the hole, so the sign is drawn that much
+  // inside its true position - less the share its own depth behind the hole pays for. The eye then
+  // sees the true position plus weight*bend: a row crossing the hole's plane does not jump, and the
+  // two copies agree wherever the depth blend keeps both of them on.
+  function projectQ(local) {
+    const cam = frame.camera;
+    const dx = frame.world.x + local.x - camera.position.x;
+    const dy = frame.world.y + local.y - camera.position.y;
+    const dz = frame.world.z + local.z - camera.position.z;
+    const along = Math.max(0.05, dx * cam.fwd.x + dy * cam.fwd.y + dz * cam.fwd.z);
+    const right = dx * cam.right.x + dy * cam.right.y + dz * cam.right.z;
+    const up = dx * cam.up.x + dy * cam.up.y + dz * cam.up.z;
+    const uvx = 0.5 + right / (2 * along * cam.tanHalf * frame.aspect);
+    const uvy = 0.5 + up / (2 * along * cam.tanHalf);
+    const qx = (uvx - frame.uv.u) * frame.aspect;
+    const qy = uvy - frame.uv.v;
+    return { qx: qx, qy: qy, du: uvx - frame.uv.u, dv: uvy - frame.uv.v, q: Math.hypot(qx, qy), along: along };
+  }
+  const deflectTest = sandbox.bhClamp(sandbox.bhParam('deflect'), 0, 3);
+  const lensTest = sandbox.bhClamp(sandbox.bhParam('textLens'), 0, 1);
+  let worstBlend = 0;
+  let bentRows = 0;
+  rows.filter(function (r) { return r.live; }).forEach(function (r) {
+    const at = projectQ(r.mesh.position);
+    const far = projectQ(r.farMesh.position);
+    const pull = sandbox.bhLyricLensPull(at.q, frame.uvShadow, deflectTest, lensTest);
+    const wanted = Math.min((1 - r.lensWeight) * pull, at.q * 0.9);
+    assert(Math.abs(r.lensPreWarp - wanted) < 1e-9, 'the row must report the pre-warp it got');
+    // The pass subtracts its bend from the uv, along the direction measured in the aspect-scaled
+    // space, so the copy has to be moved the same way - anisotropy and all, or the two would not
+    // cancel and the text would sit off the lensed image.
+    assert(Math.abs((far.du - at.du) + wanted * (at.qx / at.q)) < 1e-6
+      && Math.abs((far.dv - at.dv) + wanted * (at.qy / at.q)) < 1e-6,
+      'the far copy must sit the pre-warp inside the near one, along the radius: '
+      + (far.du - at.du).toFixed(5) + ',' + (far.dv - at.dv).toFixed(5) + ' against -' + wanted.toFixed(5));
+    assert(Math.abs(at.along - far.along) < 1e-9, 'and the pre-warp must not move the row nearer or further');
+    if (r.nearAlpha > 0.05 && r.farAlpha > 0.05) {
+      // Where both copies are on, they may only be a fraction of a glyph apart - that is the ghost
+      // the centre flicker was made of.
+      worstBlend = Math.max(worstBlend, r.lensWeight);
+      bentRows++;
+    }
+  });
+  assert(bentRows === 0 || worstBlend < 0.5,
+    'the depth blend must live where the weight is small: worst weight ' + worstBlend.toFixed(3) + ' over ' + bentRows + ' rows');
+  // The weight is the lens-maker's ratio: a source at the hole's own plane is not bent at all, and
+  // one far behind it approaches the sky's full bend.
+  assert(sandbox.bhLyricLensWeight(6.6, 6.6, 6.6) === 0, 'a row at the hole plane takes no bend');
+  assert(sandbox.bhLyricLensWeight(6.0, 6.6, 6.6) === 0, 'and a row in front of it takes none either');
+  assert(Math.abs(sandbox.bhLyricLensWeight(7.0, 6.6, 7.0) - 0.4 / 7) < 1e-12, 'behind, it is D_ls/D_s');
+  let rising = true;
+  for (let d = 7; d <= 60; d += 5) {
+    if (sandbox.bhLyricLensWeight(d, 6.6, d) <= sandbox.bhLyricLensWeight(d - 1, 6.6, d - 1)) rising = false;
+  }
+  assert(rising && sandbox.bhLyricLensWeight(60, 6.6, 60) > 0.88, 'and it rises towards the sky\'s full bend');
+  // The pull must be the pass's own number, floored at the shadow and dead outside the strong zone.
+  const sh = frame.uvShadow;
+  assert(Math.abs(sandbox.bhLyricLensPull(sh * 1.05, sh, 1, 1) - 0.65 * sh / 1.05) < 1e-9,
+    'at the rim of the shadow the pull is 0.65*rs/impact');
+  assert(sandbox.bhLyricLensPull(sh * 3, sh, 1, 1) === 0, 'outside the strong-field zone nothing is pulled');
+  assert(Math.abs(sandbox.bhLyricLensPull(sh * 0.2, sh, 1, 1) - sandbox.bhLyricLensPull(sh * 0.98, sh, 1, 1)) < 1e-12,
+    'inside the shadow the impact parameter is floored, so the pull stops growing');
+  assert(Math.abs(sandbox.bhLyricLensPull(sh, sh, 1, 0.5) - sandbox.bhLyricLensPull(sh, sh, 1, 1) * 0.5) < 1e-12,
+    'and the near-field lens knob scales the same bend for the rows');
+
   // The split is exactly what the renderer uses to choose a target, and it follows each row's own
   // near/far flag rather than a fixed count.
   const near = rows.filter(function (r) { return r.live && r.nearAlpha > 0.001; }).length;
@@ -1069,8 +1155,14 @@ function load(overrides) {
   assert(sandbox.bhSetLyricSideVisibility(true) === near, 'near half: ' + near + ' rows');
   assert(sandbox.bhSetLyricSideVisibility(false) === far, 'far half: ' + far + ' rows');
   assert(sandbox.bhSetLyricSideVisibility(null) === liveCount, 'the fallback render gets every live row back');
+  assert(sandbox.bhSetLyricSideVisibility(null) === liveCount
+    && rows.every(function (r) { return !r.live || !r.farMesh.visible; }),
+    'and the fallback must not also draw the far copy, or the plain render shows the text twice');
   assert(sandbox.bhSetLyricSideVisibility('none') === 0 && rows.every(function (r) { return !r.mesh.visible; }),
     'the scene target must not contain a lyric row at all: that is what the galaxy blur would smear');
+  console.log('lens weight: ' + rows.filter(function (r) { return r.live; })
+    .map(function (r) { return (r.lensWeight || 0).toFixed(3); }).join(' / ')
+    + ', both-channel rows ' + bentRows + ', worst weight there ' + worstBlend.toFixed(3));
   // The near/far hand-over is a depth blend, not a one-frame switch: it is a pop otherwise.
   assert(Math.abs(sandbox.bhLyricSideBlend(6.6, 6.6, 0.3) - 0.5) < 1e-9, 'half way across the band is half and half');
   assert(sandbox.bhLyricSideBlend(6.2, 6.6, 0.3) === 0, 'well in front is the near channel');
@@ -1240,6 +1332,19 @@ function load(overrides) {
   assert(partial, 'a row crossing the hole depth has to be in both channels for a moment');
   assert(Math.abs(partial.nearAlpha + partial.farAlpha - 1) < 1e-9,
     'and the two weights have to add to one: ' + partial.nearAlpha + '+' + partial.farAlpha);
+  // Where both copies are on they must nearly coincide: the pass bends the far one, the pre-warp has
+  // already taken back all but `weight` of that bend, and the depth band is exactly where the row is
+  // level with the hole, so the weight there is small. This is the ghost the centre flicker was.
+  const pAt = projectQ(partial.mesh.position);
+  const pPull = sandbox.bhLyricLensPull(pAt.q, frame.uvShadow, deflectTest, lensTest);
+  const glyph = partial.mesh.scale.y / (2 * pAt.along * (frame.camera.tanHalf || 0.55));
+  assert(partial.lensWeight < 0.5,
+    'the crossing band must be where the row is barely bent: weight ' + partial.lensWeight.toFixed(3));
+  assert(partial.lensWeight * pPull < 0.5 * glyph,
+    'the two copies may not sit half a glyph apart while both are on: '
+    + (partial.lensWeight * pPull).toFixed(5) + ' against a glyph of ' + glyph.toFixed(5));
+  console.log('crossing: weight ' + partial.lensWeight.toFixed(3) + ', ghost '
+    + (partial.lensWeight * pPull / glyph).toFixed(3) + ' glyph heights');
   console.log('orbit: radius ' + params.orbit + ', rate ' + params.rate + ' rad/s, wind ' + params.wind
     + '; front ' + front.toFixed(2) + ', spiral ' + path.toFixed(2) + ' vs radius ' + params.orbit
     + ', exit at ' + exitStart + ', span ' + span.toFixed(2) + 's, fall '

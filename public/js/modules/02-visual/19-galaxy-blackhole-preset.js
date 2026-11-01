@@ -1814,6 +1814,29 @@ function bhLyricSideBlend(along, depth, band) {
   return bhClamp((Number(along) - (d - b)) / (2 * b), 0, 1);
 }
 
+// How much of the sky's bend a row actually takes. A source behind the lens is deflected by
+// D_ls / D_s: a row sitting 10% deeper than the hole is bent a tenth as much as the galaxy behind
+// it, and the rows here are only 9-26% deeper. Bending them as if they were the sky - which is what
+// the pass does to every pixel - made the near copy and the far copy disagree by a fifth of the
+// screen height, and made the row jump by that much as it crossed the hole's own plane.
+function bhLyricLensWeight(along, depth, distance) {
+  var d = Math.max(1e-4, Number(distance) || 0);
+  if (d <= (Number(depth) || 0)) return 0;
+  return bhClamp((d - (Number(depth) || 0)) / d, 0, 1);
+}
+
+// The pass's own inverse bend as a scalar: a pixel at radius q is pulled towards the hole by
+// min(deflect*0.65*rs^2/impact, 1.6*rs) * nearMask * textLens, with the impact parameter floored at
+// the shadow. This is the number the picture is bent by, so the rows can be pre-warped by it.
+function bhLyricLensPull(q, uvShadow, deflect, textLens) {
+  var qlen = Math.max(1e-4, Number(q) || 0);
+  var sh = Math.max(1e-4, Number(uvShadow) || 0);
+  var impact = Math.max(qlen, sh * 0.98);
+  var mag = Math.min((Number(deflect) || 0) * 0.65 * sh * sh / impact, sh * 1.6);
+  var t = bhClamp((qlen - sh * 1.05) / (sh * 1.55), 0, 1);
+  return mag * (1 - t * t * (3 - 2 * t)) * bhClamp(Number(textLens) || 0, 0, 1);
+}
+
 // A row's drift through the disc, in world units along the disc normal: two incommensurable sines
 // with a phase of their own, and a deeper swing while it is falling. Pure, so the "rows must not
 // bob in lockstep" can be checked as numbers instead of by eye.
@@ -2201,7 +2224,17 @@ function bhBuildLyricRow(width, height) {
   // already-bent vertex back would make the arch creep instead of being a function of the radius.
   var position = geometry && geometry.attributes ? geometry.attributes.position : null;
   mesh.userData = { bhBasePositions: position && position.array ? new Float32Array(position.array) : null };
-  return { canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material, mesh: mesh, itemIndex: -1, sung: null, live: false, front: true };
+  // The far copy is the same sign, geometry and material included, drawn at the position that is
+  // left over once the pass has bent it: the two channels need different transforms and nothing
+  // else, so the second object carries the difference instead of a second texture.
+  var farMesh = new THREE.Mesh(geometry, material);
+  farMesh.frustumCulled = false;
+  farMesh.renderOrder = 60;
+  farMesh.visible = false;
+  return {
+    canvas: canvas, ctx: canvas.getContext('2d'), texture: texture, material: material,
+    mesh: mesh, farMesh: farMesh, itemIndex: -1, sung: null, live: false, front: true
+  };
 }
 
 function bhDisposeLyrics() {
@@ -2232,12 +2265,16 @@ function bhEnsureLyricRowCount(count) {
     var row = bhBuildLyricRow(64, 32);
     row.mesh.scale.set(1, 1, 1);
     row.mesh.visible = false;
+    row.farMesh.scale.set(1, 1, 1);
+    row.farMesh.visible = false;
     bhLyrics.layer.add(row.mesh);
+    bhLyrics.layer.add(row.farMesh);
     bhLyrics.rows.push(row);
   }
   while (bhLyrics.rows.length > want) {
     var extra = bhLyrics.rows.pop();
     if (extra.mesh && extra.mesh.parent) extra.mesh.parent.remove(extra.mesh);
+    if (extra.farMesh && extra.farMesh.parent) extra.farMesh.parent.remove(extra.farMesh);
     if (extra.texture && extra.texture.dispose) extra.texture.dispose();
     if (extra.material && extra.material.dispose) extra.material.dispose();
     if (extra.mesh && extra.mesh.geometry && extra.mesh.geometry.dispose) extra.mesh.geometry.dispose();
@@ -2449,6 +2486,44 @@ function bhPlaceLyrics(frame, dt) {
     worldW = bhLyricArcWidth(worldW, radius, params.orbit);
     row.mesh.scale.set(worldW, worldHH, 1);
     bhBendRowMesh(row.mesh, worldW, radius);
+    // The far copy. The pass pulls every pixel of its channel inwards by `pull`, so the sign is
+    // drawn that much inside its true position - less the share its own depth behind the hole pays
+    // for. What is left on screen is the true position plus weight*pull: continuous with the near
+    // copy where the row crosses the hole's plane (weight 0), and the sky's full wrap for a row deep
+    // behind it. Bending it as if it were the sky is what put the two copies a fifth of a screen
+    // apart.
+    if (row.farMesh) {
+      var camRight = (frame.camera && frame.camera.right) || { x: 1, y: 0, z: 0 };
+      var camUp = (frame.camera && frame.camera.up) || { x: 0, y: 1, z: 0 };
+      var toRowX = wx - camera.position.x, toRowY = wy - camera.position.y, toRowZ = wz - camera.position.z;
+      var dist = Math.sqrt(toRowX * toRowX + toRowY * toRowY + toRowZ * toRowZ);
+      var offRight = toRowX * camRight.x + toRowY * camRight.y + toRowZ * camRight.z;
+      var offUp = toRowX * camUp.x + toRowY * camUp.y + toRowZ * camUp.z;
+      var uvx = 0.5 + offRight / (2 * rowAlong * tanHalf * aspect);
+      var uvy = 0.5 + offUp / (2 * rowAlong * tanHalf);
+      var qx = (uvx - (frame.uv ? frame.uv.u : 0.5)) * aspect;
+      var qy = uvy - (frame.uv ? frame.uv.v : 0.5);
+      var qlen = Math.max(1e-4, Math.sqrt(qx * qx + qy * qy));
+      var pull = bhLyricLensPull(qlen, frame.uvShadow,
+        bhClamp(bhParam('deflect'), 0, 3), bhClamp(bhParam('textLens'), 0, 1));
+      var weight = bhLyricLensWeight(alongRow, depth, dist);
+      // Never carry the copy through the hole's own centre: the bend folds there (a pixel inside the
+      // shadow reads the far side), and text appearing on the opposite arc would be a lie. Rows that
+      // deep behind the hole are hidden by it, which is what they should do.
+      var pre = Math.min((1 - weight) * pull, qlen * 0.9);
+      var push = pre * 2 * rowAlong * tanHalf;
+      row.lensWeight = weight;
+      row.lensPull = pull;
+      row.lensPreWarp = pre;
+      var shiftRight = -(qx / qlen) * push * aspect;
+      var shiftUp = -(qy / qlen) * push;
+      row.farMesh.position.set(
+        point.x + camRight.x * shiftRight + camUp.x * shiftUp,
+        point.y + camRight.y * shiftRight + camUp.y * shiftUp,
+        point.z + camRight.z * shiftRight + camUp.z * shiftUp);
+      row.farMesh.quaternion.copy(row.mesh.quaternion);
+      row.farMesh.scale.copy(row.mesh.scale);
+    }
     row.mesh.visible = true;
     var opacity = current ? 1 : 0.72;
     if (state.phase === 'read') opacity = current ? 1 : 0.85;
@@ -2474,7 +2549,11 @@ function bhSetLyricSideVisibility(side) {
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     if (!row || !row.mesh) continue;
-    if (row.itemIndex < 0 || !row.live) { row.mesh.visible = false; continue; }
+    if (row.itemIndex < 0 || !row.live) {
+      row.mesh.visible = false;
+      if (row.farMesh) row.farMesh.visible = false;
+      continue;
+    }
     // Rows placed before the blend existed (and the tests' hand-made rows) fall back to the old
     // binary split.
     var nearAlpha = (row.nearAlpha === undefined || row.nearAlpha === null) ? (row.front ? 1 : 0) : row.nearAlpha;
@@ -2493,7 +2572,11 @@ function bhSetLyricSideVisibility(side) {
       alpha = farAlpha;
       visible = farAlpha > 0.001;
     }
-    row.mesh.visible = visible;
+    // The near copy is the sign where the geometry puts it; the far copy is the pre-warped one the
+    // pass bends back to the same place plus its own depth's share of the bend. The plain fallback
+    // render has no bend at all, so it draws the near copy only.
+    row.mesh.visible = visible && side !== false;
+    if (row.farMesh) row.farMesh.visible = side === false && visible;
     if (row.material) row.material.opacity = base * alpha;
     if (visible) shown++;
   }

@@ -1637,6 +1637,18 @@ function runBlackHolePresetCheck() {
   if (!/function bhLyricSideBlend\(/.test(text) || !/row\.nearAlpha = 1 - row\.sideBlend;/.test(text)) {
     fail('the near/far hand-over has to be a depth blend, or crossing behind the hole pops');
   }
+  // The far copy is pre-warped by the bend the pass is about to apply, less the share its own depth
+  // behind the hole pays for, and it is its own object so the near copy stays where the geometry is.
+  if (!/function bhLyricLensWeight\(/.test(text) || !/function bhLyricLensPull\(/.test(text)) {
+    fail('the far rows need the lens weight and the pass pull as their own functions');
+  }
+  if (!/var pre = Math\.min\(\(1 - weight\) \* pull, qlen \* 0\.9\);/.test(text)) {
+    fail('the far copy has to be pre-warped by (1-weight)*pull, and never carried through the hole centre');
+  }
+  if (!/bhLyrics\.layer\.add\(row\.farMesh\);/.test(text)) fail('the far copy has to be in the lyric layer');
+  if (!/row\.mesh\.visible = visible && side !== false;/.test(text) || !/row\.farMesh\.visible = side === false && visible;/.test(text)) {
+    fail('each pass has to draw exactly one copy of a row, or the text is drawn twice');
+  }
   // A long line wraps into a taller block; one fitted line would be a two-pixel strip.
   if (!/function bhWrapText\(/.test(text)) fail('a long lyric line has to wrap, not shrink off the screen');
   if (!/row\.lineScale = bhClamp\(/.test(text)) fail('a wrapped row has to grow in height');
