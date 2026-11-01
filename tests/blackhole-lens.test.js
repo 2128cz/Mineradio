@@ -962,7 +962,7 @@ function load(overrides) {
   const params = sandbox.bhLyricParams();
   // The knob is a fraction of the distance; the placement turns it into a world radius, so the arms
   // below work in world units the same way the shot does.
-  params.orbit = Math.min(Math.max(params.orbit * frame.distance, 0.4), frame.distance * 0.62);
+  params.orbit = Math.min(Math.max(params.orbit * frame.distance, 0.4), frame.distance * 0.78);
   const item = { startAt: 10, endAt: 13 };
   const waiting = sandbox.bhLyricOrbitState(item, 5, params, front, null);
   assert(waiting.phase === 'wait' && waiting.alpha === 0, 'a line waits off the front, invisible, until its turn');
@@ -1323,11 +1323,11 @@ function load(overrides) {
   // The scale work is only real if the frame does it: the arms above overwrite params.orbit with a
   // world radius themselves, so the conversion, the front-relative size and the speck floor have to
   // be pinned on the source as well.
-  assert(/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.62\);/.test(source),
+  assert(/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.78\);/.test(source),
     'the orbit has to become a world radius from the camera distance, or the ring is a fixed length');
   assert(/var frontShare = Math\.max\(0\.15, \(depth - params\.orbit\)/.test(source),
     'the sign has to be sized against the front of the ring, or the near half fills the frame');
-  assert(/worldH = Math\.max\(worldH, 0\.006 \* 2 \* rowAlong \* tanHalf\);/.test(source),
+  assert(/worldH = Math\.max\(worldH, 0\.0035 \* 2 \* rowAlong \* tanHalf\);/.test(source),
     'the far half has to bottom out at a speck, not vanish while it is still turning');
   assert(/var pre = Math\.min\(\(1 - weight\) \* pull, qlen \* 0\.9\);/.test(source),
     'the pre-warp has to be capped, or the far copy can be carried through the hole centre');

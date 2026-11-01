@@ -114,7 +114,7 @@ var BH_TUNING_SCHEMA = {
   // hole when the camera is close and swallow the frame when it is far. 0.58 keeps the near half in
   // front of the eye and puts the far half 1.6x the distance away, which is the near/far spread the
   // signs need in order to read as small objects around something huge.
-  lyricOrbit: { def: 0.58, min: 0.15, max: 0.7, kind: 'ratio', rebuild: 'live' },
+  lyricOrbit: { def: 0.72, min: 0.15, max: 0.78, kind: 'ratio', rebuild: 'live' },
   lyricOrbitRate: { def: 0.5, min: 0.05, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricWind: { def: 5.0, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
@@ -2505,7 +2505,7 @@ function bhPlaceLyrics(frame, dt) {
   var rimWorld = Math.max(horizonWorld * 1.02, shadowWorld * 0.98);
   // The knob is a fraction of the distance; it becomes a world radius here, where the distance is
   // known. The cap keeps the near half in front of the eye whatever the camera does.
-  params.orbit = bhClamp(params.orbit * depth, 0.4, depth * 0.62);
+  params.orbit = bhClamp(params.orbit * depth, 0.4, depth * 0.78);
   params.rim = bhClamp(rimWorld / Math.max(1e-4, params.orbit), 0.01, 1);
   var items = bhLyrics.items;
   var sung = bhLyrics.sung;
@@ -2622,7 +2622,7 @@ function bhPlaceLyrics(frame, dt) {
     var rowAlong = Math.max(0.05, alongRow);
     // A speck, not a vanishing point: the far half shrinks by perspective until it is unreadable,
     // and that is the point - but it may not disappear while it is still turning.
-    worldH = Math.max(worldH, 0.006 * 2 * rowAlong * tanHalf);
+    worldH = Math.max(worldH, 0.0035 * 2 * rowAlong * tanHalf);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
     var worldW = worldH * (row.widthRatio || 4) * fit;
