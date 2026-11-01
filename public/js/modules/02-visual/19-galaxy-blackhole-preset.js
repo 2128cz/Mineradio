@@ -2624,7 +2624,9 @@ function bhPlaceLyrics(frame, dt) {
     // and that is the point - but it may not disappear while it is still turning.
     worldH = Math.max(worldH, 0.0035 * 2 * rowAlong * tanHalf);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
-    var fit = widthNdc > 0.86 ? 0.86 / widthNdc : 1;
+    // The near side is allowed to overflow the frame: capping the sign at 86% of the screen is what
+    // flattened the near/far difference - a near object should be too big for the frame.
+    var fit = widthNdc > 1.45 ? 1.45 / widthNdc : 1;
     var worldW = worldH * (row.widthRatio || 4) * fit;
     var worldHH = worldH * fit;
     // The arch is the orbit itself: its radius of curvature is the row's distance to the hole, so at
