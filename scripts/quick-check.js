@@ -1621,11 +1621,15 @@ function runBlackHolePresetCheck() {
   if (!/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(shader)) fail('the slab sample has to be jittered, or the integration is regular');
   if (!/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(shader)) fail('the Keplerian shear has to be bounded, or the field winds into radial moire');
   // Far rows are their own channel: not baked into the galaxy target (whose radial blur turned them
-// into a smear), taking a gentler lens, and only veiled - not erased - by the fog.
+  // into a smear), and only veiled - not erased - by the fog. The lens, though, is the backdrop's
+  // own: a row behind the hole has to appear where the picture behind the hole appears.
   if (!/blackHoleState\.farRt = farRt;/.test(text)) fail('the far rows need their own render target');
   if (!/iChannel2: \{ value: farRt\.texture \}/.test(text)) fail('the far rows must be bound as iChannel2');
-  if (!/texture2D\(iChannel2, clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\) \* 0\.6, 0\.0, 1\.0\)\)/.test(shader)) {
-    fail('the far rows must take a gentler lens than the galaxy');
+  if (!/texture2D\(iChannel2, lensUv\)/.test(shader)) {
+    fail('the far rows must be sampled through the same lensed coordinate as the backdrop');
+  }
+  if ((shader.match(/bend \* nearMask/g) || []).length !== 1) {
+    fail('there must be one inverse-bend coordinate, or the text and the picture can drift apart');
   }
   if (!/float farFade = skyMask \* mix\(0\.42, 1\.0, transmit\);/.test(shader)) {
     fail('the fog may veil the far rows but must not erase them');

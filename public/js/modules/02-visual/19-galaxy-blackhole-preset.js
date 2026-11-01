@@ -612,9 +612,11 @@ var BH_PASS_FS = shadertoyFragment(
   '',
   // Far rows have their own channel, outside the galaxy target: they must not take the radial blur
   // that softens the galaxy (a nearly edge-on row would read as a blob), and the fog must only veil
-  // them, not swallow them whole. They take a gentler bend, are masked by the shadow, and keep a
-  // floor of visibility through the densest slab - that is what puts them *inside* the cloud.
-    '  vec4 farText = texture2D(iChannel2, clamp(uv - bend * nearMask * clamp(uTextLens, 0.0, 1.0) * 0.6, 0.0, 1.0));',
+  // them, not swallow them whole. They are sampled at the *same* coordinate as the backdrop, so a
+  // row that has gone behind the hole is dragged out to the rim exactly like the picture behind it -
+  // the text appears on the lens arcs instead of being quietly squeezed a little and then hidden.
+  // What is left of the fog is a veil, not a wall: a floor of visibility through the densest slab.
+    '  vec4 farText = texture2D(iChannel2, lensUv);',
     '  float farFade = skyMask * mix(0.42, 1.0, transmit);',
     '  color = mix(color, farText.rgb, clamp(farText.a * farFade, 0.0, 1.0));',
   // Near rows are in front of the hole, so they are pasted straight over the picture: the lens

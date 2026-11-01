@@ -385,10 +385,14 @@ function load(overrides) {
   assert(uniforms.iChannel2 && uniforms.iChannel2.value === sandbox.blackHoleState.farRt.texture,
     'iChannel2 must be the far-row target');
   assert(uniforms.uTextLens, 'the near-field lens amount must reach the shader');
-  // The far rows have their own channel so they take a gentler bend, are masked by the shadow and
-  // are only veiled by the fog - a floor of visibility instead of being swallowed by the slab.
-  assert(/vec4 farText = texture2D\(iChannel2, clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\) \* 0\.6, 0\.0, 1\.0\)\);/.test(source),
-    'the far rows must be sampled through a gentler lens, not the galaxy bend');
+  // The far rows ride the backdrop's own coordinate: a line that has gone behind the hole has to
+  // turn up on the lens arcs, at exactly the place the picture behind the hole turns up. Sampling it
+  // through a second, gentler bend is what made it read as a light squeeze and then nothing.
+  assert(/vec4 farText = texture2D\(iChannel2, lensUv\);/.test(source),
+    'the far rows must be sampled through the same lensed coordinate as the backdrop');
+  assert((source.match(/bend \* nearMask/g) || []).length === 1,
+    'there must be one inverse-bend coordinate only, or the text and the picture can drift apart');
+  // What the separate channel keeps is the fog veil and the shadow cut, not a weaker lens.
   assert(/float farFade = skyMask \* mix\(0\.42, 1\.0, transmit\);/.test(source),
     'the fog may veil the far rows but must not be allowed to erase them');
   assert(/color = mix\(color, farText\.rgb, clamp\(farText\.a \* farFade, 0\.0, 1\.0\)\);/.test(source),
@@ -1051,7 +1055,7 @@ function load(overrides) {
     const rad = Math.hypot(r.mesh.position.x, r.mesh.position.y, r.mesh.position.z);
     if (rad <= shadowWorldTest * 1.8) {
       assert(r.farAlpha === 0 && r.nearAlpha === 1,
-        'a row at the rim must stay in the near channel, not blend two lensed versions: ' + r.farAlpha);
+        'a row at the rim must stay in the near channel, not blend a flat and a lensed copy: ' + r.farAlpha);
     }
   });
   assert(rows[2].sung === true && rows[3].sung === false, 'the line still being sung keeps the highlight');
