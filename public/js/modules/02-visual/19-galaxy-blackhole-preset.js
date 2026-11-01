@@ -1852,23 +1852,83 @@ function bhLyricBob(index, time, fallAmount, drift) {
   return (Math.sin(t * 0.83 + phase) * 0.55 + Math.sin(t * 1.67 + phase * 2.3) * 0.45) * amp;
 }
 
-// Writes the arch into a row's plane geometry. The plane is built once and its rest positions are
-// kept, so the same buffer is re-bent every frame without accumulating.
-function bhBendRowMesh(mesh, width, radius) {
-  var geometry = mesh && mesh.geometry;
+// A row is one quad per glyph, rewritten every frame from the boxes the canvas recorded: that is
+// what lets a single character drift without dragging its neighbours, while the arch is still bent
+// around the hole.
+function bhBuildGlyphGeometry(maxGlyphs) {
+  var geometry = new THREE.BufferGeometry();
+  var cap = Math.max(1, Math.round(Number(maxGlyphs) || 1));
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cap * 12), 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(cap * 8), 2));
+  var index = new Uint16Array(cap * 6);
+  for (var q = 0; q < cap; q++) {
+    var b = q * 4, o = q * 6;
+    index[o] = b; index[o + 1] = b + 1; index[o + 2] = b + 2;
+    index[o + 3] = b; index[o + 4] = b + 2; index[o + 5] = b + 3;
+  }
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.setDrawRange(0, 0);
+  return geometry;
+}
+
+function bhHash01(n) {
+  var x = Math.sin((Number(n) || 0) * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// A glyph's own drift, in the row's local units (the row is one unit wide and one tall). It is zero
+// until the row falls and grows with the square of the fall: a line is unreadable if it comes apart
+// while it is being sung, and it is the plunge that should scatter it into the disc.
+function bhGlyphDrift(seed, index, progress, amount, time) {
+  var p = bhClamp(Number(progress) || 0, 0, 1);
+  var amp = bhClamp(Number(amount) || 0, 0, 1.5) * p * p * 0.22;
+  if (amp <= 1e-6) return { x: 0, y: 0 };
+  var t = (Number(time) || 0) * 0.9;
+  var h1 = bhHash01((Number(seed) || 0) * 131 + index * 17);
+  var h2 = bhHash01((Number(seed) || 0) * 71 + index * 41 + 7);
+  return {
+    x: Math.sin(t * 0.63 + h1 * 6.283) * amp * 0.5 + (h1 - 0.5) * amp,
+    y: (Math.sin(t * 1.07 + h2 * 6.283) * 0.65 + Math.sin(t * 1.9 + h1 * 3.1) * 0.35) * amp
+  };
+}
+
+function bhBendRowGlyphs(row, width, radius, amount, progress, time) {
+  var geometry = row && row.mesh ? row.mesh.geometry : null;
+  var glyphs = row && row.glyphs;
   var position = geometry && geometry.attributes ? geometry.attributes.position : null;
-  var base = mesh && mesh.userData ? mesh.userData.bhBasePositions : null;
-  if (!position || !position.array || !base) return false;
-  var array = position.array;
-  var count = Math.min(base.length, array.length);
-  for (var i = 0; i + 2 < count; i += 3) {
-    var bend = bhRowBend(base[i], width, radius);
-    array[i] = bend.x;
-    array[i + 1] = base[i + 1];
-    array[i + 2] = bend.z;
+  var uv = geometry && geometry.attributes ? geometry.attributes.uv : null;
+  if (!position || !uv || !glyphs || !glyphs.length) return 0;
+  var win = Math.max(1, row.canvas && row.canvas.width ? row.canvas.width : 1);
+  var hin = Math.max(1, row.canvas && row.canvas.height ? row.canvas.height : 1);
+  var n = Math.min(glyphs.length, Math.floor(position.array.length / 12), Math.floor(uv.array.length / 8));
+  var p = position.array, u = uv.array;
+  var seed = row.itemIndex >= 0 ? row.itemIndex : 0;
+  for (var i = 0; i < n; i++) {
+    var g = glyphs[i];
+    var d = bhGlyphDrift(seed, i, progress, amount, time);
+    var cx = ((g.x0 + g.x1) * 0.5) / win - 0.5 + d.x;
+    var cy = 0.5 - ((g.y0 + g.y1) * 0.5) / hin + d.y;
+    var hw = Math.max(1e-5, (g.x1 - g.x0) * 0.5 / win);
+    var hh = Math.max(1e-5, (g.y1 - g.y0) * 0.5 / hin);
+    var left = bhRowBend(cx - hw, width, radius);
+    var right = bhRowBend(cx + hw, width, radius);
+    var v = i * 12;
+    p[v] = left.x; p[v + 1] = cy + hh; p[v + 2] = left.z;
+    p[v + 3] = right.x; p[v + 4] = cy + hh; p[v + 5] = right.z;
+    p[v + 6] = right.x; p[v + 7] = cy - hh; p[v + 8] = right.z;
+    p[v + 9] = left.x; p[v + 10] = cy - hh; p[v + 11] = left.z;
+    var k = i * 8;
+    var u0 = g.x0 / win, u1 = g.x1 / win;
+    var vt = 1 - g.y0 / hin, vb = 1 - g.y1 / hin;
+    u[k] = u0; u[k + 1] = vt;
+    u[k + 2] = u1; u[k + 3] = vt;
+    u[k + 4] = u1; u[k + 5] = vb;
+    u[k + 6] = u0; u[k + 7] = vb;
   }
   position.needsUpdate = true;
-  return true;
+  uv.needsUpdate = true;
+  if (geometry.setDrawRange) geometry.setDrawRange(0, n * 6);
+  return n;
 }
 
 var BH_ORBIT_FRONT = -Math.PI / 2;
@@ -2192,7 +2252,37 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
       ctx.fillText(subLines[sj], width / 2, subTop + (sj + 0.5) * subH);
     }
   }
+  // Every glyph's box on the canvas. The plane is rebuilt from these each frame, so one character
+  // can drift without dragging its neighbours - a single quad per row can only move the whole line.
+  ctx.font = font;
+  var glyphs = [];
+  for (var gm = 0; gm < mainLines.length; gm++) {
+    bhLineGlyphBoxes(ctx, mainLines[gm], width / 2, pad + (gm + 0.5) * mainH, mainH, glyphs);
+  }
+  if (subLines.length) {
+    ctx.font = subFont;
+    for (var gs = 0; gs < subLines.length; gs++) {
+      bhLineGlyphBoxes(ctx, subLines[gs], width / 2, subTop + (gs + 0.5) * subH, subH, glyphs);
+    }
+  }
+  row.glyphs = glyphs.slice(0, BH_MAX_ROW_GLYPHS);
+  row.glyphVersion = (row.glyphVersion || 0) + 1;
   row.sung = sung;
+}
+
+// Character boxes for one drawn line, in canvas pixels. Whitespace is dropped: a space has no glyph
+// to move, and leaving it in would put a visible seam in the line's UVs.
+function bhLineGlyphBoxes(ctx, line, centerX, centerY, lineH, out) {
+  var text = String(line || '');
+  var total = (ctx.measureText(text) && ctx.measureText(text).width) || 0;
+  var x = centerX - total / 2;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text.charAt(i);
+    var adv = (ctx.measureText(ch) && ctx.measureText(ch).width) || 0;
+    if (ch.trim()) out.push({ x0: x, x1: x + adv, y0: centerY - lineH / 2, y1: centerY + lineH / 2 });
+    x += adv;
+  }
+  return out;
 }
 
 function bhLyricCss(colour, alpha) {
@@ -2218,16 +2308,12 @@ function bhBuildLyricRow(width, height) {
     side: THREE.DoubleSide,
     opacity: 1
   });
-  // Segmented along x: the row is bent into the orbit's own arc every frame, so the plane needs
-  // enough columns to stay smooth when the radius closes in and the curvature grows.
-  var geometry = new THREE.PlaneGeometry(1, 1, 24, 1);
+  // One quad per glyph, rewritten every frame: the arch and each character's own drift are both
+  // written into this buffer, so nothing accumulates from one frame to the next.
+  var geometry = bhBuildGlyphGeometry(BH_MAX_ROW_GLYPHS);
   var mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = false;
   mesh.renderOrder = 60;
-  // The rest positions are kept: the bend is written into the live buffer each frame, and reading a
-  // already-bent vertex back would make the arch creep instead of being a function of the radius.
-  var position = geometry && geometry.attributes ? geometry.attributes.position : null;
-  mesh.userData = { bhBasePositions: position && position.array ? new Float32Array(position.array) : null };
   // The far copy is the same sign, geometry and material included, drawn at the position that is
   // left over once the pass has bent it: the two channels need different transforms and nothing
   // else, so the second object carries the difference instead of a second texture.
@@ -2261,6 +2347,8 @@ function bhDisposeLyrics() {
 // canvas and only takes a real texture when a line lands on it, so a fast song can keep forty rows
 // alive without forty full-size buffers sitting around.
 var BH_MAX_LYRIC_ROWS = 48;
+// One quad per glyph: four main lines plus two translation lines of a very long lyric still fit.
+var BH_MAX_ROW_GLYPHS = 260;
 
 function bhEnsureLyricRowCount(count) {
   if (typeof THREE === 'undefined' || !bhLyrics || !bhLyrics.layer) return 0;
@@ -2489,7 +2577,8 @@ function bhPlaceLyrics(frame, dt) {
     worldHH *= grow;
     worldW = bhLyricArcWidth(worldW, radius, params.orbit);
     row.mesh.scale.set(worldW, worldHH, 1);
-    bhBendRowMesh(row.mesh, worldW, radius);
+    // The arch, plus each glyph's own drift, which only opens up during the fall.
+    bhBendRowGlyphs(row, worldW, radius, params.drift, state.phase === 'fall' ? state.fall : 0, time);
     // The far copy. The pass pulls every pixel of its channel inwards by `pull`, so the sign is
     // drawn that much inside its true position - less the share its own depth behind the hole pays
     // for. What is left on screen is the true position plus weight*pull: continuous with the near

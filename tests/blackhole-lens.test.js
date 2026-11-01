@@ -96,6 +96,8 @@ function makeThree(record) {
       this.attributes = {};
       this.pointCount = 0;
       this.setAttribute = function (name, attr) { self.attributes[name] = attr; if (name === 'position') self.pointCount = attr.count; };
+      this.setIndex = function (index) { self.index = index; };
+      this.setDrawRange = function (start, count) { self.drawRange = { start: start, count: count }; };
       this.dispose = function () { record.disposed.push('galaxy-geometry'); };
     },
     BufferAttribute: function (array, itemSize) { this.array = array; this.itemSize = itemSize; this.count = array.length / itemSize; },
@@ -1225,22 +1227,56 @@ function load(overrides) {
   }
   assert(/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(source),
     'the placement has to use the tidal width');
-  // The bend is written into the mesh's own buffer from the rest positions, so it can be re-bent
-  // every frame without the arch creeping.
-  const rest = new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 0]);
-  const bentMesh = {
-    geometry: { attributes: { position: { array: rest.slice(), needsUpdate: false } } },
-    userData: { bhBasePositions: rest }
+  // The rows are one quad per glyph, and both the arch and each glyph's drift are written into that
+  // buffer every frame - never accumulated from the previous one.
+  const glyphGeo = {
+    attributes: {
+      position: { array: new Float32Array(4 * 12), needsUpdate: false },
+      uv: { array: new Float32Array(4 * 8), needsUpdate: false }
+    },
+    drawn: 0,
+    setDrawRange(start, count) { this.drawn = count; }
   };
-  assert(sandbox.bhBendRowMesh(bentMesh, 2, 2.4) === true, 'the row buffer has to take the bend');
-  assert(bentMesh.geometry.attributes.position.needsUpdate === true, 'and has to be re-uploaded');
-  const arr = bentMesh.geometry.attributes.position.array;
-  assert(Math.abs(arr[6] - (-(2.4 / 2) * Math.sin(1 / 2.4))) < 1e-6,
-    'the left end has to move onto the arch: ' + arr[6]);
-  // The placement has to use that bend with the row's own radius, and the slot window has to keep
-  // four lines of history so a row is not cut off mid-inspiral.
-  assert(/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(source),
-    'the placement has to bend each row to its own radius');
+  const glyphRow = {
+    canvas: { width: 200, height: 100 }, itemIndex: 3, mesh: { geometry: glyphGeo },
+    glyphs: [{ x0: 0, x1: 100, y0: 0, y1: 100 }, { x0: 100, x1: 200, y0: 0, y1: 100 }]
+  };
+  const written = sandbox.bhBendRowGlyphs(glyphRow, 2, 2.4, 0, 0, 0);
+  assert(written === 2 && glyphGeo.drawn === 12, 'each glyph has to be its own quad: ' + written + '/' + glyphGeo.drawn);
+  const gp = glyphGeo.attributes.position.array;
+  assert(Math.abs(gp[0] - (-(2.4 / 2) * Math.sin(1 / 2.4))) < 1e-6,
+    'the left edge of the first glyph has to move onto the arch: ' + gp[0]);
+  const gu = glyphGeo.attributes.uv.array;
+  assert(Math.abs(gu[0]) < 1e-9 && Math.abs(gu[2] - 0.5) < 1e-9 && Math.abs(gu[1] - 1) < 1e-9,
+    'and read its own slice of the row texture: ' + Array.prototype.slice.call(gu, 0, 4).join(','));
+  // Drift: nothing at rest, one offset per glyph, and a wider scatter the deeper the fall.
+  const driftRest = sandbox.bhGlyphDrift(3, 0, 0, 1, 10);
+  assert(driftRest.x === 0 && driftRest.y === 0, 'a row that is only being read must not drift');
+  const driftDeepA = sandbox.bhGlyphDrift(3, 0, 1, 1, 10);
+  const driftDeepB = sandbox.bhGlyphDrift(3, 1, 1, 1, 10);
+  assert(Math.hypot(driftDeepA.x - driftDeepB.x, driftDeepA.y - driftDeepB.y) > 0.01,
+    'two glyphs must drift to different places, or it is the old whole-line bob: '
+    + JSON.stringify(driftDeepA) + ' / ' + JSON.stringify(driftDeepB));
+  const driftHalf = sandbox.bhGlyphDrift(3, 0, 0.5, 1, 10);
+  assert(Math.hypot(driftHalf.x, driftHalf.y) < Math.hypot(driftDeepA.x, driftDeepA.y),
+    'and the scatter has to open up with the fall: ' + Math.hypot(driftHalf.x, driftHalf.y).toFixed(3)
+    + ' at half against ' + Math.hypot(driftDeepA.x, driftDeepA.y).toFixed(3) + ' at the end');
+  assert(Math.hypot(driftDeepA.x, driftDeepA.y) < 0.24, 'but stay inside the row, not fly off it');
+  assert(sandbox.bhGlyphDrift(3, 0, 1, 0, 10).x === 0, 'the knob at zero means no drift at all');
+  // Through the writer, not just the function: two neighbouring glyphs have to come apart. With a
+  // whole-line offset their touching edges would still be touching.
+  glyphGeo.attributes.position.needsUpdate = false;
+  sandbox.bhBendRowGlyphs(glyphRow, 2, 2.4, 1, 1, 10);
+  const gp2 = glyphGeo.attributes.position.array;
+  const gap = Math.abs(gp2[3] - gp2[12]);
+  assert(Math.abs(gap) > 0.004,
+    'the two glyphs have to drift apart, not move as one line: their facing edges are ' + gap.toFixed(4) + ' apart');
+  assert(glyphGeo.attributes.position.needsUpdate === true, 'and the buffer has to be re-uploaded');
+  assert(/var geometry = bhBuildGlyphGeometry\(BH_MAX_ROW_GLYPHS\);/.test(source),
+    'the row has to be built as one quad per glyph, not as a single plane');
+  // The placement has to use that writer with the row's own radius and the fall's progress.
+  assert(/bhBendRowGlyphs\(row, worldW, radius, params\.drift, state\.phase === 'fall' \? state\.fall : 0, time\);/.test(source),
+    'the placement has to bend each row to its own radius and drift its glyphs');
   assert(/function bhLyricWindowRange\(/.test(source) && /bhLyricWindowRange\(sung, items\.length, bhLyrics\.rows\.length\)/.test(source),
     'the window has to come from the row count, not a fixed six lines');
   // The row cap is the answer to "why do fast lyrics vanish before the 30 s inspiral": with 24 rows

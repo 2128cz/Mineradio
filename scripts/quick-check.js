@@ -1794,11 +1794,14 @@ function runBlackHolePresetCheck() {
   if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
   // The lyric rows are arches of the orbit and inspiral physically: the curvature is the hole's
   // radius, the fall is Keplerian and the row lives until the horizon.
-  if (!/function bhRowBend\(/.test(text) || !/function bhBendRowMesh\(/.test(text)) {
+  if (!/function bhRowBend\(/.test(text) || !/function bhBendRowGlyphs\(/.test(text)) {
     fail('the lyric rows have to be bent into the orbit, not flat billboards');
   }
-  if (!/new THREE\.PlaneGeometry\(1, 1, 24, 1\)/.test(text)) fail('the bent row needs enough columns to stay smooth');
-  if (!/bhBendRowMesh\(row\.mesh, worldW, radius\);/.test(text)) fail('the placement must bend each row to its own radius');
+  if (!/var geometry = bhBuildGlyphGeometry\(BH_MAX_ROW_GLYPHS\);/.test(text)) fail('a row has to be one quad per glyph, not one plane for the whole line');
+  if (!/row\.glyphs = glyphs\.slice\(0, BH_MAX_ROW_GLYPHS\);/.test(text)) fail('the canvas has to record where every glyph sits');
+  if (!/bhBendRowGlyphs\(row, worldW, radius, params\.drift, state\.phase === 'fall' \? state\.fall : 0, time\);/.test(text)) {
+    fail('the placement must bend each row to its own radius and drift its glyphs');
+  }
   if (!/function bhLyricArcWidth\(/.test(text)) fail('the lyric has to be stretched along the orbit as it falls');
   if (!/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(text)) fail('the placement must use the tidal width, not shrink the row');
   if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
