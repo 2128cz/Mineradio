@@ -1640,6 +1640,9 @@ function runBlackHolePresetCheck() {
   if (!/function bhLyricSideBlend\(/.test(text) || !/row\.nearAlpha = 1 - row\.sideBlend;/.test(text)) {
     fail('the near/far hand-over has to be a depth blend, or crossing behind the hole pops');
   }
+  if (!/var fadeWindow = Math\.max\(1\.2, Math\.max\(0\.1, params\.swallow\) \* 0\.34\);/.test(text)) {
+    fail('the falling row has to dissolve over a share of its fall, not in a fixed last breath');
+  }
   // The far copy is pre-warped by the bend the pass is about to apply, less the share its own depth
   // behind the hole pays for, and it is its own object so the near copy stays where the geometry is.
   if (!/function bhLyricLensWeight\(/.test(text) || !/function bhLyricLensPull\(/.test(text)) {
@@ -1814,7 +1817,7 @@ function runBlackHolePresetCheck() {
   }
   if (!/var rho = Math\.max\(rim, rawRho\);/.test(text)) fail('the row must not keep sinking past the rim');
   if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
-  if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ 1\.2, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
+  if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ fadeWindow, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
   if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
     fail('the field needs two bands at different angular rates, or it turns rigidly');

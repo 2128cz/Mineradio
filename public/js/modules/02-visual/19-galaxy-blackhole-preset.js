@@ -2536,7 +2536,12 @@ function bhPlaceLyrics(frame, dt) {
     // the fall's own clock instead, over its last second or so at the rim. Keep the horizon fade as
     // a floor, for a rim that is very small.
     if (state.phase === 'fall') {
-      opacity = Math.min(bhSwallowAlpha(radius, horizonWorld), bhClamp((Number(state.left) || 0) / 1.2, 0, 1));
+      // The row dissolves over the last third of its fall instead of being switched off in the last
+      // breath: with a long spin-in that is the whole time it spends parked at the rim, and a fixed
+      // 1.2 s there read as "it sits there, then blinks out". The horizon fade stays as a floor.
+      var fadeWindow = Math.max(1.2, Math.max(0.1, params.swallow) * 0.34);
+      var approach = bhClamp((Number(state.left) || 0) / fadeWindow, 0, 1);
+      opacity = Math.min(bhSwallowAlpha(radius, horizonWorld), approach);
     }
     row.baseOpacity = opacity;
     row.material.opacity = opacity;

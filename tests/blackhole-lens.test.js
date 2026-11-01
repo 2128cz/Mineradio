@@ -1333,11 +1333,28 @@ function load(overrides) {
     'the row has to stop at the rim, not sink to the centre: ' + distances[distances.length - 1].toFixed(2)
     + ' vs ' + rimWorldWalk.toFixed(2));
   assert(distances[distances.length - 1] < distances[0] * 0.6, 'and reach it from the hold radius');
-  const readable = opacities.filter(function (o) { return o > 0.99; }).length;
-  assert(readable > opacities.length * 0.6,
-    'the row has to stay readable while it spirals and fades only at the end: ' + readable + '/' + opacities.length);
-  assert(opacities[opacities.length - 1] < 0.9,
-    'and fade on the fall clock, not pop at the frame it disappears: '
+  // The dissolve has to be a fade, not a switch: it may only go down, it has to spend several
+  // samples partly transparent, and no single frame may take a big bite out of it. The window is a
+  // third of the fall, so a long spin-in spends its whole park at the rim dissolving instead of
+  // sitting at full strength and blinking out.
+  let fadeMonotone = true;
+  let biggestStep = 0;
+  let partialSamples = 0;
+  for (let i = 0; i < opacities.length; i++) {
+    if (i) {
+      const step = opacities[i - 1] - opacities[i];
+      if (step < -1e-9) fadeMonotone = false;
+      biggestStep = Math.max(biggestStep, step);
+    }
+    if (opacities[i] > 0.05 && opacities[i] < 0.95) partialSamples++;
+  }
+  assert(fadeMonotone, 'the dissolve may only ever go down: '
+    + opacities.map(function (o) { return o.toFixed(2); }).join(' '));
+  assert(partialSamples >= 3, 'the row has to spend time partly transparent, not blink out: '
+    + partialSamples + ' of ' + opacities.length + ' samples');
+  assert(biggestStep < 0.25, 'and no single frame may take a big bite out of it: ' + biggestStep.toFixed(2));
+  assert(opacities[opacities.length - 1] < 0.1,
+    'and be all but gone by the time it is hidden: '
     + opacities.slice(-4).map(function (o) { return o.toFixed(2); }).join(' -> '));
   assert(fallingRow.mesh.visible === false && fallingRow.material.opacity === 0,
     'a swallowed row is hidden and fully transparent');
