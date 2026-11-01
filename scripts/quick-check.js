@@ -1854,12 +1854,15 @@ function runBlackHolePresetCheck() {
   }
   if (!/var rho = Math\.max\(rim, rawRho\);/.test(text)) fail('the row must not keep sinking past the rim');
   if (!/var RIM_RISE = 1;/.test(text)) fail('the fall has to spiral the whole way to the rim, not park there for a third of it');
-  if (!/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.62\);/.test(text)) {
+  if (!/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.78\);/.test(text)) {
     fail('the orbit has to be a fraction of the camera distance, or the ring hugs the hole up close and swallows the frame far away');
   }
-  if (!/var frontShare = Math\.max\(0\.15, \(depth - params\.orbit\)/.test(text)
-    || !/worldH = Math\.max\(worldH, 0\.006 \* 2 \* rowAlong \* tanHalf\);/.test(text)) {
+  if (!/var frontShare = Math\.pow\(Math\.max\(0\.15, \(depth - params\.orbit\)/.test(text)
+    || !/worldH = Math\.max\(worldH, 0\.0035 \* bhClamp\(bhParam\('lyricSpeck'\)/.test(text)) {
     fail('the sign has to shrink with the front of the bigger ring, and the far half has to bottom out at a speck');
+  }
+  if (!/frontShare \* bhClamp\(bhParam\('lyricSize'\), 0\.4, 2\.5\)/.test(text)) {
+    fail('the lyric size knob has to reach the world height');
   }
   if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
   if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ fadeWindow, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');

@@ -116,6 +116,11 @@ var BH_TUNING_SCHEMA = {
   // signs need in order to read as small objects around something huge.
   lyricOrbit: { def: 0.72, min: 0.15, max: 0.78, kind: 'ratio', rebuild: 'live' },
   lyricOrbitRate: { def: 0.5, min: 0.05, max: 2, kind: 'ratio', rebuild: 'live' },
+  // The size of a sign on screen, the steepness of the near/far fall-off, and the floor the far side
+  // may not go below: the three numbers that used to be constants in the placement.
+  lyricSize: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
+  lyricPerspective: { def: 1, min: 0.3, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricSpeck: { def: 1, min: 0.1, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricWind: { def: 5.0, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
@@ -909,6 +914,9 @@ function blackHoleApplyCamera(dt) {
   var ease = Math.min(1, Math.max(0.05, (Number(dt) || 0.016) * 6));
   blackHoleState.level += (bhClamp(energy, 0, 1) - blackHoleState.level) * ease;
   blackHoleFlight.time += Math.max(0, Number(dt) || 0);
+  // The galaxy turns at a rate the knob sets, so it needs the frame time: passing zero (which the
+  // render path used to) made 星系自转 a dial that did nothing.
+  blackHoleState.frameDt = Math.max(0, Number(dt) || 0);
   blackHoleState.frame = bhComputeFrame();
   // The field is built here rather than in the render path: a structural knob only changes a
   // string key, and rebuilding a buffer between two draws would hitch the frame it lands on.
@@ -952,7 +960,7 @@ function renderBlackHoleFrame() {
   }
   bhAlignPassSize();
   bhSyncLens(frame);
-  bhPlaceGalaxy(frame, 0);
+  bhPlaceGalaxy(frame, blackHoleState.frameDt || 0);
   var started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   var firstDraw = blackHoleState.draws === 0;
   var shaderErrors = [];
@@ -2617,12 +2625,14 @@ function bhPlaceLyrics(frame, dt) {
     // The sign is sized against the distance it is seen at, not against the ring: a bigger orbit
     // puts the front of the ring closer to the eye, and the sign has to shrink with it or the near
     // half would fill the frame. Behind the hole the perspective then does the shrinking on its own.
-    var frontShare = Math.max(0.15, (depth - params.orbit) / Math.max(1e-4, depth));
-    var worldH = params.height * depth * tanHalf * frontShare * (current ? 1.12 : 0.95) * (row.lineScale || 1);
+    var frontShare = Math.pow(Math.max(0.15, (depth - params.orbit) / Math.max(1e-4, depth)),
+      bhClamp(bhParam('lyricPerspective'), 0.3, 2));
+    var worldH = params.height * depth * tanHalf * frontShare * bhClamp(bhParam('lyricSize'), 0.4, 2.5)
+      * (current ? 1.12 : 0.95) * (row.lineScale || 1);
     var rowAlong = Math.max(0.05, alongRow);
     // A speck, not a vanishing point: the far half shrinks by perspective until it is unreadable,
     // and that is the point - but it may not disappear while it is still turning.
-    worldH = Math.max(worldH, 0.0035 * 2 * rowAlong * tanHalf);
+    worldH = Math.max(worldH, 0.0035 * bhClamp(bhParam('lyricSpeck'), 0.1, 2) * 2 * rowAlong * tanHalf);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     // The near side is allowed to overflow the frame: capping the sign at 86% of the screen is what
     // flattened the near/far difference - a near object should be too big for the frame.

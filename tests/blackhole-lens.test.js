@@ -1325,9 +1325,9 @@ function load(overrides) {
   // be pinned on the source as well.
   assert(/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.78\);/.test(source),
     'the orbit has to become a world radius from the camera distance, or the ring is a fixed length');
-  assert(/var frontShare = Math\.max\(0\.15, \(depth - params\.orbit\)/.test(source),
+  assert(/var frontShare = Math\.pow\(Math\.max\(0\.15, \(depth - params\.orbit\)/.test(source),
     'the sign has to be sized against the front of the ring, or the near half fills the frame');
-  assert(/worldH = Math\.max\(worldH, 0\.0035 \* 2 \* rowAlong \* tanHalf\);/.test(source),
+  assert(/worldH = Math\.max\(worldH, 0\.0035 \* bhClamp\(bhParam\('lyricSpeck'\)/.test(source),
     'the far half has to bottom out at a speck, not vanish while it is still turning');
   assert(/var pre = Math\.min\(\(1 - weight\) \* pull, qlen \* 0\.9\);/.test(source),
     'the pre-warp has to be capped, or the far copy can be carried through the hole centre');
