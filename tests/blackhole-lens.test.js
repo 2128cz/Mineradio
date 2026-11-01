@@ -1412,6 +1412,12 @@ function load(overrides) {
     'the row has to stop at the rim, not sink to the centre: ' + distances[distances.length - 1].toFixed(2)
     + ' vs ' + rimWorldWalk.toFixed(2));
   assert(distances[distances.length - 1] < distances[0] * 0.6, 'and reach it from the hold radius');
+  // No parking at the rim: the spiral runs the whole way in and only creeps along the edge for the
+  // last stretch the power law needs to reach the floor (it was a third of the fall before).
+  const nearRim = distances.filter(function (d) { return d <= rimWorldWalk * 1.02; }).length;
+  assert(nearRim <= distances.length * 0.15,
+    'the rim may only be the last stretch of the fall, not a park: '
+    + nearRim + ' of ' + distances.length + ' frames');
   // The dissolve has to be a fade, not a switch: it may only go down, it has to spend several
   // samples partly transparent, and no single frame may take a big bite out of it. The window is a
   // third of the fall, so a long spin-in spends its whole park at the rim dissolving instead of

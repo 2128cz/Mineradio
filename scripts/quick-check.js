@@ -1853,6 +1853,7 @@ function runBlackHolePresetCheck() {
     fail('the rim has to come from the shadow edge in the frame');
   }
   if (!/var rho = Math\.max\(rim, rawRho\);/.test(text)) fail('the row must not keep sinking past the rim');
+  if (!/var RIM_RISE = 1;/.test(text)) fail('the fall has to spiral the whole way to the rim, not park there for a third of it');
   if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
   if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ fadeWindow, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.

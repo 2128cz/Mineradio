@@ -2129,14 +2129,15 @@ function bhLyricOrbitState(item, now, params, frontAngle, prevExitStart) {
   if (tau >= span) return null;
   var u = bhClamp(tau / span, 0, 1);
   var curve = bhClamp(Number(params.curve) || 0.5, 0.05, 3);
-  // Inside the black disk there is nothing to see, so the row stops spiralling when it reaches the
-  // rim (the shadow's edge, passed in as a fraction of the orbit) and orbits there for the rest of
-  // its life. Without the rim it kept shrinking into the centre, where "in front of" and "behind"
-  // the hole are the same thing and the near/far hand-over flickered.
+  // Inside the black disk there is nothing to see, so the radius floors at the rim (the shadow's
+  // edge, passed in as a fraction of the orbit). Without that floor it kept shrinking into the
+  // centre, where "in front of" and "behind" the hole are the same thing and the near/far hand-over
+  // flickered - but parking there for the last third read as "it stops, then blinks out". Now the
+  // spiral runs the whole way in and lands on the rim exactly as the fall ends.
   var rim = bhClamp(Number(params.rim) || 0, 0, 1);
   // The inward part takes this share of the fall; the rest is the rim orbit. Two thirds of the
   // length spirals, the last third turns at the edge where it can still be seen.
-  var RIM_RISE = 0.68;
+  var RIM_RISE = 1;
   var uu = bhClamp(u / RIM_RISE, 0, 1);
   var rawRho = Math.pow(Math.max(0, 1 - uu), curve);
   var rho = Math.max(rim, rawRho);
