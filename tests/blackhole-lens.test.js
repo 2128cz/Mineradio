@@ -1320,6 +1320,17 @@ function load(overrides) {
   assert(glyphGeo.attributes.position.needsUpdate === true, 'and the buffer has to be re-uploaded');
   assert(/var geometry = bhBuildGlyphGeometry\(BH_MAX_ROW_GLYPHS\);/.test(source),
     'the row has to be built as one quad per glyph, not as a single plane');
+  // The scale work is only real if the frame does it: the arms above overwrite params.orbit with a
+  // world radius themselves, so the conversion, the front-relative size and the speck floor have to
+  // be pinned on the source as well.
+  assert(/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.62\);/.test(source),
+    'the orbit has to become a world radius from the camera distance, or the ring is a fixed length');
+  assert(/var frontShare = Math\.max\(0\.15, \(depth - params\.orbit\)/.test(source),
+    'the sign has to be sized against the front of the ring, or the near half fills the frame');
+  assert(/worldH = Math\.max\(worldH, 0\.006 \* 2 \* rowAlong \* tanHalf\);/.test(source),
+    'the far half has to bottom out at a speck, not vanish while it is still turning');
+  assert(/var pre = Math\.min\(\(1 - weight\) \* pull, qlen \* 0\.9\);/.test(source),
+    'the pre-warp has to be capped, or the far copy can be carried through the hole centre');
   // The placement has to use that writer with the row's own radius and the fall's progress.
   assert(/bhBendRowGlyphs\(row, worldW, radius, params\.drift, state\.phase === 'fall' \? state\.fall : 0, time\);/.test(source),
     'the placement has to bend each row to its own radius and drift its glyphs');
