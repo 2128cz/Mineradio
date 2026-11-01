@@ -1858,7 +1858,7 @@ function runBlackHolePresetCheck() {
     fail('the orbit has to be a fraction of the camera distance, or the ring hugs the hole up close and swallows the frame far away');
   }
   if (!/var frontShare = Math\.pow\(Math\.max\(0\.15, \(depth - params\.orbit\)/.test(text)
-    || !/worldH = Math\.max\(worldH, 0\.0035 \* bhClamp\(bhParam\('lyricSpeck'\)/.test(text)) {
+    || !/worldH = Math\.max\(worldH, 0\.0008 \* bhClamp\(bhParam\('lyricSpeck'\)/.test(text)) {
     fail('the sign has to shrink with the front of the bigger ring, and the far half has to bottom out at a speck');
   }
   if (!/frontShare \* bhClamp\(bhParam\('lyricSize'\), 0\.4, 2\.5\)/.test(text)) {

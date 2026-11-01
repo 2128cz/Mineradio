@@ -119,8 +119,10 @@ var BH_TUNING_SCHEMA = {
   // The size of a sign on screen, the steepness of the near/far fall-off, and the floor the far side
   // may not go below: the three numbers that used to be constants in the placement.
   lyricSize: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
-  lyricPerspective: { def: 1, min: 0.3, max: 2, kind: 'ratio', rebuild: 'live' },
-  lyricSpeck: { def: 1, min: 0.1, max: 2, kind: 'ratio', rebuild: 'live' },
+  // 0 = the sign keeps one world size, so the camera distance does all the work (the most brutal
+  // near/far); 2 = the front is normalised back to one screen size (flattest).
+  lyricPerspective: { def: 2, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricSpeck: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricWind: { def: 5.0, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
   lyricDrift: { def: 0.25, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
@@ -2629,13 +2631,13 @@ function bhPlaceLyrics(frame, dt) {
     // puts the front of the ring closer to the eye, and the sign has to shrink with it or the near
     // half would fill the frame. Behind the hole the perspective then does the shrinking on its own.
     var frontShare = Math.pow(Math.max(0.15, (depth - params.orbit) / Math.max(1e-4, depth)),
-      bhClamp(bhParam('lyricPerspective'), 0.3, 2));
+      2 - bhClamp(bhParam('lyricPerspective'), 0, 2));
     var worldH = params.height * depth * tanHalf * frontShare * bhClamp(bhParam('lyricSize'), 0.4, 2.5)
       * (current ? 1.12 : 0.95) * (row.lineScale || 1);
     var rowAlong = Math.max(0.05, alongRow);
     // A speck, not a vanishing point: the far half shrinks by perspective until it is unreadable,
     // and that is the point - but it may not disappear while it is still turning.
-    worldH = Math.max(worldH, 0.0035 * bhClamp(bhParam('lyricSpeck'), 0.1, 2) * 2 * rowAlong * tanHalf);
+    worldH = Math.max(worldH, 0.0008 * bhClamp(bhParam('lyricSpeck'), 0, 2) * 2 * rowAlong * tanHalf);
     var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
     // The near side is allowed to overflow the frame: capping the sign at 86% of the screen is what
     // flattened the near/far difference - a near object should be too big for the frame.
