@@ -556,7 +556,11 @@ var BH_PASS_FS = shadertoyFragment(
     '      float fog = mix(1.0, 0.04 + 2.6 * field, clamp(uWisp, 0.0, 2.0) * 0.7);',
     '      vec2 tangent = normalize(vec2(-pos.z, pos.x));',
     '      vec2 motion = normalize(vec2(vel.x, vel.z));',
-    '      float doppler = 1.0 + uSpin * 0.8 * dot(tangent, motion);',
+    // The ray runs away from the eye, so material moving *with* it is receding. The side the spin
+    // sweeps towards the camera - the one whose material comes at us - is the bright one; getting
+    // this sign wrong lights the receding side, which is the mirror image of what the eye expects
+    // from the rotation it can see.
+    '      float doppler = 1.0 - uSpin * 0.8 * dot(tangent, motion);',
     '      float density = vert * radial * fog;',
     '      vec3 tint = mix(vec3(1.0, 0.50, 0.18), vec3(1.0, 0.96, 0.88), heat);',
     '      emit += tint * (0.22 + 1.8 * heat) * max(0.10, doppler) * density * dt * uDiscGain * transmit;',

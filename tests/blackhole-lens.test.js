@@ -203,6 +203,29 @@ function load(overrides) {
   assert(/float jit = hash21\(fragCoord \+ vec2\(13\.7, 5\.1\)\);/.test(source), 'and that jitter has to be per pixel');
   assert(/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(source),
     'the Keplerian shear has to be bounded: an unbounded one winds the field into radial moire over a song');
+  // Doppler: the side whose material comes towards the eye is the bright one. The ray runs *away*
+  // from the eye, so material moving with it is receding - the opposite sign lights the mirror image
+  // of the rotation the eye can see.
+  assert(/float doppler = 1\.0 - uSpin \* 0\.8 \* dot\(tangent, motion\);/.test(source),
+    'the Doppler has to brighten the approaching side, not the receding one');
+  {
+    // The same arithmetic on the canonical geometry: camera in front of the disc looking at it, a
+    // point on the right of the hole and one on the left, spin turned up.
+    const dopplerAt = function (px, pz, vx, vz, spin) {
+      const tl = Math.hypot(px, pz);
+      const ml = Math.hypot(vx, vz);
+      const tangent = { x: -pz / tl, z: px / tl };
+      const motion = { x: vx / ml, z: vz / ml };
+      return 1 - spin * 0.8 * (tangent.x * motion.x + tangent.z * motion.z);
+    };
+    const rightOfHole = dopplerAt(1, 0, 0, -1, 1);
+    const leftOfHole = dopplerAt(-1, 0, 0, -1, 1);
+    assert(rightOfHole > 1 && leftOfHole < 1,
+      'at spin 1 the side the disc turns towards the camera has to be the bright one: '
+      + rightOfHole.toFixed(3) + ' / ' + leftOfHole.toFixed(3));
+    assert(Math.abs((rightOfHole - 1) + (leftOfHole - 1)) < 1e-12, 'and the two sides mirror each other');
+    assert(Math.abs(dopplerAt(1, 0, 0, -1, -1) - leftOfHole) < 1e-12, 'flipping the spin flips the bright side');
+  }
   assert(/float fog = mix\(1\.0, 0\.04 \+ 2\.6 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(source),
     'and the wisp amount has to reach the density');
   assert(/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(source),

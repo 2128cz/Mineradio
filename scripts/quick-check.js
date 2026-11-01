@@ -1620,6 +1620,9 @@ function runBlackHolePresetCheck() {
   if (!/if \(i == 3\) keep = 1\.0 - lod;/.test(shader)) fail('the finest octave has to be band-limited, or the disc moires at grazing angles');
   if (!/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(shader)) fail('the slab sample has to be jittered, or the integration is regular');
   if (!/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(shader)) fail('the Keplerian shear has to be bounded, or the field winds into radial moire');
+  if (!/float doppler = 1\.0 - uSpin \* 0\.8 \* dot\(tangent, motion\);/.test(shader)) {
+    fail('the Doppler has to brighten the side whose material approaches the eye, not the receding one');
+  }
   // Far rows are their own channel: not baked into the galaxy target (whose radial blur turned them
   // into a smear), and only veiled - not erased - by the fog. The lens, though, is the backdrop's
   // own: a row behind the hole has to appear where the picture behind the hole appears.
