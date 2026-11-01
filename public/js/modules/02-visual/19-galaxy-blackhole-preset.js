@@ -2227,6 +2227,10 @@ function bhWrapText(ctx, text, maxWidth, maxLines) {
   var out = [];
   var current = '';
   var limit = Math.max(1, Math.round(Number(maxLines) || 1));
+  // A wrap that breaks at a space drops that space, so "we lost characters" is not the same as
+  // "the line was cut off": comparing lengths and then indexing out[limit-1] threw on every frame
+  // for any short line that wrapped (the row then froze the whole preset). Track the real cut.
+  var truncated = false;
   for (var i = 0; i < source.length; i++) {
     var ch = source.charAt(i);
     var candidate = current + ch;
@@ -2239,17 +2243,18 @@ function bhWrapText(ctx, text, maxWidth, maxLines) {
         out.push(current);
         current = ch;
       }
-      if (out.length >= limit) { current = ''; break; }
+      if (out.length >= limit) { current = ''; truncated = true; break; }
     } else {
       current = candidate;
     }
   }
   if (current && out.length < limit) out.push(current);
   if (!out.length) out.push('');
-  if (out.join('').length < source.length) {
-    var last = out[limit - 1];
+  if (truncated && out.length) {
+    var lastIndex = Math.min(out.length, limit) - 1;
+    var last = String(out[lastIndex] || '');
     while (last.length > 0 && ctx.measureText(last + '…').width > maxWidth) last = last.slice(0, -1);
-    out[limit - 1] = last + '…';
+    out[lastIndex] = last + '…';
   }
   return out;
 }

@@ -1343,6 +1343,17 @@ function load(overrides) {
   assert(wideWindow.lo === 0 && wideWindow.hi === 12, '24 rows must reach 21 lines back: ' + JSON.stringify(wideWindow));
   assert(narrowWindow.lo === 4 && narrowWindow.hi === 12, '9 rows reach six lines back: ' + JSON.stringify(narrowWindow));
   assert(sandbox.bhLyricWindowRange(-1, 5, 9).lo === 0, 'before the song the window starts at the first line');
+  // A short line that wraps must not throw: the wrap drops the space it breaks at, so "characters
+  // were lost" is not "the line was cut off". This threw on every frame for such a line and froze
+  // the preset (only the black hole calls this wrap), which is the report to keep out.
+  const wrapShortCtx = {
+    measureText(text) { return { width: String(text).length * 10 }; }
+  };
+  const wrappedShort = sandbox.bhWrapText(wrapShortCtx, 'aaaa bbbb cccc dddd eeee', 100, 4);
+  assert(Array.isArray(wrappedShort) && wrappedShort.length >= 2, 'a long line has to wrap: ' + JSON.stringify(wrappedShort));
+  assert(wrappedShort.join('').indexOf('…') < 0, 'a line that wrapped is not truncated, so it gets no ellipsis');
+  const tooLong = sandbox.bhWrapText(wrapShortCtx, 'aaaa bbbb cccc dddd eeee ffff gggg hhhh', 100, 2);
+  assert(tooLong.length === 2 && tooLong[1].indexOf('…') >= 0, 'a cut line has to end in an ellipsis: ' + JSON.stringify(tooLong));
   assert(sandbox.bhLyricWindowRange(0, 0, 9).hi === -1, 'no lines means no window');
   assert(/lyricRows: \{ def: 24, min: 9, max: 48/.test(source), 'the row cap has to be a knob');
   assert(/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(source),
@@ -1355,12 +1366,12 @@ function load(overrides) {
   assert(wrapped[wrapped.length - 1].slice(-1) === '…', 'and the tail has to be marked, not silently dropped');
   const shortWrap = sandbox.bhWrapText(measurer, 'short', 100, 4);
   assert(shortWrap.length === 1 && shortWrap[0] === 'short', 'a short line stays one line');
-  const wrapCtx = {
+  const wrapProbeCtx = {
     font: '', textAlign: '', textBaseline: '', fillStyle: '',
     measureText: function (s) { return { width: String(s).length * 10 }; },
     clearRect: function () {}, fillText: function () {}
   };
-  const wrapRow = { canvas: { width: 8, height: 8, getContext: function () { return wrapCtx; } }, ctx: wrapCtx };
+  const wrapRow = { canvas: { width: 8, height: 8, getContext: function () { return wrapProbeCtx; } }, ctx: wrapProbeCtx };
   sandbox.bhDrawRowCanvas(wrapRow, { text: 'x'.repeat(500), sub: '' }, false, sandbox.bhLyricPaletteState(), { floatAmp: 0.4, enter: 0.28 });
   assert(wrapRow.lineScale > 1.2, 'a wrapped row has to grow in height: ' + wrapRow.lineScale);
   assert(wrapRow.canvas.width <= 2048, 'and the canvas has to stay inside a texture: ' + wrapRow.canvas.width);
