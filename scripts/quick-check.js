@@ -1864,6 +1864,7 @@ function runBlackHolePresetCheck() {
   if (!/frontShare \* bhClamp\(bhParam\('lyricSize'\), 0\.4, 2\.5\)/.test(text)) {
     fail('the lyric size knob has to reach the world height');
   }
+  if (!/starField\(uv \+ bend, iTime\) \* 0\.85 \* uSkyStars/.test(shader)) fail('the star density knob has to reach the star field, or it is another dial that does nothing');
   if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
   if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ fadeWindow, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
   // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.

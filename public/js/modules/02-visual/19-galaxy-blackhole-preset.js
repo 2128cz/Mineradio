@@ -64,6 +64,9 @@ var BH_TUNING_SCHEMA = {
   // One softness for the whole backdrop: the galaxy, the streaks and the glow move together.
   // Radial blur of the star field, in pixels: a little is depth, a lot is a smeared plate.
   softness: { def: 3, min: 0, max: 6, kind: 'px', rebuild: 'live' },
+  // Star brightness in the backdrop: the four-point field is what makes the sky read as space
+  // rather than as a blurred picture, and it is the one term that was a constant.
+  skyStars: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   cameraDrift: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   // A fast, three-axis jolt on top of the slow drift: the camera is caught in the hole's field. It
   // grows as the hole fills more of the frame and the music gets louder, and the beat speeds it up
@@ -379,6 +382,7 @@ var BH_PASS_FS = shadertoyFragment(
     'uniform vec2 uShake;',
     'uniform float uDolly;',
     'uniform vec3 uJolt;',
+    'uniform float uSkyStars;',
     'uniform float uDebris;',
     'uniform float uLevel;',
     '',
@@ -607,7 +611,7 @@ var BH_PASS_FS = shadertoyFragment(
     '  float nearMask = 1.0 - smoothstep(uShadowUv * 1.05, uShadowUv * 2.6, qlen);',
     '  vec2 lensUv = clamp(uv - bend * nearMask * clamp(uTextLens, 0.0, 1.0), 0.0, 1.0);',
     // Only the stars are at infinity, so only they take the bend.
-    '  vec3 bg = (sampleSky(lensUv, uSoft) + starField(uv + bend, iTime) * 0.85) * skyMask;',
+    '  vec3 bg = (sampleSky(lensUv, uSoft) + starField(uv + bend, iTime) * 0.85 * uSkyStars) * skyMask;',
     '',
     '  float rFinal = lastR;',
     '  vec3 color = bg * transmit + emit;',
@@ -775,6 +779,7 @@ function bhBuildPass() {
         uShake: { value: new THREE.Vector2() },
         uDolly: { value: 0 },
         uJolt: { value: new THREE.Vector3() },
+        uSkyStars: { value: 1 },
         uDebris: { value: 0.6 },
         iResolution: { value: new THREE.Vector3(w, h, 1) },
         iTime: bhSharedTimeUniform(),
@@ -868,6 +873,7 @@ function bhSyncLens(frame) {
   u.uDiscOuter.value = Math.max(u.uDiscInner.value + 0.2, bhClamp(bhParam('discOuter'), 0.5, 60) / rs);
   if (u.uDiscThick) u.uDiscThick.value = Math.max(0.01, bhClamp(bhParam('discThickness'), 0.02, 8) / rs);
   if (u.uSoft) u.uSoft.value = bhClamp(bhParam('softness'), 0, 6);
+  if (u.uSkyStars) u.uSkyStars.value = bhClamp(bhParam('skyStars'), 0, 3);
   if (u.uWisp) u.uWisp.value = bhClamp(bhParam('discWisp'), 0, 2);
   if (u.uShadowUv) u.uShadowUv.value = frame.uvShadow || 0.3;
   if (u.uDebris) u.uDebris.value = bhClamp(bhParam('debris'), 0, 1);
