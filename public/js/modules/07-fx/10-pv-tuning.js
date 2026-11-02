@@ -137,5 +137,32 @@ function pvTuningReplanClick(button) {
   });
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pvTuningSyncInputs);
-else pvTuningSyncInputs();
+// One dial back to its own default, from the round button the row carries. The app's other
+// sliders get this button from ensureFxSliderResetButton, which reads fxDefaults; these dials
+// live in their own store, so the row's button is wired to the field default instead.
+function resetPvTuningValue(id, key, btn) {
+  var spec = PV_TUNING_FIELDS[key];
+  if (!spec) return false;
+  var ok = setPvTuning(key, spec.def);
+  if (!ok) return false;
+  if (typeof animateFxResetButton === 'function') animateFxResetButton(btn);
+  if (typeof showToast === 'function') showToast('已恢复默认数值');
+  return true;
+}
+
+function bindPvTuningResetButtons() {
+  if (typeof ensureFxSliderResetButton !== 'function') return;
+  Object.keys(PV_TUNING_FIELDS).forEach(function (key) {
+    // A switch resets by being flipped back, so only the sliders carry the round button.
+    if (PV_TUNING_FIELDS[key].kind === 'bool') return;
+    ensureFxSliderResetButton('fx-pv' + key, key, resetPvTuningValue);
+  });
+}
+
+function initPvTuningControls() {
+  bindPvTuningResetButtons();
+  pvTuningSyncInputs();
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initPvTuningControls);
+else initPvTuningControls();

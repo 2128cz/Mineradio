@@ -406,7 +406,11 @@ function finalizeLyricLineDurations(lines) {
   return lines;
 }
 function parseLyricText(text) {
-  var lines = [], reg = /\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\]/g;
+  // Two fraction separators are in the wild: [mm:ss.xx] and NetEase's [mm:ss:xx] (the second colon
+  // carries centiseconds). Only the dot form used to be accepted, so a whole-class of songs - the
+  // ones whose lyric comes back in the colon form, often merged with karaoke JSON lines - parsed to
+  // zero lines and every visual preset fell back to the "title - artist" placeholder.
+  var lines = [], reg = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
   text.split(/\r?\n/).forEach(function (line) {
     var tags = [], times = [], m;
     reg.lastIndex = 0;

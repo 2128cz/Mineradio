@@ -185,6 +185,51 @@ function runPvLyricFormatCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+// The renderer parks itself (and drops to 4x4) when the native window state says hidden. If that
+// flag goes stale while frames are still being presented the picture is black and frozen, and no
+// preset switch recovers it - so the correction is gated, not just written.
+function runRenderSleepStaleCheck() {
+  logStep('Render power: a stale sleep claim is corrected');
+  const testFile = path.join(appRoot, 'tests', 'render-sleep-stale.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/render-sleep-stale.test.js is missing; a stale window flag would freeze the picture with no trace');
+  }
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`render sleep staleness failed: ${rel(testFile)}`);
+  }
+  const loop = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const hook = loop.indexOf("notePresentedFrame(now, prevTime)");
+  const sleep = loop.indexOf('if (mainLoopDeepBackgroundSleeping())');
+  if (hook < 0 || sleep < 0 || hook > sleep) {
+    fail('the frame loop has to ask whether a sleep claim is stale before it parks');
+  }
+  process.stdout.write(result.stdout || '');
+}
+
+function runLyricParseFormatsCheck() {
+  logStep('Lyric timestamp formats (dot and colon centiseconds)');
+  const testFile = path.join(appRoot, 'tests', 'lyric-parse-formats.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/lyric-parse-formats.test.js is missing; a provider format the parser does not know would look like a song with no lyrics');
+  }
+  const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`lyric parse formats failed: ${rel(testFile)}`);
+  }
+  // The colon form is the one that shipped broken: pin it on the parser itself, not only on the
+  // fixture list, so a regex rewrite cannot quietly drop it again.
+  const parser = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '06-lyrics', '00-lyrics-fetch-parse.js'), 'utf8');
+  if (parser.indexOf('(?:[.:](\\d{1,3}))?') < 0) {
+    fail('the LRC parser must accept both [mm:ss.xx] and [mm:ss:xx]');
+  }
+  console.log('[OK] lyric timestamps parse in both the dot and colon centisecond forms.');
+}
+
 function runJizuraVendorCheck() {
   logStep('Vendored JIZURA engine integrity (single-file, licence, packaging)');
   const vendorDir = path.join(appRoot, 'vendor', 'jizura');
@@ -528,12 +573,14 @@ function runFxConsoleRegistrationCheck() {
   }
   // The PV group registers the live dials and the two plan-time ones plus the button that makes
   // them take effect. Cut counts/style/aspect are baked into the archive, so they are not here.
+  const pvSliderIds = ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity'];
+  const pvItemIds = pvSliderIds.concat(['t-pvunify']);
   const pvGroup = /\{ key: 'pv', title: '[^']*', hint: '[^']*', items: \[([\s\S]*?)\] \}/.exec(workspace);
   if (!pvGroup) fail('the console layout must register the 歌词 PV group');
   else {
     const items = (pvGroup[1].match(/fxConsoleItem\(/g) || []).length;
     if (items !== 8) fail(`the 歌词 PV group must register its seven dials and the regenerate button (found ${items})`);
-    ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity', 't-pvunify'].forEach(function (id) {
+    pvItemIds.forEach(function (id) {
       if (pvGroup[1].indexOf(id) < 0) fail(`the 歌词 PV group is missing ${id}`);
       if (htmlText.indexOf('id="' + id + '"') < 0) fail(`index.html is missing the ${id} control the group points at`);
     });
@@ -590,7 +637,53 @@ function runFxConsoleRegistrationCheck() {
   if (!/var fps = typeof pvTuningFps === 'function' \? pvTuningFps\(\) : PV_TARGET_FPS/.test(presetText)) {
     fail('the koma dial must drive the frame gate, or 更新节拍 would do nothing');
   }
-  console.log('[OK] console sync + PV dials (live + plan-time + regenerate) registered.');
+  // Every slider row carries its own reset in the row's last column. The ring and the PV layer
+  // keep their knobs outside fx, so their rows have to be wired to their own schema default --
+  // a group-wide reset is not the same thing, and one knob's button must not move the others.
+  const bindingsText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '07-bindings-shelf-immersive.js'), 'utf8');
+  const haloTuningText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '11-halo-tuning.js'), 'utf8');
+  if (!/function ensureFxSliderResetButton\(id, key, resetValue\)/.test(perf)) {
+    fail('the shared slider reset button must take the store its row belongs to');
+  }
+  if (!/typeof resetValue === 'function' \? resetValue : resetFxSliderValue/.test(perf)) {
+    fail('a slider row with no store of its own must keep resetting through fxDefaults');
+  }
+  if (!/ensureFxSliderResetButton\(pair\[0\], pair\[1\]\);/.test(bindingsText)) {
+    fail('bindFxPanel must still hand every app slider its own reset button');
+  }
+  if (!/function resetPvTuningValue\(/.test(tuning) || !/ensureFxSliderResetButton\('fx-pv' \+ key, key, resetPvTuningValue\)/.test(tuning)) {
+    fail('each PV dial needs its own reset, wired to that dial\'s default');
+  }
+  if (!/function bindPvTuningResetButtons\(/.test(tuning) || !/bindPvTuningResetButtons\(\);/.test(tuning)) {
+    fail('the PV tuning init must bind the per-dial resets, or the rows stay bare');
+  }
+  if (!/function resetHaloTuningValue\(/.test(haloTuningText) || !/ensureFxSliderResetButton\('fx-halo' \+ key, key, resetHaloTuningValue\)/.test(haloTuningText)) {
+    fail('each ring knob needs its own reset, wired to that knob\'s schema default');
+  }
+  if (!/function bindHaloTuningResetButtons\(/.test(haloTuningText) || !/bindHaloTuningResetButtons\(\);/.test(haloTuningText)) {
+    fail('the ring tuning init must bind the per-knob resets, or the rows stay bare');
+  }
+  // A button is appended to the row, so a slider the markup left outside a .fx-slider row has
+  // nowhere to put it and would silently carry none.
+  pvSliderIds.forEach(function (id) {
+    const at = htmlText.indexOf('id="' + id + '"');
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (at < 0 || rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+  });
+  const knobTestFile = path.join(appRoot, 'tests', 'knob-reset-buttons.test.js');
+  if (!fs.existsSync(knobTestFile)) {
+    fail('tests/knob-reset-buttons.test.js is missing; the per-field resets would only be checked by shape');
+  }
+  const knobTest = spawnSync(process.execPath, [knobTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (knobTest.status !== 0) {
+    process.stdout.write(knobTest.stdout || '');
+    process.stderr.write(knobTest.stderr || '');
+    fail(`the per-field reset button regression failed: ${rel(knobTestFile)}`);
+  }
+  process.stdout.write(knobTest.stdout || '');
+  console.log('[OK] console sync + PV dials (live + plan-time + regenerate) + per-field resets registered.');
 }
 
 function runWindowVisibilityTraceCheck() {
@@ -1015,8 +1108,28 @@ function runHaloPresetCheck() {
 
   const ceiling = Number((coreText.match(/MAX_VISUAL_PRESET_INDEX = (\d+)/) || [])[1]);
   const haloIndex = Number((fs.readFileSync(modulePath, 'utf8').match(/HALO_PRESET_INDEX = (\d+)/) || [])[1]);
-  if (!(haloIndex === ceiling)) {
-    fail(`HALO_PRESET_INDEX=${haloIndex} must track MAX_VISUAL_PRESET_INDEX=${ceiling}`);
+  // A preset number is what saved archives, the display order and the takeover mask point at, so
+  // one that has shipped must never move. The ceiling has to be the highest number that is
+  // actually declared somewhere - the old arm compared the ring's index with the ceiling, which
+  // was really the claim "the ring is the newest preset" and stopped being true on purpose.
+  const declaredIndexes = {};
+  ['00-state/00-core-stores.js', '02-visual/01-float-skull-backcover.js', '02-visual/17-pv-preset.js',
+    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js'].forEach(function (rel) {
+    const text = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', rel), 'utf8');
+    const re = /\b([A-Z][A-Z0-9_]*_PRESET_INDEX) = (\d+)/g;
+    let found;
+    while ((found = re.exec(text))) declaredIndexes[found[1]] = Number(found[2]);
+  });
+  const highestDeclared = Math.max.apply(null, Object.keys(declaredIndexes).map(function (key) { return declaredIndexes[key]; }));
+  if (highestDeclared !== ceiling) {
+    fail(`MAX_VISUAL_PRESET_INDEX=${ceiling} must be the highest declared preset index (${highestDeclared}): ${JSON.stringify(declaredIndexes)}`);
+  }
+  if (haloIndex !== 14) {
+    fail(`HALO_PRESET_INDEX must stay 14 (found ${haloIndex}): archives and the display order name numbers, not labels`);
+  }
+  const blackHoleIndex = Number((fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '02-visual', '19-galaxy-blackhole-preset.js'), 'utf8').match(/BLACKHOLE_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (blackHoleIndex !== 15) {
+    fail(`BLACKHOLE_PRESET_INDEX must stay 15 (found ${blackHoleIndex}) for the same reason`);
   }
   if (!/环形数据流/.test(archiveText) || !/RING DATA STREAM/.test(archiveText)) {
     fail('the HALO preset must be a labelled, selectable card');
@@ -1238,6 +1351,12 @@ function runHaloPresetCheck() {
       fail(`the knob ${key} has no slider (${id}) in index.html`);
       continue;
     }
+    // The per-knob reset is appended to the row, so a slider outside a .fx-slider row has no row
+    // to carry its button.
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', htmlText.indexOf('id="' + id + '"'));
+    if (rowStart < 0 || htmlText.slice(rowStart, htmlText.indexOf('id="' + id + '"')).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
     if (Number(slider[1]) !== spec.min || Number(slider[2]) !== spec.max) {
       fail(`the slider ${id} must run from ${spec.min} to ${spec.max} (found ${slider[1]}..${slider[2]})`);
     }
@@ -1439,6 +1558,338 @@ function runHaloPresetCheck() {
     }
   }
   console.log(`[OK] HALO ring wired: preset ${haloIndex}, user camera + beat pulse + spectrum beams + ring-side lyrics + ${schema.size} knobs.`);
+}
+
+// The galactic black hole (preset 15): a real post-processing pass, the ported Kerr-Schild
+// kernel, and lyrics that stay inside the render target so the lens can actually bend them.
+function runBlackHolePresetCheck() {
+  logStep('Galactic black hole preset (post pass, ported kernel, lyric flight, knobs)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '19-galaxy-blackhole-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '12-blackhole-tuning.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/19-galaxy-blackhole-preset.js is missing; preset 15 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/12-blackhole-tuning.js is missing; the hole would have knobs without a store');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const index = Number((text.match(/BLACKHOLE_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 15) fail(`BLACKHOLE_PRESET_INDEX must be 15 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/19-galaxy-blackhole-preset.js'") < 0) {
+    fail('19-galaxy-blackhole-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/12-blackhole-tuning.js'") < 0) {
+    fail('12-blackhole-tuning.js must be listed in index-loader.js; without it the hole has no knobs');
+  }
+  if (!/银河黑洞/.test(archiveText) || !/GALACTIC BLACK HOLE/.test(archiveText)) {
+    fail('the black hole must be a labelled, selectable card');
+  }
+  // The pass: scene into a target, one quad out, and a fallback when it cannot run. A pass that
+  // renders the scene twice, or that draws nothing when it fails, cannot be shipped.
+  for (const [pattern, why] of [
+    [/new THREE\.WebGLRenderTarget\(/, 'the pass needs a render target to refract'],
+    [/setRenderTarget\(blackHoleState\.rt\)[\s\S]{0,2400}setRenderTarget\(null\)[\s\S]{0,800}renderer\.render\(blackHoleState\.quadScene/, 'the scene must go into the target and one quad must come out'],
+    [/getDrawingBufferSize\(/, 'the target has to follow the renderer drawing buffer, not the window'],
+    [/function bhDisposePass\(/, 'leaving the preset must give the GPU memory back'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if (!/renderBlackHoleFrame\(\)/.test(loopText) || !/if \(!lensFrameDone\) renderer\.render\(scene, camera\)/.test(loopText)) {
+    fail('the main loop must render through the lens and fall back to the plain render when it declines');
+  }
+  const atCamera = loopText.indexOf('blackHoleApplyCamera(dt)');
+  const atLayout = loopText.indexOf('updateStageLyrics3D(stageLyricsStepDt)');
+  if (atCamera < 0 || atLayout < 0 || atCamera > atLayout) {
+    fail('the fov knob must be written before the lyric layout measures the visible height');
+  }
+  const atFlight = loopText.indexOf('updateBlackHoleLyricFlight(dt)');
+  if (atFlight < 0 || atFlight < atLayout) {
+    fail('the flight must run after the app laid the lyric rows out');
+  }
+  if (!/applyBlackHolePresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the pass and leaving it must release it');
+  // The decisive ownership call: the lens can only bend what is inside its target, so the lyric
+  // layer must stay ON. Copying the ring's or the PV layer's "suppress everything" would make the
+  // text disappear from the pass silently.
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'blackhole-pass'/.test(ownerBlock)) fail('the pass must register as a takeover owner');
+  if (!/stageLyrics: true/.test(ownerBlock)) fail('the app straight lyric rows must be taken over by the arc layer');
+  if (!/particles: true/.test(ownerBlock)) fail('the preset must take the cover-particle field over: it paints its own barred-spiral galaxy');
+  if (!/scene\.add\(layer\);/.test(text) || !/bhLyrics\.layer = layer;/.test(text)) { fail('the orbit rows must be added to the scene the lens renders: text outside the render target cannot be bent by the lens'); }
+  // The ported kernel has to be in the shader, where it is actually evaluated.
+  const shader = text.slice(text.indexOf('var BH_PASS_FS'));
+  // The pass integrates a photon through the Schwarzschild field; the shadow is where that ray is
+  // captured, and the background is sampled along the direction the ray escaped in.
+  if (!/shadertoyFragment\(/.test(text)) fail('the pass must be written against the Shadertoy driver');
+  if (loaderText.indexOf("'js/modules/02-visual/20-shadertoy-driver.js'") < 0) fail('the Shadertoy driver must be loaded, or the pass cannot compile');
+  if (!/-1\.5 \* h2 \* pos \/ \(r2 \* r2 \* r\)/.test(shader)) fail('the march must integrate the Schwarzschild acceleration');
+  if (!/if \(r2 < 1\.0\) \{ captured = true; break; \}/.test(shader)) fail('a ray inside the horizon has to be captured');
+  if (!/abs\(side\) < halfThick/.test(shader)) fail('the disc has to be a volume: a plane crossing has no thickness to see through');
+  // The backdrop is blurred radially by a few pixels, not soft-focused: five taps along the
+  // direction from the hole, and the distant stars are four-point glints rather than dots.
+  if (!/vec2 away = uv - uCenter;/.test(shader)) fail('the backdrop blur has to be radial');
+  if (!/dir \* \(float\(i\) \* 0\.5 \* blurPx\)/.test(shader)) fail('the blur taps must be in pixels along that direction');
+  if (!/float glint = exp\(-ad\.x/.test(shader)) fail('distant stars need their four-point glint');
+  if (!/starField\(uv \+ bend, iTime\)/.test(shader)) fail('the star field has to be part of the backdrop');
+  if (/texel\.x \* r \* 2\.4/.test(shader)) fail('the isotropic soft focus must not come back: the subject stays sharp');
+  // The weight of the shot: the drift has to move the ray, the fog has to be a fractal sum that is
+  // band-limited by the step, and the debris has to live inside the disc (shards on the orbital
+  // lattice, dimmed by the fog), not as specks on the screen.
+  if (!/function bhCameraDrift\(/.test(text)) fail('the shot needs its slow camera drift');
+  if (!/\(1\.0 \+ uDolly \+ uJolt\.z\) \+ uShake/.test(shader)) fail('the drift, the dolly and the jolt must reach the ray');
+  // The jolt shakes everything through the sampled uv, and the beat raises its rate - never strikes it.
+  if (!/function bhShockJolt\(/.test(text) || !/function bhShockGain\(/.test(text)) {
+    fail('the jolt has to be its own three-axis function with the audio feeding its gain');
+  }
+  if (!/vec2 uv = fragCoord\.xy \/ iResolution\.xy \+ uJolt\.xy;/.test(shader)) {
+    fail('the jolt has to offset the uv every channel samples, or the disc slides out of its background');
+  }
+  if (!/var joltRate = bhClamp\(bhParam\('shockRate'\), 0\.3, 3\) \* \(1 \+ joltHeat \* 1\.2\);/.test(text)) {
+    fail('the beat has to speed the jolt up instead of punching it');
+  }
+  if (!/float discFbm\(float flow, float ringR, float rad, float lod\)/.test(shader)) fail('the disc fog has to be a fractal sum, not one hashed cell');
+  if (!/float a = flow \+ 1\.73 \* float\(i\) \+ 0\.37;/.test(shader)) fail('the fog octaves must not share a lattice, or the cloud is a grid');
+  if (!/if \(i == 3\) keep = 1\.0 - lod;/.test(shader)) fail('the finest octave has to be band-limited, or the disc moires at grazing angles');
+  if (!/vec3 sp = pos \+ vel \* \(dt \* \(jit - 0\.5\)\);/.test(shader)) fail('the slab sample has to be jittered, or the integration is regular');
+  if (!/float shear = 1\.8 \* wound \/ \(1\.0 \+ abs\(wound\)\);/.test(shader)) fail('the Keplerian shear has to be bounded, or the field winds into radial moire');
+  if (!/float doppler = 1\.0 - uSpin \* 0\.8 \* dot\(tangent, motion\);/.test(shader)) {
+    fail('the Doppler has to brighten the side whose material approaches the eye, not the receding one');
+  }
+  // Far rows are their own channel: not baked into the galaxy target (whose radial blur turned them
+  // into a smear), and only veiled - not erased - by the fog. The lens, though, is the backdrop's
+  // own: a row behind the hole has to appear where the picture behind the hole appears.
+  if (!/blackHoleState\.farRt = farRt;/.test(text)) fail('the far rows need their own render target');
+  if (!/iChannel2: \{ value: farRt\.texture \}/.test(text)) fail('the far rows must be bound as iChannel2');
+  if (!/texture2D\(iChannel2, lensUv\)/.test(shader)) {
+    fail('the far rows must be sampled through the same lensed coordinate as the backdrop');
+  }
+  if ((shader.match(/bend \* nearMask/g) || []).length !== 1) {
+    fail('there must be one inverse-bend coordinate, or the text and the picture can drift apart');
+  }
+  if (!/float farFade = skyMask \* mix\(0\.42, 1\.0, transmit\);/.test(shader)) {
+    fail('the fog may veil the far rows but must not erase them');
+  }
+  if (!/function bhLyricSideBlend\(/.test(text) || !/row\.nearAlpha = 1 - row\.sideBlend;/.test(text)) {
+    fail('the near/far hand-over has to be a depth blend, or crossing behind the hole pops');
+  }
+  if (!/var fadeWindow = Math\.max\(1\.2, Math\.max\(0\.1, params\.swallow\) \* 0\.34\);/.test(text)) {
+    fail('the falling row has to dissolve over a share of its fall, not in a fixed last breath');
+  }
+  // The far copy is pre-warped by the bend the pass is about to apply, less the share its own depth
+  // behind the hole pays for, and it is its own object so the near copy stays where the geometry is.
+  if (!/function bhLyricLensWeight\(/.test(text) || !/function bhLyricLensPull\(/.test(text)) {
+    fail('the far rows need the lens weight and the pass pull as their own functions');
+  }
+  if (!/var pre = Math\.min\(\(1 - weight\) \* pull, qlen \* 0\.9\);/.test(text)) {
+    fail('the far copy has to be pre-warped by (1-weight)*pull, and never carried through the hole centre');
+  }
+  if (!/bhLyrics\.layer\.add\(row\.farMesh\);/.test(text)) fail('the far copy has to be in the lyric layer');
+  if (!/row\.mesh\.visible = visible && side !== false;/.test(text) || !/row\.farMesh\.visible = side === false && visible;/.test(text)) {
+    fail('each pass has to draw exactly one copy of a row, or the text is drawn twice');
+  }
+  // A long line wraps into a taller block; one fitted line would be a two-pixel strip.
+  if (!/function bhWrapText\(/.test(text)) fail('a long lyric line has to wrap, not shrink off the screen');
+  if (!/row\.lineScale = bhClamp\(/.test(text)) fail('a wrapped row has to grow in height');
+  if (!/\(row\.lineScale \|\| 1\)/.test(text)) fail('the placement has to use the wrapped-row height');
+  if (!/float discFragment\(/.test(shader)) fail('the disc needs shards inside it, not screen-space specks');
+  if (!/if \(bestR > uDiscInner && bestR < uDiscOuter\)/.test(shader)) fail('the shards have to be looked up where the ray meets the disc');
+  if (!/bestTransmit/.test(shader)) fail('the shards have to be dimmed by the fog in front of them');
+  if (!/float warp = noise3\(vec3\(cos\(flow\), sin\(flow\)/.test(shader)) fail('the near fog needs its domain warp to look wispy');
+  if (/sampleSky\(uv, bend/.test(shader)) fail('the near-field galaxy must not take the far-field bend: it stretched the frame edges into radial streaks');
+  if (!/smoothstep\(0\.0, 0\.07, min\(min\(uv\.x, 1\.0 - uv\.x\)/.test(shader)) fail('the backdrop has to fade at the render target border');
+  if (!/float impact = max\(qlen, uShadowUv \* 0\.98\)/.test(shader)) fail('the star bend needs its impact parameter floored at the shadow');
+  if (!/\* skyMask;/.test(shader)) fail('the sky must go black inside the shadow');
+  if (/lensedUv - uv/.test(shader)) fail('bending the backdrop by the marched direction folds it once per quadrant');
+  if (!/2\.598076/.test(text)) fail('the shadow silhouette has to carry the critical impact parameter 3*sqrt(3)/2');
+  // Knobs: one row per schema entry, each in a .fx-slider row (that row is what carries the
+  // per-field reset button), and a console group that lists them all.
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(text))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 15) fail(`the hole knob schema must be complete (found ${schema.size})`);
+  for (const [key, spec] of schema) {
+    const id = 'fx-bh' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setBlackHoleTuning('${key}', this.value)`)) fail(`the slider ${id} must call setBlackHoleTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 银河黑洞 group`);
+  }
+  if (!/key: 'blackhole'/.test(consoleText) || !/title: '银河黑洞'/.test(consoleText)) {
+    fail('the visual console needs a 银河黑洞 group in the 动效 tab');
+  }
+  // The field is the preset's own, not the app's cover particles: a barred spiral with two arms
+  // inside the split and branch segments outside it, built as Points in the scene the lens
+  // renders, and centred on the hole's own world point so the lens and the galaxy share a centre.
+  for (const pattern of [
+    /function bhGalaxyArmOffsets\(/,
+    /function bhGalaxySegments\(/,
+    /new THREE\.Points\(bhGalaxyGeometry/,
+    /bhGalaxy\.group\.position\.set\(frame\.world\.x, frame\.world\.y, frame\.world\.z\)/,
+  ]) {
+    if (!pattern.test(text)) fail('the galaxy field is incomplete: ' + pattern);
+  }
+  if (!/particles: true/.test(text.slice(text.indexOf('registerVisualTakeoverOwner({')))) {
+    fail('the preset must take the cover-particle layers over: the field here is its own galaxy');
+  }
+  if (!/galaxy: bhGalaxyStatus\(\)/.test(text)) fail('blackHoleStatus() must report the field, or it cannot be read back live');
+  for (const pattern of [/function bhMarchRay\(/, /function bhSilhouette\(/, /uDiscInner/, /uDiscTilt/, /uSteps/]) {
+    if (!pattern.test(text)) fail('the marched black hole is incomplete: ' + pattern);
+  }
+  // The lyrics are objects on a circle in the accretion disc's plane: a line comes round from
+  // behind, waits at the point nearest the camera while it is sung, then spirals in. Rows on the
+  // near half are composited over the picture; rows on the far half are part of the scene, where
+  // the near-field lens and the disc fog own them.
+  for (const pattern of [
+    /function bhOrbitBasis\(/,
+    /function bhOrbitPoint\(/,
+    /function bhOrbitFrontAngle\(/,
+    /function bhLyricOrbitState\(/,
+    /function bhSetLyricSideVisibility\(/,
+    /function bhDrawRowCanvas\(/,
+    /new THREE\.CanvasTexture\(canvas\)/,
+    /new THREE\.MeshBasicMaterial\(/,
+    /function updateBlackHoleLyrics\(dt\)/,
+  ]) {
+    if (!pattern.test(text)) fail('the lyric orbit is incomplete: ' + pattern);
+  }
+  for (const key of ['lyricOrbit', 'lyricOrbitRate', 'lyricWind', 'discWisp']) {
+    if (!new RegExp(key + ': \\{ def: ').test(text)) fail('the lyric orbit / disc fog needs its own ' + key + ' knob');
+  }
+  if (!/bhLyricOrbitState\(/.test(text) || !/bhLyricExitStart\(/.test(text)) {
+    fail('the row position has to come from the orbit timing, not a local slide clock');
+  }
+  if (!/phase: 'wait'/.test(text)) fail('a line has to wait off the front until its turn');
+  if (!/var approachBegin = Math\.max\(arriveAt - flyIn, prev \+ gap\)/.test(text)) {
+    fail('the next line must not start easing in before the previous has begun to leave');
+  }
+  if (!/var smooth = ease \* ease \* \(3 - 2 \* ease\)/.test(text)) fail('the approach has to decelerate into the front');
+  if (!/row\.sideBlend = nearHole \? 0 : bhLyricSideBlend\(alongRow, depth, sideBand\);/.test(text)
+    || !/row\.farAlpha = row\.sideBlend;/.test(text)) {
+    fail('each row has to be split by its depth, as a blend rather than a one-frame flag');
+  }
+  if (!/bhSetLyricSideVisibility\(true\) > 0/.test(text) || !/bhSetLyricSideVisibility\(false\) > 0/.test(text)) {
+    fail('the renderer must split the near and far rows between the two targets');
+  }
+  if (!/function bhOrbitPanel\(/.test(text) || !/var panel = bhOrbitPanel\(basis, angle\)/.test(text)) {
+    fail('each row must stand on the ring facing outward, not be billboarded');
+  }
+  if (!/row\.mesh\.quaternion\.set\(quat\.x, quat\.y, quat\.z, quat\.w\)/.test(text)) {
+    fail('the panel rotation has to reach the mesh');
+  }
+  if (!/lyrics: bhLyricStatus\(\)/.test(text)) fail('blackHoleStatus() must report the lyric rows too');
+  // The near-field lens: scene content around the hole is sampled back through the bend, so what
+  // is behind the hole shows up around the rim. The near rows are pasted straight over the picture
+  // because they are between the eye and the hole.
+  if (!/uTextLens/.test(text)) fail('the near-field lens amount has to reach the shader');
+  if (!/renderer\.setRenderTarget\(blackHoleState\.textRt\)/.test(text)) fail('the near rows must render into their own target');
+  if (!/iChannel1: \{ value: textRt\.texture \}/.test(text)) fail('the near-row target must be bound as iChannel1 of the pass');
+  if (!/texture2D\(iChannel1, uv\)/.test(text)) fail('the near rows must be sampled at their own screen position');
+  if (!/color = color \* \(1\.0 - text\.a\) \+ text\.rgb;/.test(text)) fail('the near rows must be composited inside the pass, over the shadow');
+  if (!/float nearMask = 1\.0 - smoothstep\(uShadowUv \* 1\.05, uShadowUv \* 2\.6, qlen\);/.test(text)) {
+    fail('the scene lens must be local to the strong-field zone');
+  }
+  if (!/vec2 lensUv = clamp\(uv - bend \* nearMask \* clamp\(uTextLens, 0\.0, 1\.0\), 0\.0, 1\.0\);/.test(text)) {
+    fail('the scene must be sampled through the inverse bend, or nothing behind the hole appears at the rim');
+  }
+  if (!/sampleSky\(lensUv, uSoft\)/.test(text)) fail('the scene sample must use the lensed coordinate');
+  // The disc is a volume sampled in 3D along the march, not hashed cells in (angle, radius), and its
+  // density is a fractal sum around the orbit rather than one noise octave.
+  for (const pattern of [
+    /float hash13\(vec3/,
+    /float noise3\(vec3/,
+    /float discFbm\(float flow, float ringR, float rad, float lod\)/,
+    /vec2 ring = vec2\(cos\(a\), sin\(a\)\) \* \(ringR \* f\);/,
+    /float base = discFbm\(flow \+ warp \* 0\.9, 2\.6 \* rJ, radCoord \+ warp \* 0\.6, lod\);/,
+    /float radCoord = rJ \* 3\.0 \+ sideJ \* 7\.0;/,
+  ]) {
+    if (!pattern.test(text)) fail('the disc fog is incomplete: ' + pattern);
+  }
+  if (!/float fog = mix\(1\.0, 0\.04 \+ 2\.6 \* field, clamp\(uWisp, 0\.0, 2\.0\) \* 0\.7\);/.test(text)) {
+    fail('the wisp amount must reach the disc density');
+  }
+  if (/float fbm3\(vec3/.test(text)) fail('the three-octave lattice fbm is not the field any more');
+  if (!/if \(u\.uWisp\) u\.uWisp\.value = bhClamp\(bhParam\('discWisp'\), 0, 2\);/.test(text)) {
+    fail('the discWisp knob must be written to the shader every frame');
+  }
+  if (/float grain = mix\(0\.25, 1\.75/.test(text)) fail('the old hashed-cell grain must be gone: it drew stretched dots, not fog');
+  if (!/function bhSwallowAlpha\(/.test(text)) fail('being swallowed has to come from the row, not from the shadow');
+  // The lyric rows are arches of the orbit and inspiral physically: the curvature is the hole's
+  // radius, the fall is Keplerian and the row lives until the horizon.
+  if (!/function bhRowBend\(/.test(text) || !/function bhBendRowGlyphs\(/.test(text)) {
+    fail('the lyric rows have to be bent into the orbit, not flat billboards');
+  }
+  if (!/var geometry = bhBuildGlyphGeometry\(BH_MAX_ROW_GLYPHS\);/.test(text)) fail('a row has to be one quad per glyph, not one plane for the whole line');
+  if (!/row\.glyphs = glyphs\.slice\(0, BH_MAX_ROW_GLYPHS\);/.test(text)) fail('the canvas has to record where every glyph sits');
+  if (!/bhBendRowGlyphs\(row, worldW, radius, params\.drift, state\.phase === 'fall' \? state\.fall : 0, time\);/.test(text)) {
+    fail('the placement must bend each row to its own radius and drift its glyphs');
+  }
+  if (!/function bhLyricArcWidth\(/.test(text)) fail('the lyric has to be stretched along the orbit as it falls');
+  if (!/worldW = bhLyricArcWidth\(worldW, radius, params\.orbit\);/.test(text)) fail('the placement must use the tidal width, not shrink the row');
+  if (!/function bhLyricMass\(/.test(text)) fail('a line has to carry its own mass, or every fall is the same gravity');
+  if (!/bhSwallowAlpha\(radius, horizonWorld\)/.test(text)) fail('the row has to live until the horizon, not fade at the shadow');
+  if (!/lyricRows: \{ def: 24, min: 9, max: 48/.test(text)) fail('the lyric row cap has to be a knob: fast songs outrun a fixed window');
+  if (!/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(text)) fail('the row pool has to be built from the lyricRows knob');
+  if (!/function bhLyricWindowRange\(/.test(text)) fail('the window has to be derived from the pool size, not hard-coded');
+  // The sign is displayed 2-3x its layout size; rasterising at the layout size is what blurred it.
+  if (!/var superSample = 2\.5;/.test(text)) fail('the lyric canvas has to be supersampled above its display size');
+  if (!/row\.textureScale = superSample;/.test(text)) fail('the row has to report its supersample factor');
+  // A falling row stops at the rim (the shadow's edge) and turns there; inside the black disk there
+  // is nothing to see, and the near/far hand-over flickers where depth stops meaning anything.
+  if (!/var rim = bhClamp\(Number\(params\.rim\) \|\| 0, 0, 1\);/.test(text)) fail('the fall needs its rim');
+  if (!/params\.rim = bhClamp\(rimWorld \/ Math\.max\(1e-4, params\.orbit\), 0\.01, 1\);/.test(text)) {
+    fail('the rim has to come from the shadow edge in the frame');
+  }
+  if (!/var rho = Math\.max\(rim, rawRho\);/.test(text)) fail('the row must not keep sinking past the rim');
+  if (!/var RIM_RISE = 1;/.test(text)) fail('the fall has to spiral the whole way to the rim, not park there for a third of it');
+  if (!/params\.orbit = bhClamp\(params\.orbit \* depth, 0\.4, depth \* 0\.78\);/.test(text)) {
+    fail('the orbit has to be a fraction of the camera distance, or the ring hugs the hole up close and swallows the frame far away');
+  }
+  if (!/var frontShare = Math\.pow\(Math\.max\(0\.15, \(depth - params\.orbit\)/.test(text)
+    || !/worldH = Math\.max\(worldH, 0\.0008 \* bhClamp\(bhParam\('lyricSpeck'\)/.test(text)) {
+    fail('the sign has to shrink with the front of the bigger ring, and the far half has to bottom out at a speck');
+  }
+  if (!/frontShare \* bhClamp\(bhParam\('lyricSize'\), 0\.4, 2\.5\)/.test(text)) {
+    fail('the lyric size knob has to reach the world height');
+  }
+  if (!/starField\(uv \+ bend, iTime\) \* 0\.85 \* uSkyStars/.test(shader)) fail('the star density knob has to reach the star field, or it is another dial that does nothing');
+  if (!/var nearHole = radius <= shadowWorld \* 1\.8;/.test(text)) fail('rows at the rim must not blend the two channels');
+  if (!/bhClamp\(\(Number\(state\.left\) \|\| 0\) \/ fadeWindow, 0, 1\)/.test(text)) fail('the row has to fade on the fall clock at the rim');
+  // The inner band turns faster than the outer one: a rigid turn reads as a record, not a disc.
+  if (!/rate: 1\.0, maxRadius: 0\.55/.test(text) || !/rate: 0\.55, maxRadius: 1\.01/.test(text)) {
+    fail('the field needs two bands at different angular rates, or it turns rigidly');
+  }
+  if (!/band\.rotation -= \(Number\(dt\) \|\| 0\) \* spin \* band\.rate/.test(text)) {
+    fail('each band must advance by its own rate');
+  }
+  if (!/new THREE\.PointsMaterial\(/.test(text)) {
+    fail('the field must use PointsMaterial: a custom Points shader drew but never reached the framebuffer on this three build');
+  }
+  if (!/mineradio-blackhole-tuning-v1/.test(tuningText) || !/function bindBlackHoleTuningResetButtons\(/.test(tuningText)) {
+    fail('the hole knobs need their own store and one reset button per row');
+  }
+  const testFile = path.join(appRoot, 'tests', 'blackhole-lens.test.js');
+  if (!fs.existsSync(testFile)) fail('tests/blackhole-lens.test.js is missing; the lens and the flight would only be checked by eye');
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`the black hole lens regression failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(result.stdout || '');
+  console.log(`[OK] Galactic black hole wired: preset ${index}, scene->target->quad lens, ${schema.size} knobs, lyric flight from the sides.`);
 }
 
 function runVisualTakeoverMaskCheck() {
@@ -4744,10 +5195,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 14/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 15/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -7117,6 +7568,8 @@ async function main() {
   runBuiltInPlaylistRegressionCheck();
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
+  runLyricParseFormatsCheck();
+  runRenderSleepStaleCheck();
   runJizuraVendorCheck();
   runPvPlannerCheck();
   runPvPipelineCheck();
@@ -7125,6 +7578,7 @@ async function main() {
   runPvPresetCheck();
   runBeatTempoCeilingCheck();
   runHaloPresetCheck();
+  runBlackHolePresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

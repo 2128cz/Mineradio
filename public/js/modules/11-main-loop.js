@@ -295,6 +295,7 @@ function targetMainDesktopOverlayFps(now) {
   }
   return 6;
 }
+var mainLoopSleepLogged = false;
 function animate() {
   mainLoopAnimationRequested = false;
   scheduleNextMainLoopFrame();
@@ -304,12 +305,24 @@ function animate() {
   var perfProbe = window.__mineradioPerf;
   var framePerfStart = performance.now();
   var now = performance.now();
+  // Before the sleep branch: frames that are actually being presented disprove a stale "hidden"
+  // flag, and believing it costs a black frozen picture that no preset switch recovers from.
+  if (typeof notePresentedFrame === 'function') notePresentedFrame(now, prevTime);
   if (mainLoopDeepBackgroundSleeping()) {
+    // One line per park, naming the state that caused it: a frozen picture with nothing in the log
+    // is what made the last report impossible to attribute.
+    if (!mainLoopSleepLogged) {
+      mainLoopSleepLogged = true;
+      try {
+        console.info('[RenderPower] loop parked: ' + JSON.stringify(desktopRuntimeState));
+      } catch (e) {}
+    }
     var deepDt = Math.min((now - prevTime) / 1000, 0.25);
     prevTime = now;
     tickDeepBackgroundFrame(now, deepDt);
     return;
   }
+  mainLoopSleepLogged = false;
   if (shouldSkipAdaptiveRenderFrame(now)) return;
   var dt = Math.min((now - prevTime) / 1000, 0.05);
   prevTime = now;
@@ -629,6 +642,9 @@ function animate() {
   updateFreeCamera(dt);
   updateCamera();
   applySkullCameraPose(dt);
+  // The black hole's frustum knob has to be on the camera before the lyric layout measures the
+  // visible height, or the stage scales for one fov and renders at another.
+  if (typeof blackHoleApplyCamera === 'function') blackHoleApplyCamera(dt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('camera.update', cameraPerfStart);
 
   // v7.2 旋转 = 头部+眼球追踪 + 鼠标/手势拖动 + 惯性
@@ -686,6 +702,10 @@ function animate() {
   var stageLyricsPerfStart = performance.now();
   var stageLyricsStepDt = consumeFrameGate(mainFrameGates.stageLyrics, now, dt, targetMainStageLyricsFps(now), false, 'stage-lyrics');
   if (stageLyricsStepDt > 0 && !takeoverMask.suppress.stageLyrics) updateStageLyrics3D(stageLyricsStepDt);
+  // Rows are displaced after the app has laid them out, every frame, so the flight into the hole
+  // stays smooth even when the lyric layout itself is running on a lower gate.
+  if (typeof updateBlackHoleLyricFlight === 'function') updateBlackHoleLyricFlight(dt);
+  if (typeof updateBlackHoleLyrics === 'function') updateBlackHoleLyrics(dt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('visual.stage-lyrics', stageLyricsPerfStart);
   var desktopOverlayPerfStart = performance.now();
   var desktopOverlayStepDt = consumeFrameGate(mainFrameGates.desktopOverlay, now, dt, targetMainDesktopOverlayFps(now), false, 'desktop-overlay');
@@ -700,7 +720,12 @@ function animate() {
   }
 
   var rendererPerfStart = performance.now();
-  renderer.render(scene, camera);
+  // The black hole renders the scene into its own target and refracts it back; anything it cannot
+  // do (no target yet, the hole dragged behind the eye) falls back to the plain render, so a
+  // broken pass can never leave the screen blank.
+  var lensFrameDone = false;
+  if (typeof renderBlackHoleFrame === 'function') lensFrameDone = renderBlackHoleFrame();
+  if (!lensFrameDone) renderer.render(scene, camera);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('renderer.render', rendererPerfStart);
   var frameCostMs = performance.now() - framePerfStart;
   if (typeof sampleAdaptiveFrameCost === 'function') {

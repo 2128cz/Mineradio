@@ -102,6 +102,28 @@ function toggleHaloTuning(key) {
   return setHaloTuning(key, haloTuning[key] > 0 ? 0 : 1);
 }
 
+// One knob back to its own default, from the round button the row carries. The app's other
+// sliders get this button from ensureFxSliderResetButton, which reads fxDefaults; these knobs
+// live in their own store, so the row's button is wired to the schema default instead.
+function resetHaloTuningValue(id, key, btn) {
+  var spec = HALO_TUNING_SCHEMA[key];
+  if (!spec) return false;
+  var ok = setHaloTuning(key, spec.def);
+  if (!ok) return false;
+  if (typeof animateFxResetButton === 'function') animateFxResetButton(btn);
+  if (typeof showToast === 'function') showToast('已恢复默认数值');
+  return true;
+}
+
+function bindHaloTuningResetButtons() {
+  if (typeof ensureFxSliderResetButton !== 'function') return;
+  Object.keys(HALO_TUNING_SCHEMA).forEach(function (key) {
+    // A switch resets by being flipped back, so only the sliders carry the round button.
+    if (HALO_TUNING_SCHEMA[key].kind === 'bool') return;
+    ensureFxSliderResetButton('fx-halo' + key, key, resetHaloTuningValue);
+  });
+}
+
 // The camera belongs to the user, so it has its own way back: dragging and zooming the ring
 // is not a knob, and "reset the knobs" must not move the view out from under them.
 function resetHaloCamera() {
@@ -123,5 +145,10 @@ function resetHaloTuning() {
   return true;
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', haloTuningSyncInputs);
-else haloTuningSyncInputs();
+function initHaloTuningControls() {
+  bindHaloTuningResetButtons();
+  haloTuningSyncInputs();
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initHaloTuningControls);
+else initHaloTuningControls();
