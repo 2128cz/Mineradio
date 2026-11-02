@@ -1646,8 +1646,8 @@ function runBlackHolePresetCheck() {
   if (!/vec2 uv = fragCoord\.xy \/ iResolution\.xy \+ uJolt\.xy;/.test(shader)) {
     fail('the jolt has to offset the uv every channel samples, or the disc slides out of its background');
   }
-  if (!/var joltRate = bhClamp\(bhParam\('shockRate'\), 0\.3, 3\) \* \(1 \+ joltHeat \* 1\.2\);/.test(text)) {
-    fail('the beat has to speed the jolt up instead of punching it');
+  if (!/blackHoleState\.shockKickAt = blackHoleFlight\.time;/.test(text)) {
+    fail('a beat has to fire a kick the camera can feel, not just raise a rate');
   }
   if (!/float discFbm\(float flow, float ringR, float rad, float lod\)/.test(shader)) fail('the disc fog has to be a fractal sum, not one hashed cell');
   if (!/float a = flow \+ 1\.73 \* float\(i\) \+ 0\.37;/.test(shader)) fail('the fog octaves must not share a lattice, or the cloud is a grid');
