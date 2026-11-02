@@ -1648,4 +1648,63 @@ function load(overrides) {
   console.log('shader: Schwarzschild march, disc crossing, lensed background sample, Shadertoy driver');
 }
 
+// ------------------------------------------- the sign's text is the console's lyric tab
+{
+  // Font: the stack is the console's lyric-font choice; the tuned fallback only survives where
+  // the font module is absent (this harness).
+  const fontBox = load({ fx: { preset: 15, lyricFont: 'stone-song' }, lyricFontStackForKey: function (key) { return 'Stub ' + key; } });
+  assert(fontBox.bhLyricFontStack() === 'Stub stone-song', 'the font must be the console stack: ' + fontBox.bhLyricFontStack());
+  const plain = load({ fx: { preset: 15 } });
+  assert(/JetBrains Mono/.test(plain.bhLyricFontStack()), 'without the font module the tuned fallback stays');
+
+  // Clarity: the console's 1..4 tier lifts the raster from the tuned 2.5x baseline, never below.
+  assert(plain.bhLyricSuperSample() === 2.5, 'default clarity keeps the tuned 2.5x: ' + plain.bhLyricSuperSample());
+  const sharp = load({ fx: { preset: 15, lyricTextureClarity: 4 } });
+  assert(sharp.bhLyricSuperSample() === 4, 'max clarity rasters at 4x: ' + sharp.bhLyricSuperSample());
+  const mid = load({ fx: { preset: 15, lyricTextureClarity: 2 } });
+  assert(mid.bhLyricSuperSample() === 3, 'tier 2 is 3x: ' + mid.bhLyricSuperSample());
+
+  // Translation: the console's mode, scale and gap reach the sign.
+  const off = load({ fx: { preset: 15, lyricTranslationMode: 'off' } });
+  assert(off.bhLyricTranslationShown() === false, 'translation off hides the sub line');
+  const on = load({ fx: { preset: 15, lyricTranslationMode: 'current' } });
+  assert(on.bhLyricTranslationShown() === true, 'any non-off mode shows it');
+  assert(plain.bhLyricTranslationShown() === true, 'the harness default keeps the tuned display');
+  const scaled = load({ fx: { preset: 15, lyricTranslationScale: 1.12, lyricTranslationGap: 2.2 } });
+  assert(scaled.bhLyricTranslationScaleFactor() === 1.12, 'the translation scale passes through');
+  assert(scaled.bhLyricTranslationGapPx(100) > 0, 'a wider gap adds space: ' + scaled.bhLyricTranslationGapPx(100));
+  assert(plain.bhLyricTranslationGapPx(100) === 0, 'the console default gap keeps the tuned layout');
+
+  // The style key drives the live-row redraw: any console knob moves it, so a change rasterises
+  // on the next frame instead of waiting for the highlight to move.
+  const baseKey = plain.bhLyricStyleKey();
+  plain.fx.lyricLineHeight = 1.5;
+  assert(plain.bhLyricStyleKey() !== baseKey, 'line height moves the style key');
+  plain.fx.lyricLineHeight = 1;
+  plain.fx.lyricScale = 1.4;
+  assert(plain.bhLyricStyleKey() !== baseKey, 'the lyric size moves it too');
+  plain.fx.lyricScale = 1;
+  assert(plain.bhLyricStyleKey() === baseKey, 'and back at the same settings the key settles');
+
+  // The switch is honoured at raster time even for items that still carry their translation.
+  function rasterProbe(box) {
+    const drawn = [];
+    const ctx = {
+      font: '', textAlign: '', textBaseline: '', fillStyle: '',
+      measureText: function (s) { return { width: String(s).length * 10 }; },
+      clearRect: function () {},
+      fillText: function (t) { drawn.push(String(t)); }
+    };
+    const row = { canvas: { width: 8, height: 8, getContext: function () { return ctx; } }, ctx: ctx };
+    box.bhDrawRowCanvas(row, { text: 'hello', sub: 'ola' }, true, box.bhLyricPaletteState(), { floatAmp: 0.4, enter: 0.28 });
+    return { row: row, drawn: drawn };
+  }
+  const shownProbe = rasterProbe(on);
+  assert(shownProbe.drawn.indexOf('ola') >= 0, 'the translation is drawn when the mode is on: ' + shownProbe.drawn.join('/'));
+  const hiddenProbe = rasterProbe(off);
+  assert(hiddenProbe.drawn.indexOf('ola') < 0, 'the same item draws no translation when the mode is off: ' + hiddenProbe.drawn.join('/'));
+  assert(hiddenProbe.row.drawStyle !== shownProbe.row.drawStyle, 'and the two states carry different style keys');
+  console.log('lyric tab: font, clarity, line height, translation mode/scale/gap wired into the sign');
+}
+
 console.log('[OK] The galactic black hole: ported kernel, a real scene->target->quad pass with a fallback, and knobs wired.');

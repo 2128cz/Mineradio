@@ -1844,7 +1844,28 @@ function runBlackHolePresetCheck() {
   if (!/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(text)) fail('the row pool has to be built from the lyricRows knob');
   if (!/function bhLyricWindowRange\(/.test(text)) fail('the window has to be derived from the pool size, not hard-coded');
   // The sign is displayed 2-3x its layout size; rasterising at the layout size is what blurred it.
-  if (!/var superSample = 2\.5;/.test(text)) fail('the lyric canvas has to be supersampled above its display size');
+  // The multiple is the console's 歌词清晰度 tier now, so the guard pins the wiring, not a number.
+  if (!/var superSample = bhLyricSuperSample\(\);/.test(text)) fail('the lyric canvas supersample has to follow the console clarity tier');
+  if (!/function bhLyricSuperSample\(/.test(text) || !/lyricTextureClarityScale/.test(text)) {
+    fail('bhLyricSuperSample must read the app clarity tier');
+  }
+  // The sign's text settings are the console's lyric tab: font, line height and the translation
+  // band all read fx, and a style key makes a console change rasterise on the next frame.
+  for (const [pattern, why] of [
+    [/function bhLyricFontStack\(/, 'the font has to come from the console lyric font'],
+    [/lyricFontStackForKey/, 'bhLyricFontStack must read the app font-stack resolver'],
+    [/function bhLyricLineHeightFactor\(/, 'the line box has to follow the console line height'],
+    [/fx\.lyricLineHeight/, 'bhLyricLineHeightFactor must read fx.lyricLineHeight'],
+    [/function bhLyricTranslationShown\(/, 'the translation switch has to come from the console'],
+    [/lyricTranslationLayoutActive/, 'bhLyricTranslationShown must read the app translation-mode helper'],
+    [/bhLyricTranslationScaleFactor\(\)/, 'the sub line size has to follow the console translation scale'],
+    [/bhLyricTranslationOpacityFactor\(\)/, 'the sub line alpha has to follow the console translation opacity'],
+    [/bhLyricTranslationGapPx\(fontPx\)/, 'the sub line gap has to follow the console translation gap'],
+    [/row\.drawStyle = bhLyricStyleKey\(\);/, 'a drawn row has to record the style it was rasterised with'],
+    [/row\.sung !== current \|\| row\.drawStyle !== styleKey/, 'a console change must redraw the live rows next frame'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
   if (!/row\.textureScale = superSample;/.test(text)) fail('the row has to report its supersample factor');
   // A falling row stops at the rim (the shadow's edge) and turns there; inside the black disk there
   // is nothing to see, and the near/far hand-over flickers where depth stops meaning anything.
