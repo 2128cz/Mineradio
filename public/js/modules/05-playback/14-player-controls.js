@@ -550,7 +550,17 @@ async function togglePlay() {
       return;
     }
     if ((!audio || !audio.src) && currentLocalSong && (currentLocalSong.localMissing || !currentLocalSong.localUrl)) {
+      if (await tryHotkeyBootstrapPlayback()) {
+        showToast('上次播放的是本地文件，已改为播放每日推荐');
+        return;
+      }
       showToast('上次播放的是本地文件，请重新导入后继续');
+      return;
+    }
+    if ((!audio || audio.paused || audio.ended) && (!playQueue.length || currentIdx < 0 || !playQueue[currentIdx])) {
+      if (await tryHotkeyBootstrapPlayback()) return;
+      if (!audio) return;
+      if (!hasAnyPlatformLogin()) showToast('请先登录音乐平台账号，之后即可快捷键播放');
       return;
     }
     if (!audio) return;

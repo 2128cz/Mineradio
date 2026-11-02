@@ -7073,6 +7073,32 @@ function runGlobalHotkeyRoundTripCheck() {
   if (/MINERADIO_KEEP_BACKGROUND_RENDERING/.test(mainText)) {
     fail('background rendering is no longer an opt-in; MINERADIO_THROTTLE_WHEN_HIDDEN=1 is the only measurement switch');
   }
+  // A hotkey press after boot must be able to start playback on its own, with no queue to
+  // resume: the play key bootstraps from the daily recommendations instead of dying silently.
+  const coldStartTestFile = path.join(appRoot, 'tests', 'hotkey-coldstart-playback.test.js');
+  if (!fs.existsSync(coldStartTestFile)) {
+    fail('tests/hotkey-coldstart-playback.test.js is missing; the cold-start play key would dead-end again');
+  }
+  const coldStartTest = spawnSync(process.execPath, ['--test', coldStartTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (coldStartTest.status !== 0) {
+    process.stdout.write(coldStartTest.stdout || '');
+    process.stderr.write(coldStartTest.stderr || '');
+    fail(`cold-start hotkey playback regression failed: ${rel(coldStartTestFile)}`);
+  }
+  process.stdout.write(coldStartTest.stdout || '');
+  const autoplayText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '09-queue-snapshot-autoplay.js'), 'utf8');
+  const bootstrapBody = autoplayText.slice(autoplayText.indexOf('function tryHotkeyBootstrapPlayback'));
+  if (!bootstrapBody || bootstrapBody.indexOf('hasAnyPlatformLogin') < 0) {
+    fail('tryHotkeyBootstrapPlayback must build playback from the daily recommendations when nothing can be resumed');
+  }
+  if (bootstrapBody.indexOf('startupAutoplayPreference') >= 0) {
+    fail('the hotkey bootstrap must not wait on the startup-autoplay preference; the key press IS the user consent');
+  }
+  const controlsText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '14-player-controls.js'), 'utf8');
+  const toggleBody = controlsText.slice(controlsText.indexOf('async function togglePlay()'), controlsText.indexOf('function setPlayIcon'));
+  if ((toggleBody.match(/tryHotkeyBootstrapPlayback\(\)/g) || []).length < 2) {
+    fail('togglePlay must bootstrap playback for both the missing-local and the empty-queue cold starts');
+  }
   console.log('[OK] hotkey delivery is witnessed end to end, and Chromium backgrounding stays off by default.');
 }
 
