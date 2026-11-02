@@ -78,8 +78,14 @@ function load(options) {
     playToggleBusy: false,
     playMode: 'loop',
     document: {
-      getElementById: (id) => (id === 'play-icon' ? { innerHTML: '' } : null)
-    }
+      getElementById: (id) => (id === 'play-icon' ? { innerHTML: '' } : null),
+      body: {
+        classList: {
+          contains: (name) => opts.splashActive === true && name === 'splash-active'
+        }
+      }
+    },
+    dismissSplash: (o) => calls.push('dismissSplash:' + ((o && o.reason) || ''))
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -152,4 +158,24 @@ test('logged in but the recommendation list came back empty: decline quietly for
   await box.sandbox.togglePlay();
   assert.equal(box.calls.includes('loadHomeDiscover'), true);
   assert.equal(box.calls.some((c) => c.startsWith('playQueueAt')), false, 'nothing to queue');
+});
+
+test('a play key on the splash screen enters the app instead of starting music behind it', async () => {
+  const box = load({ queue: [], idx: -1, splashActive: true });
+  await box.sandbox.togglePlay();
+  assert.equal(box.calls.includes('dismissSplash:play-key'), true, 'the splash must be dismissed by the play key');
+  assert.equal(box.calls.includes('playQueueAt:0:manual'), true, 'and playback must start in the same press');
+  const dismissAt = box.calls.indexOf('dismissSplash:play-key');
+  const playAt = box.calls.indexOf('playQueueAt:0:manual');
+  assert.equal(dismissAt < playAt, true, 'enter first, then play');
+});
+
+test('a pause key on the splash screen never dismisses it', async () => {
+  const box = load({
+    queue: [makeSong(1)], idx: 0, playing: true, splashActive: true,
+    audio: { src: 'mock://track-0', paused: false, ended: false, __mineradioQueueItemKey: 'song:rec-1' }
+  });
+  await box.sandbox.togglePlay();
+  assert.equal(box.calls.includes('fadeOutPause'), true);
+  assert.equal(box.calls.some((c) => c.startsWith('dismissSplash')), false, 'pausing must not reveal the app');
 });

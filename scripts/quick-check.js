@@ -7099,6 +7099,9 @@ function runGlobalHotkeyRoundTripCheck() {
   if ((toggleBody.match(/tryHotkeyBootstrapPlayback\(\)/g) || []).length < 2) {
     fail('togglePlay must bootstrap playback for both the missing-local and the empty-queue cold starts');
   }
+  if (toggleBody.indexOf('dismissSplash') < 0) {
+    fail('a play key arrives over IPC, not as a page keydown - togglePlay must dismiss the splash itself when it starts playback');
+  }
   console.log('[OK] hotkey delivery is witnessed end to end, and Chromium backgrounding stays off by default.');
 }
 

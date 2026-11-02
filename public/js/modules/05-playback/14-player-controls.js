@@ -541,6 +541,11 @@ async function togglePlay() {
   playToggleBusy = true;
   try {
     forcePlaybackControlsInteractive();
+    // 全局快捷键与媒体键走 IPC 送达，不产生页面按键，启动页不会自己退场；
+    // 只要这一次按键是要开始播放，就替用户按下「点击进入」。
+    if (document.body.classList.contains('splash-active') && (!audio || !audio.src || audio.paused || audio.ended)) {
+      dismissSplash({ reason: 'play-key' });
+    }
     if ((!audio || !audio.src) && playQueue.length && currentIdx >= 0) {
       await playQueueAt(currentIdx, { manual: true });
       return;
