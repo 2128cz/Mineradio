@@ -888,9 +888,15 @@ function bhSyncLens(frame) {
     var joltEnergy = (typeof audioEnergy !== 'undefined') ? Number(audioEnergy) || 0 : 0;
     var joltHeat = (typeof beatPulse !== 'undefined') ? Number(beatPulse) || 0 : 0;
     var joltGain = bhShockGain(frame.uvShadow, joltEnergy, joltHeat, bhParam('shock'), bhParam('shockAudio'));
-    var joltRate = bhClamp(bhParam('shockRate'), 0.3, 3) * (1 + joltHeat * 1.2);
-    var jolt = bhShockJolt(blackHoleFlight.time, joltGain, joltRate);
-    u.uJolt.value.set(jolt.x, jolt.y, jolt.z);
+    var joltRate = bhClamp(bhParam('shockRate'), 0.3, 3);
+    // The beat fires a kick instead of raising a hum: one timestamp per rise, then a decaying
+    // chirp. The continuous base stays tiny so a quiet song is still.
+    if (joltHeat > 0.55 && !(blackHoleState.shockHot || false)) blackHoleState.shockKickAt = blackHoleFlight.time;
+    blackHoleState.shockHot = joltHeat > 0.55;
+    var kickAge = blackHoleState.shockKickAt === undefined ? 99 : blackHoleFlight.time - blackHoleState.shockKickAt;
+    var kick = bhShockKick(kickAge, joltGain * 2.6 * bhClamp(bhParam('shockAudio'), 0, 2), joltRate);
+    var base = bhShockJolt(blackHoleFlight.time, joltGain * 0.35, joltRate);
+    u.uJolt.value.set(base.x + kick.x, base.y + kick.y, base.z + kick.z);
   }
   if (u.uCenter) u.uCenter.value.set(frame.uv ? frame.uv.u : 0.5, frame.uv ? frame.uv.v : 0.5);
   u.uDiscTilt.value = bhClamp(bhParam('discTilt'), -60, 60) * Math.PI / 180;
@@ -1822,6 +1828,23 @@ function bhShockGain(uvShadow, energy, heat, amount, audio) {
 
 // Three axes of fast, incommensurable wobble. The beat does not strike the camera: it raises the
 // rate, so the same shake comes at you faster while the music is hot.
+// A beat is a jolt, not a faster hum: the camera is knocked, the wobble starts fast and big and
+// decays into a slow, small sway within a few tenths of a second. The phase is the integral of a
+// frequency that falls exponentially, so the shake audibly 'slows down' as it dies.
+function bhShockKick(age, gain, rate) {
+  var a = Math.max(0, Number(age) || 0);
+  var g = Math.max(0, Number(gain) || 0) * Math.exp(-a / 0.16);
+  var fSlow = Math.max(0.2, Number(rate) || 1) * 2.2;
+  var fFast = fSlow * 3.4;
+  var tau = 0.11;
+  var phase = fSlow * a + (fFast - fSlow) * tau * (1 - Math.exp(-a / tau));
+  return {
+    x: g * Math.sin(phase * 6.28318) * 0.75,
+    y: g * Math.sin(phase * 6.28318 * 1.31 + 1.7) * 0.75,
+    z: g * Math.sin(phase * 6.28318 * 0.83 + 3.1) * 0.45
+  };
+}
+
 function bhShockJolt(time, gain, rate) {
   var t = Number(time) || 0;
   var f = Math.max(0.2, Number(rate) || 1) * 4.2;

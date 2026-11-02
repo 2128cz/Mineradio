@@ -304,10 +304,31 @@ function load(overrides) {
     const still = sandbox.bhShockJolt(1.0, 0, 1);
     assert(still.x === 0 && still.y === 0 && still.z === 0, 'no gain means the frame is still');
   }
-  // The beat has to reach the rate through the frame wiring, not only through the pure function.
-  assert(/var joltRate = bhClamp\(bhParam\('shockRate'\), 0\.3, 3\) \* \(1 \+ joltHeat \* 1\.2\);/.test(source),
-    'the frame has to hand the beat-driven rate to the jolt');
-  assert(/u\.uJolt\.value\.set\(jolt\.x, jolt\.y, jolt\.z\);/.test(source), 'and write all three axes to the shader');
+  // A beat is a knocked camera, not a faster hum: big and fast at the start, small and slow soon
+  // after, and gone within half a second.
+  {
+    const k0 = sandbox.bhShockKick(0, 0.02, 1);
+    const k20 = sandbox.bhShockKick(0.2, 0.02, 1);
+    const k60 = sandbox.bhShockKick(0.6, 0.02, 1);
+    const mag = function (k) { return Math.hypot(k.x, k.y, k.z); };
+    assert(mag(k0) > mag(k20) && mag(k20) > mag(k60), 'the kick has to shrink with age: '
+      + mag(k0).toFixed(4) + ' > ' + mag(k20).toFixed(4) + ' > ' + mag(k60).toFixed(4));
+    assert(mag(k60) < mag(k0) * 0.1, 'and be gone within half a second');
+    const crossings = function (a0, a1) {
+      let n = 0; let prev = sandbox.bhShockKick(a0, 0.02, 1).x;
+      for (let i = 1; i <= 40; i++) { const cur = sandbox.bhShockKick(a0 + (a1 - a0) * i / 40, 0.02, 1).x;
+        if ((cur > 0) !== (prev > 0)) n++; prev = cur; }
+      return n;
+    };
+    assert(crossings(0, 0.1) > crossings(0.15, 0.25),
+      'the wobble has to start fast and slow down: ' + crossings(0, 0.1) + ' vs ' + crossings(0.15, 0.25));
+    assert(sandbox.bhShockKick(0.1, 0, 1).x === 0, 'no gain means no kick');
+  }
+  // The beat has to fire a kick through the frame wiring, not only exist as a pure function.
+  assert(/blackHoleState\.shockKickAt = blackHoleFlight\.time;/.test(source),
+    'a beat has to fire a kick in the frame, not just exist as a function');
+  assert(/u\.uJolt\.value\.set\(base\.x \+ kick\.x, base\.y \+ kick\.y, base\.z \+ kick\.z\);/.test(source),
+    'and write the kick plus the quiet base to the shader');
   assert(/float discFragment\(vec3 p, float r, float rn, float amount\)/.test(source),
     'the disc fragments must exist');
   assert(/float phase = atan\(p\.z, p\.x\) - uSpin \* 1\.6 \* iTime \/ pow\(max\(r, 0\.42\), 1\.5\);/.test(source),
