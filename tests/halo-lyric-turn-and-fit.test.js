@@ -316,7 +316,7 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
     .map((call) => ({ text: call.text, px: fontPxOf(call) }));
   assert(rows.length > 0, 'some rows must be drawn');
   const basePx = sandbox.haloLyricFontPx();
-  const contextPx = basePx * sandbox.HALO_LYRIC_CONTEXT_SCALE;
+  const contextPx = basePx * sandbox.haloParam('contextScale');
   const sizes = rows.map((row) => row.px);
   const smallest = Math.min.apply(null, sizes);
   const largest = Math.max.apply(null, sizes);
@@ -385,7 +385,7 @@ assert(drawnTexts.length > 1, 'the lines that are really on screen must be drawn
   sandbox.fx.lyricContextOpacity = 0.54;
   drawAndReadRows(sandbox.haloLyricStep() * 0.5);
   const midSizes = rowCalls().map(fontPxOf);
-  const between = midSizes.filter((px) => px > 20 * sandbox.HALO_LYRIC_CONTEXT_SCALE + 0.05 && px < 19.95);
+  const between = midSizes.filter((px) => px > 20 * sandbox.haloParam('contextScale') + 0.05 && px < 19.95);
   assert(between.length > 0,
     `half a turn must leave a row between the context and the full size, got ${midSizes.map((v) => v.toFixed(1)).join(", ")}`);
 
@@ -694,8 +694,8 @@ for (const [text, scale] of rowsBefore) {
   const contextRow = rowDrawn(0, () => {}, () => {});
   assert(fontPxOf(contextRow) < fontPxOf(sung),
     `a row off the read spot must be smaller than the sung one (${fontPxOf(contextRow)} against ${fontPxOf(sung)})`);
-  assert(fontPxOf(contextRow) >= 20 * sandbox.HALO_LYRIC_CONTEXT_SCALE - 1e-6,
-    `and no smaller than the context size (${fontPxOf(contextRow)}px against ${20 * sandbox.HALO_LYRIC_CONTEXT_SCALE}px)`);
+  assert(fontPxOf(contextRow) >= 20 * sandbox.haloParam('contextScale') - 1e-6,
+    `and no smaller than the context size (${fontPxOf(contextRow)}px against ${20 * sandbox.haloParam('contextScale')}px)`);
   for (const [name, mutate, undo] of cases) {
     const row = rowDrawn(0, mutate, undo);
     assert.strictEqual(row.font, contextRow.font,
@@ -898,6 +898,9 @@ for (const [text, scale] of rowsBefore) {
     const rot = s.decoRot * layer.rotK + layer.off;
     for (const wedge of layer.wedges) {
       const keep = sandbox.haloWedgeVisible(wedge, layer);
+      // The density knob turns wedges off by their rank; that is not the cull dropping a
+      // block that is on screen, so this geometry claim judges only the wedges the knob left on.
+      const densityOn = wedge.rank <= sandbox.haloParam('strandDensity');
       let plainlyVisible = false;
       let borderline = false;
       for (const frac of [0.5, wedge.n / 2, wedge.n - 0.5]) {
@@ -910,7 +913,7 @@ for (const [text, scale] of rowsBefore) {
           if (nearEdge) borderline = true; else plainlyVisible = true;
         }
       }
-      if (plainlyVisible) {
+      if (plainlyVisible && densityOn) {
         checked += 1;
         if (keep) keptVisible += 1;
         assert(keep,
@@ -919,7 +922,7 @@ for (const [text, scale] of rowsBefore) {
       } else if (borderline) {
         setAside += 1;
       }
-      if (!keep) {
+      if (!keep && densityOn) {
         // The other direction, where it is unambiguous: nothing of the block is on screen.
         assert(!plainlyVisible, 'a block was dropped although a ray of it was on the screen');
       }

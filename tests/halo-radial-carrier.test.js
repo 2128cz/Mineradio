@@ -207,7 +207,7 @@ for (const c of cases) {
     assert(nearest <= sandbox.HALO_RADIAL_MAX_HALF + 1e-9,
       `${c.name}: a glyph at ${(g.angle * 180 / Math.PI).toFixed(0)}deg is outside the window around ${(plan.a0 * 180 / Math.PI).toFixed(0)}deg`);
   }
-  const main = frame.glyphs.filter((g) => g.fontPx === plan.font || g.fontPx === baseFont * sandbox.HALO_RADIAL_FAR_SCALE);
+  const main = frame.glyphs.filter((g) => g.fontPx === plan.font || g.fontPx === baseFont * sandbox.haloParam('radialScale'));
   const sub = frame.glyphs.filter((g) => (g.fontPx || 0) < (plan.font * 0.9));
   assert(main.length > 0 && sub.length > 0, `${c.name}: the line and its translation must both be painted`);
   const meanY = (list) => list.reduce((sum, g) => sum + g.sy, 0) / list.length;

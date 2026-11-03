@@ -1317,8 +1317,15 @@ function runHaloPresetCheck() {
       rebuild: schemaMatch[6]
     });
   }
-  if (schema.size < 20) {
-    fail(`the ring's knob schema must be complete (found ${schema.size} knobs, expected at least 20)`);
+  if (schema.size < 30) {
+    fail(`the ring's knob schema must be complete (found ${schema.size} knobs, expected at least 30)`);
+  }
+  // A knob with no read point is the defect the user hit on the black hole: the slider moves,
+  // nothing on screen does. Every key has to be read by name out of haloParam somewhere.
+  for (const key of schema.keys()) {
+    if (!haloText.includes(`haloParam('${key}')`) && !haloText.includes(`HALO_TUNING_SCHEMA.${key}`)) {
+      fail(`the ring knob ${key} has no read point: the console writes a value nothing consumes`);
+    }
   }
   let boolKnobs = 0;
   for (const [key, spec] of schema) {

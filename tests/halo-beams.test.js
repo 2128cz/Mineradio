@@ -457,4 +457,27 @@ tuning.beamFollow = sandbox.HALO_TUNING_SCHEMA.beamFollow.def;
 }
 tuning.beamFollow = sandbox.HALO_TUNING_SCHEMA.beamFollow.def;
 
+// ------------------------------------------- the density knob bites without a rebuild
+{
+  // The wedges are baked once, at the top of the density knob, and each carries its own rank.
+  // So the knob thins the pattern that is already on the ring - it does not need a rebuild,
+  // which is the wiring that used to make this knob dead until the next resize, and it does
+  // not re-roll the scatter, which would make every value of the knob a different picture.
+  const countOn = () => { step(1 / 30, 2); return wedges().filter((w) => w.vis).length; };
+  useSpectrum(spectrum(0));
+  tuning.strandDensity = 1;
+  const full = countOn();
+  const fullSet = new Set(wedges().filter((w) => w.vis).map((w) => w.wedge));
+  tuning.strandDensity = sandbox.HALO_TUNING_SCHEMA.strandDensity.min;
+  const thin = countOn();
+  const thinSet = wedges().filter((w) => w.vis).map((w) => w.wedge);
+  tuning.strandDensity = sandbox.HALO_TUNING_SCHEMA.strandDensity.def;
+  assert(full > 0, 'the top of the density knob must leave beams on the ring');
+  assert(thin < full * 0.5,
+    `the bottom of the knob must thin the ring without any rebuild (${full} -> ${thin})`);
+  assert(thinSet.every((w) => fullSet.has(w)),
+    'thinning must switch ranks of the same pattern off, not build a different one');
+  console.log(`  density: ${full} clusters on at the top of the knob, ${thin} at the bottom, no rebuild between`);
+}
+
 console.log('[OK] The outer beams read their own spectrum bin, take their length from it, and grow on the beat.');

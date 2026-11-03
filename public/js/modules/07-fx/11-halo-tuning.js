@@ -40,8 +40,10 @@ function haloTuningFormat(key) {
   if (!spec) return '';
   var value = haloTuning[key];
   if (spec.kind === 'bool') return value > 0 ? '开' : '关';
-  // A count knob that allows 0 means "no cap"; say so rather than print a bare zero.
-  if (spec.kind === 'count') return (spec.min === 0 && value <= 0) ? '整圈' : String(Math.round(value));
+  // Only the lyric window has a zero that means "no cap": the runner count used to borrow
+  // that label, so zero inner streaks read back on the console as a whole circle.
+  if (spec.kind === 'rows') return value <= 0 ? '整圈' : String(Math.round(value));
+  if (spec.kind === 'count') return String(Math.round(value));
   if (spec.kind === 'deg') return Math.round(value) + '°';
   if (spec.kind === 'px') return Math.round(value) + 'px';
   if (spec.kind === 'sec') return (Math.round(value * 100) / 100) + 's';

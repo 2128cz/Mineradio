@@ -92,8 +92,20 @@ function checkHaloAudioArms(haloText, fail) {
   // The gate answers whether there is sound at all. Read as a loudness, the eight-bin mean
   // the app reports for a normal track (~0.2) took most of every pop off before it was drawn.
   if (!/var motion = haloMotionGate\(\);/.test(renderFrameFn) ||
-      !/return HALO_GATE_KEEP \+ \(1 - HALO_GATE_KEEP\) \* g;/.test(haloText)) {
+      !/return keep \+ \(1 - keep\) \* g;/.test(haloText)) {
     fail('the beat must be multiplied by a presence gate, not by the raw level');
+  }
+  // The presence gate and the silence threshold are console knobs now. A constant in their
+  // place would read the same whatever the user put on the slider.
+  if (!/var keep = haloParam\('gateKeep'\);/.test(haloText)) {
+    fail("gateKeep must drive the presence gate: a hardcoded share never reaches the console");
+  }
+  if (!/haloClamp\(\(level - haloParam\('levelFloor'\)\) \* gain, 0, 1\)/.test(levelGateFn)) {
+    fail('levelFloor must be the level the gate calls silence, read where the gate is built');
+  }
+  // A pop that dies on a hardcoded rate cannot be held longer or snapped back sooner.
+  if (!/dt \/ Math\.max\(0\.05, haloParam\('pulseHold'\)\)/.test(renderFrameFn)) {
+    fail("the pop must live for pulseHold seconds; the old constant decay ignored the knob");
   }
   if (!/haloAudio\.level/.test(levelGateFn)) {
     fail('the level gate must be built from the audio level');
@@ -168,6 +180,17 @@ function checkHaloCullArms(haloText, fail) {
       fail(`the read back body of ${name} is truncated; its guards would not see the whole function`);
     }
   }
+  // The haze lines thin with the same density knob. A floor above the knob's own minimum
+  // plateaus the bottom of its travel: the last third of the slider would draw the same wall.
+  const hazeFn = haloSliceFunction(haloText, 'haloDrawHaze');
+  if (hazeFn) {
+    if (!/Math\.max\(HALO_TUNING_SCHEMA\.strandDensity\.min, haloParam\('strandDensity'\)\)/.test(hazeFn)) {
+      fail('the haze step must scale with strandDensity across the knob\'s whole travel');
+    }
+    if (/Math\.max\(0\.15, haloParam\('strandDensity'\)\)/.test(hazeFn)) {
+      fail('the haze step plateaus below 0.15: that stretch of the density knob does nothing');
+    }
+  }
   // The ray must be measured from the ring's centre - where the camera transform puts it:
   // the framing knobs' position plus the user's own pan, plus the shake - and it must
   // report both ends of the run.
@@ -191,6 +214,11 @@ function checkHaloCullArms(haloText, fail) {
   if (wedgeVisibleFn) {
     if (!/haloRayVisible\(a0, r0, s\.RMAX\) \|\| haloRayVisible\(mid, r0, s\.RMAX\) \|\| haloRayVisible\(a1, r0, s\.RMAX\)/.test(wedgeVisibleFn)) {
       fail('a wedge must be judged over its own angular span, not on its middle ray alone');
+    }
+    // The density knob has to bite every frame. Reading it only where the layers are baked
+    // made it dead until the next resize.
+    if (!/wedge\.rank > haloParam\('strandDensity'\)/.test(wedgeVisibleFn)) {
+      fail("strandDensity must gate each wedge by its rank at read time, or the knob only bites after a resize");
     }
   }
   // Each tick loop draws at its own radii; one shared threshold keeps the wrong set.
@@ -565,6 +593,17 @@ function checkHaloCullArms(haloText, fail) {
     if (makeFn && !/gain: haloRand\(0\.78, 1\.24\)/.test(makeFn)) {
       fail('every cluster needs its own gain on its bin, or neighbours on one band grow alike');
     }
+    // The wedge count is baked at the top of the density knob, and each wedge carries its own
+    // rank: that is what lets the knob thin the same pattern instead of re-rolling it.
+    if (makeFn && !/HALO_TUNING_SCHEMA\.strandDensity\.max/.test(makeFn)) {
+      fail('the strand layers must bake at the top of strandDensity, so the knob has a pattern to thin');
+    }
+    if (makeFn && /nb \* cover \* haloParam\('strandDensity'\)/.test(makeFn)) {
+      fail('the wedge count must not be baked from the knob value: that wiring is dead until the next resize');
+    }
+    if (makeFn && !/rank: Math\.random\(\)/.test(makeFn)) {
+      fail('each wedge needs a rank in the density queue, or thinning the knob re-rolls the pattern');
+    }
     if (makeFn && !/dynMin: family === 'ray' \? 0\.16 : 0,/.test(makeFn)) {
       fail('only the rays keep a resting length; a block must come all the way down in silence');
     }
@@ -671,8 +710,13 @@ function checkHaloCullArms(haloText, fail) {
     // One size for every row, always. The room a ray has is measured through the camera, so
     // a row that is scaled to fit it shrinks as the ring pulses to the beat - which is what
     // the user rejected: the font is set by the app's lyric size knob and nothing else.
-    if (!/HALO_LYRIC_CONTEXT_SCALE/.test(drawLyricFn)) {
-      fail('the rows around the sung one must sit at the context size, so the sung row reads above them');
+    if (!/fontPx \* haloParam\('contextScale'\)/.test(drawLyricFn)) {
+      fail('the rows around the sung one must sit at the context size the knob asks for, so the sung row reads above them');
+    }
+    // 0 on contextScale asks for the neighbours to be gone. A 0px font is rejected by the
+    // canvas and would draw the row at whatever size the previous row left on the context.
+    if (!/if \(size < 0\.5\) continue;/.test(drawLyricFn)) {
+      fail('a row smaller than the canvas can draw must be skipped, not drawn at the previous size');
     }
     if (!/var focusNear = haloClamp\(1 - near \//.test(drawLyricFn)) {
       fail('the size and the highlight must follow how close a row is to the read spot, continuously');
@@ -705,6 +749,14 @@ function checkHaloCullArms(haloText, fail) {
     const fontFn = haloSliceFunction(haloText, 'haloLyricFontPx');
     if (!fontFn) {
       fail('haloLyricFontPx could not be read back; the lyric size guard below would be vacuous');
+    }
+    if (fontFn && !/HALO_LYRIC_BASE_PX \* haloParam\('lyricSize'\)/.test(fontFn)) {
+      fail("the ring's own 环上字号 must multiply the app's lyric size inside haloLyricFontPx");
+    }
+    // The old clamp [9,48] ate the bottom of the app's slider: every value under ~0.45 drew
+    // the same 9px. It has to hold the two knobs' whole travel.
+    if (fontFn && !/Math\.max\(1, Math\.min\(160, /.test(fontFn)) {
+      fail('the lyric font clamp must not swallow a knob range: 1..160 covers both knobs');
     }
     if (fontFn && /haloState\.(R|RO|band|RMAX|w|h)\b|s\.(R|RO|band|RMAX)\b/.test(fontFn)) {
       fail('the lyric font size must not come from the ring\'s size or the viewport: that is the adaptive text the user rejected');
@@ -837,8 +889,8 @@ function checkHaloRadialArms(haloText, fail) {
   if (!/haloNormAngle\(haloReadAngle\(\) \+ Math\.PI\)/.test(planFn)) {
     fail('the radial seam must be the point opposite the read mark, the same point the dial is born and cut at');
   }
-  if (!/HALO_RADIAL_FAR_SCALE/.test(planFn)) {
-    fail('the whole-ring carrier must read from further away: its size has to come from the far scale');
+  if (!/fontPx \* haloParam\('radialScale'\)/.test(planFn)) {
+    fail('the whole-ring carrier must read from further away, at the size its own knob asks for');
   }
   if (!/plan\.r0 = outer \+ gap;/.test(planFn) || !/plan\.r1 = outer \+ gap;/.test(planFn)) {
     fail('the two radial arcs must sit outside the rim, one line-height apart');

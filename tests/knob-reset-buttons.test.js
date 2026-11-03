@@ -399,5 +399,25 @@ console.log('rows: ' + (sliderRows + haloBools.length + pvBools.length + 2)
     'a rebound ring row must not start writing into fx');
 }
 
+// -------------------------------------------------- what a zero reads back as
+{
+  // Two knobs allow 0 and they do not mean the same thing: the lyric window at 0 runs the
+  // whole circle, while zero inner streaks is simply no streaks. The old formatting keyed
+  // that label off the shared 'count' kind, so the runner count read back as 整圈.
+  const rows = api.haloTuning.lyricRows;
+  const runners = api.haloTuning.runners;
+  api.setHaloTuning('lyricRows', 0);
+  api.setHaloTuning('runners', 0);
+  assert.strictEqual(api.haloTuningFormat('lyricRows'), '整圈', 'an uncapped lyric window must say so');
+  assert.strictEqual(api.haloTuningFormat('runners'), '0', 'zero inner streaks is not a whole circle');
+  api.setHaloTuning('lyricRows', 12);
+  assert.strictEqual(api.haloTuningFormat('lyricRows'), '12', 'a capped window reads as its count');
+  api.setHaloTuning('runners', 96);
+  assert.strictEqual(api.haloTuningFormat('runners'), '96', 'a count knob reads its own number');
+  api.setHaloTuning('lyricRows', rows);
+  api.setHaloTuning('runners', runners);
+  console.log('read-outs: lyricRows 0 -> 整圈, runners 0 -> 0');
+}
+
 console.log('[OK] Every ring and PV slider row carries its own reset, and it restores that one field.');
 

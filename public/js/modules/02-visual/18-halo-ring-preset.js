@@ -45,20 +45,14 @@ var HALO_BEAT_LOOKAHEAD = 1.2;     // how far ahead the beat map is read
 // dying, so two closer than that are one buzz the eye cannot read as two beats - and a map is
 // allowed to lay a grid that fine under a fast song.
 var HALO_BEAT_MIN_GAP = 0.24;
-var HALO_PULSE_DECAY = 2.4;        // how fast the beat's scale pop dies down
-var HALO_LEVEL_FLOOR = 0.06;        // analyser level below which nothing is playing
-// The level is a loudness, and a beat only needs a yes or a no from it: once the sound is
-// there, this is the part of the beat that survives. Below 1 the ring still answers a
-// quiet passage, it just does not answer a silent one.
-var HALO_GATE_KEEP = 0.55;
 // Radians of arc the 40 Hz-12 kHz sweep spans. The whole circle, so every point on the ring
 // stands on its own frequency and no stretch of it is a clamped plateau; half a circle left
 // the back of the ring pinned at 40 Hz and 12 kHz, and a visible arc that fell on either end
 // was one flat row of beams.
 var HALO_BAND_SPREAD = Math.PI * 2;
-var HALO_RADIAL_FAR_SCALE = 1.55;    // lyric size multiplier when the whole ring is on screen
 var HALO_RADIAL_MAX_HALF = 1.05;     // widest the radial line's window gets, so a long line is cut, not wrapped
-var HALO_LYRIC_CONTEXT_SCALE = 0.72; // the rows around the sung one, relative to its size
+// The whole-ring size, the neighbouring rows' size and the pop's life were constants here;
+// they are the radialScale / contextScale / pulseHold knobs now.
 
 // The ring's knobs. The schema lives here so the defaults have exactly one home; the
 // store and the console bindings live in 07-fx/11-halo-tuning.js.
@@ -82,10 +76,23 @@ var HALO_TUNING_SCHEMA = {
   pulseScale: { def: 0.09, min: 0, max: 0.4, kind: 'ratio', rebuild: 'live' },
   shakePx: { def: 6, min: 0, max: 40, kind: 'px', rebuild: 'live' },
   levelGain: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
+  // A beat's pop used to die on a hardcoded rate: the ring could not be made to hold a hit
+  // longer or snap back sooner. pulseHold is that life in seconds; levelFloor is the level
+  // under which the room counts as silent; gateKeep is the share of the beat that survives a
+  // gate that is only partly open.
+  pulseHold: { def: 0.42, min: 0.1, max: 2, kind: 'sec', rebuild: 'live' },
+  levelFloor: { def: 0.06, min: 0, max: 0.5, kind: 'ratio', rebuild: 'live' },
+  gateKeep: { def: 0.55, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   readAngle: { def: 0, min: -180, max: 180, kind: 'deg', rebuild: 'lyric' },
   textGap: { def: 26, min: 0, max: 160, kind: 'px', rebuild: 'lyric' },
   lineGap: { def: 18, min: 0, max: 120, kind: 'px', rebuild: 'lyric' },
-  lyricRows: { def: 0, min: 0, max: 240, kind: 'count', rebuild: 'live' },
+  lyricRows: { def: 0, min: 0, max: 240, kind: 'rows', rebuild: 'live' },
+  // The lyric size used to be the app's knob times a hidden base with a floor that ate the
+  // bottom of its travel, and the neighbouring rows and the whole-ring carrier had two more
+  // hardcoded multipliers. These three put every one of those numbers on the console.
+  lyricSize: { def: 1, min: 0.5, max: 2, kind: 'ratio', rebuild: 'live' },
+  contextScale: { def: 0.72, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  radialScale: { def: 1.55, min: 1, max: 3, kind: 'ratio', rebuild: 'live' },
   axialLyric: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   rotLead: { def: 0.55, min: 0, max: 4, kind: 'sec', rebuild: 'live' },
   rotDur: { def: 0.55, min: 0.05, max: 4, kind: 'sec', rebuild: 'live' },
@@ -927,11 +934,14 @@ function haloLyricTranslationOf(line) {
   return String(line.translation || '').trim();
 }
 
-// The text size follows the app's own lyric size knob, so the two never disagree.
+// The text size follows the app's own lyric size knob, so the two never disagree, and the
+// ring's own lyricSize multiplies it. The clamp only has to hold the two knobs' extremes: it
+// used to floor at 9 px, which swallowed the bottom of the app's slider, and cap at 48 px,
+// which would have eaten the top of the ring's own.
 function haloLyricFontPx() {
   var scale = 1;
   if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricScale))) scale = Number(fx.lyricScale);
-  return Math.max(9, Math.min(48, HALO_LYRIC_BASE_PX * haloClamp(scale, 0.35, 1.65)));
+  return Math.max(1, Math.min(160, HALO_LYRIC_BASE_PX * haloParam('lyricSize') * haloClamp(scale, 0.35, 1.65)));
 }
 
 // Where the current line is read: the rim segment the list scrolls past.
@@ -1846,13 +1856,19 @@ function haloMakeStrandLayer(stepDeg, rotK, lumK, lw, lenK, solidK, cover, nMin,
   var flat = family !== 'ray';
   var nb = Math.floor(HALO_TAU / step);
   var wedges = [];
-  var count = Math.max(1, Math.round(nb * cover * haloParam('strandDensity') / ((nMin + nMax) / 2)));
+  // The wedge count is baked at the TOP of the density knob and every wedge carries its own
+  // rank, so the knob decides which ranks are standing - sliding it thins or fills the same
+  // pattern instead of re-rolling it. Baking at the knob's current value is what made this
+  // knob dead until the next resize: only haloResize rebuilds the layers.
+  var count = Math.max(1, Math.round(nb * cover * HALO_TUNING_SCHEMA.strandDensity.max / ((nMin + nMax) / 2)));
   for (var j = 0; j < count; j++) {
     var n = nMin + ((Math.random() * (nMax - nMin)) | 0);
     var bright = Math.random() < brightP;
     var wedge = {
       i0: (Math.random() * nb) | 0,
       n: n,
+      // Where this wedge sits in the density queue: on while the knob reaches past it.
+      rank: Math.random(),
       base: haloRand(0.35, 1),
       len: haloRand(0.1, 0.5),
       kick: 0,
@@ -1998,6 +2014,9 @@ function haloRayVisible(angle, r0, r1, pop) {
 
 function haloWedgeVisible(wedge, layer) {
   var s = haloState;
+  // The density knob first: a wedge only stands while the knob reaches past its rank. This
+  // is read every frame, which is what makes the knob live instead of waiting for a resize.
+  if (wedge.rank > haloParam('strandDensity')) return false;
   var rot = s.decoRot * layer.rotK + layer.off;
   var r0 = s.RO + 3;
   // A wedge is a block of lines over its own angular span (up to about 20deg on the dense
@@ -2592,7 +2611,7 @@ function haloDrawHaze(ctx) {
   haloBuildHazeGradients();
   var span = s.RMAX - s.RO - 20;
   var r0 = s.RO + 3;
-  var step = HALO_HAZE_STEP * 0.55 / Math.max(0.15, haloParam('strandDensity'));
+  var step = HALO_HAZE_STEP * 0.55 / Math.max(HALO_TUNING_SCHEMA.strandDensity.min, haloParam('strandDensity'));
   ctx.globalCompositeOperation = 'lighter';
   for (var i = 0; i < haloHazeList.length; i++) {
     var h = haloHazeList[i];
@@ -2619,7 +2638,7 @@ function haloDrawFlares(ctx) {
   var s = haloState;
   var span = s.RMAX - s.RO - 20;
   var r0 = s.RO + 3;
-  var step = HALO_HAZE_STEP * 0.45 / Math.max(0.15, haloParam('strandDensity'));
+  var step = HALO_HAZE_STEP * 0.45 / Math.max(HALO_TUNING_SCHEMA.strandDensity.min, haloParam('strandDensity'));
   ctx.globalCompositeOperation = 'lighter';
   ctx.strokeStyle = haloGradient.s0 || '#fff';
   for (var i = 0; i < haloFlareList.length; i++) {
@@ -2957,7 +2976,7 @@ function haloRadialPlan(region) {
     a1: -Math.PI / 2
   };
   if (region === 'whole') {
-    plan.font = fontPx * HALO_RADIAL_FAR_SCALE;
+    plan.font = fontPx * haloParam('radialScale');
     plan.r0 = outer + plan.font * 0.55;
     plan.r1 = plan.r0;
     plan.a0 = -Math.PI / 2;
@@ -3191,7 +3210,9 @@ function haloDrawLyricText(ctx) {
   var motion = haloLyricMotion();
   var context = haloLyricContextSettings();
   var fontPx = haloLyricFontPx();
-  var contextPx = Math.max(9, fontPx * HALO_LYRIC_CONTEXT_SCALE);
+  // At 0 the rows around the sung one really are gone, so the size is taken from the knob
+  // without the 9 px floor that used to keep a "tiny" neighbour legible.
+  var contextPx = fontPx * haloParam('contextScale');
   var textR = s.RO + haloParam('textGap');
   var read = haloReadAngle();
   var win = haloLyricWindow();
@@ -3228,6 +3249,9 @@ function haloDrawLyricText(ctx) {
     // jumping size at the moment the turn ends.
     var focusNear = haloClamp(1 - near / Math.max(1e-6, step * 1.6), 0, 1);
     var size = contextPx + (fontPx - contextPx) * focusNear;
+    // contextScale at 0 asks for the neighbours to vanish; a 0 px font is rejected by the
+    // canvas and would draw the row at whatever size the previous row left behind.
+    if (size < 0.5) continue;
     // How far inside the screen the row's first glyph sits: 0 well inside, 1 at the edge.
     // The app's motion profile says what happens over that last band - a slide, a fade, or
     // nothing at all for the smoothest style.
@@ -3517,31 +3541,28 @@ function haloRebuild() {
   return true;
 }
 
-// How much of the beat the sound allows. The beat map is a fixed timeline: it fires on
-// the grid whatever the music is doing, so a silent passage - or a track that is not
-// playing at all - used to shake the ring just like a chorus. The level is the honest
-// signal: no sound, no motion. The level of most music sits well below 1, so it is
-// scaled up before it is clamped. The knob at zero turns the gate off, which is the
-// old behaviour: the beat moves the ring whatever the music does.
 // How much of the beat the sound allows. The level is the music's own spectrum, not the
 // player's volume: silence (or a passage with nothing in it) reads near zero. The floor is
 // there because an analyser never quite reaches zero - without it a quiet room already
-// opened the gate, which is why the ring moved the same in silence and in a chorus.
+// opened the gate, which is why the ring moved the same in silence and in a chorus. The
+// floor is a knob now: the level an analyser calls zero depends on the room and the source.
 function haloLevelGate() {
   var gain = haloParam('levelGain');
   if (!(gain > 0)) return 1;
   var level = Number(haloAudio.level) || 0;
-  return haloClamp((level - HALO_LEVEL_FLOOR) * gain, 0, 1);
+  return haloClamp((level - haloParam('levelFloor')) * gain, 0, 1);
 }
 
 // What the beat is actually multiplied by. haloLevelGate's own curve stays a measure of
 // the room: read straight, a track that sits at the usual eight-bin mean of 0.2 would take
 // half of every pop, and the ring's motion would follow the mix's loudness instead of the
-// drums. Silence is still exactly that.
+// drums. Silence is still exactly that. gateKeep is the share that survives a partly open
+// gate, so at 0 a quiet passage really does hold the ring still.
 function haloMotionGate() {
   var g = haloClamp(Number(haloState.levelGate) || 0, 0, 1);
   if (g <= 0) return 0;
-  return HALO_GATE_KEEP + (1 - HALO_GATE_KEEP) * g;
+  var keep = haloParam('gateKeep');
+  return keep + (1 - keep) * g;
 }
 
 function haloRenderFrame(canvas, now, dt) {
@@ -3553,7 +3574,8 @@ function haloRenderFrame(canvas, now, dt) {
   haloReadAudioBands(t);
   // The beat's own job: the ring pops out and shakes where it stands. The camera is
   // the user's and nothing here moves it.
-  s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt * HALO_PULSE_DECAY);
+  // The pop lives for pulseHold seconds and then walks back down at a constant rate.
+  s.ringPulse = Math.max(0, (s.ringPulse || 0) - dt / Math.max(0.05, haloParam('pulseHold')));
   // The ring's motion follows the sound. The beat map is a fixed timeline, so it keeps
   // firing over a silent passage and over a track that is not playing at all; the level
   // is what says whether there is anything to react to.
