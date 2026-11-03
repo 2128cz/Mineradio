@@ -250,4 +250,73 @@ function runFrames(count) {
   console.log(`  throw: hit ${onTheHit.toFixed(2)}px, then ${decays.map((v) => v.toFixed(1)).join(' > ')} and still`);
 }
 
+// --------------------------------- the floor and the kept share are knobs, not constants
+{
+  // Both numbers lived as constants in the module: the console had a slider for the gain but
+  // no way to say what counts as silence, or how much of the beat survives a partly open gate.
+  sandbox.haloAudio.level = 0.3;
+  sandbox.haloTuning.levelFloor = 0.06;
+  const lowFloor = sandbox.haloLevelGate();
+  sandbox.haloTuning.levelFloor = 0.2;
+  const highFloor = sandbox.haloLevelGate();
+  sandbox.haloTuning.levelFloor = 0.45;
+  const floorAboveLevel = sandbox.haloLevelGate();
+  sandbox.haloTuning.levelFloor = sandbox.HALO_TUNING_SCHEMA.levelFloor.def;
+  assert(Math.abs(lowFloor - (0.3 - 0.06) * 2.6) < 1e-9,
+    `levelFloor must sit under the level in the gate curve, got ${lowFloor}`);
+  assert(highFloor < lowFloor && highFloor > 0,
+    `raising the floor has to take part of the gate away (${lowFloor.toFixed(3)} -> ${highFloor.toFixed(3)})`);
+  assert.strictEqual(floorAboveLevel, 0,
+    'a floor above the current level is silence as far as this gate is concerned');
+
+  // gateKeep is the floor of the motion multiplier: 0 lets a partly open gate keep only its
+  // own share, 1 hands the whole beat back as soon as the room is not silent.
+  sandbox.haloState.levelGate = 0.4;
+  const keepDefault = sandbox.haloMotionGate();
+  sandbox.haloTuning.gateKeep = 0;
+  const keepNothing = sandbox.haloMotionGate();
+  sandbox.haloTuning.gateKeep = 1;
+  const keepWhole = sandbox.haloMotionGate();
+  sandbox.haloTuning.gateKeep = sandbox.HALO_TUNING_SCHEMA.gateKeep.def;
+  assert(Math.abs(keepNothing - 0.4) < 1e-9,
+    `gateKeep at 0 must leave the gate's own share and nothing more, got ${keepNothing}`);
+  assert.strictEqual(keepWhole, 1,
+    `gateKeep at 1 must hand the whole beat back above the floor, got ${keepWhole}`);
+  assert(keepNothing < keepDefault && keepDefault < keepWhole,
+    `the knob must order the motion (${keepNothing} < ${keepDefault.toFixed(3)} < ${keepWhole})`);
+  sandbox.haloAudio.level = 0;
+  sandbox.haloState.levelGate = 0;
+  console.log(`  floor/keep: levelFloor 0.06/0.2/0.45 -> gate ${lowFloor.toFixed(3)}/${highFloor.toFixed(3)}/${floorAboveLevel}`
+    + `, gateKeep 0/0.55/1 -> motion ${keepNothing.toFixed(3)}/${keepDefault.toFixed(3)}/${keepWhole}`);
+}
+
+// --------------------------------------- the pop lives for pulseHold seconds, not a constant
+{
+  // The decay used to be `dt * 2.4` written into the frame: every beat popped for about
+  // 0.42s whatever the user wanted. The knob is the life of the pop in seconds, so a half
+  // second of play at 0.1s hold is over and a 2s hold is most of the way through.
+  analyserByte = 200;
+  const decayed = (hold, seconds) => {
+    sandbox.haloTuning.pulseHold = hold;
+    sandbox.haloState.ringPulse = 1;
+    const frames = Math.round(seconds * 60);
+    for (let i = 0; i < frames; i++) sandbox.haloRenderFrame(canvas, i * 16.7, 1 / 60);
+    return sandbox.haloState.ringPulse;
+  };
+  const shortHold = decayed(0.1, 0.5);
+  const longHold = decayed(2, 0.5);
+  const shipped = decayed(sandbox.HALO_TUNING_SCHEMA.pulseHold.def, 0.21);
+  sandbox.haloTuning.pulseHold = sandbox.HALO_TUNING_SCHEMA.pulseHold.def;
+  sandbox.haloState.ringPulse = 0;
+  sandbox.haloState.levelGate = 0;
+  sandbox.haloAudio.level = 0;
+  assert.strictEqual(shortHold, 0,
+    `a 0.1s pop has to be gone half a second later, found ${shortHold}`);
+  assert(longHold > 0.7,
+    `a 2s pop has to still be most of the way through at half a second, found ${longHold}`);
+  assert(shipped > 0.4 && shipped < 0.6,
+    `the shipped default is the old rate (1/2.4 per second): at 0.21s it should sit near 0.5, found ${shipped}`);
+  console.log(`  pulseHold: 0.1s -> ${shortHold} after 0.5s, 2s -> ${longHold.toFixed(2)}, default 0.42s -> ${shipped.toFixed(2)}`);
+}
+
 console.log('[OK] The ring\'s beat motion follows the sound: silence is still, a loud passage shakes harder.');

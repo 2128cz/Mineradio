@@ -977,4 +977,64 @@ for (const [text, scale] of rowsBefore) {
     `worst jump ${worstJump.toFixed(3)} rad (a row is ${step.toFixed(3)}), worst |rot| ${worstRot.toFixed(2)} rad`);
 }
 
+// ---------------------------------- the ring's own font knobs reach the frame
+{
+  // 环上字号 used to be a hidden base times the app's knob, floored at 9px: the bottom of the
+  // app's 歌词大小 travel drew the same glyphs. 旁句相对大小 was the constant 0.72 with no way
+  // in. Both are console values now, so the frame has to answer to them.
+  // The size step only exists on the side carrier: the radial ones draw a single line. The
+  // block above rebuilt the dial with its own dense song, so the census reads the live items.
+  const axialBefore = sandbox.haloTuning.axialLyric;
+  sandbox.haloTuning.axialLyric = 1;
+  // Each row's own size, keyed by its text. The census reads the live items because the block
+  // above rebuilt the dial with its own dense song.
+  const rowsBySize = () => {
+    const its = sandbox.haloLyric.items;
+    const sung = its[sandbox.haloLyric.current] || its[0];
+    sandbox.haloState.ringRot = sandbox.haloReadAngle() - sung.angle;
+    drawContext.calls.length = 0;
+    sandbox.haloDrawLyricText(drawContext);
+    const out = new Map();
+    for (const call of drawContext.calls) {
+      if (call.op !== 'fillText' || out.has(call.text)) continue;
+      if (!its.some((it) => it.text === call.text)) continue;
+      out.set(call.text, fontPxOf(call));
+    }
+    return out;
+  };
+  const base = sandbox.haloLyricFontPx();
+  sandbox.haloTuning.lyricSize = 2;
+  const big = sandbox.haloLyricFontPx();
+  sandbox.haloTuning.lyricSize = 0.5;
+  const small = sandbox.haloLyricFontPx();
+  sandbox.haloTuning.lyricSize = sandbox.HALO_TUNING_SCHEMA.lyricSize.def;
+  assert(Math.abs(big - base * 2) < 1e-9 && Math.abs(small - base * 0.5) < 1e-9,
+    `环上字号 must scale the font across its whole travel (${small} / ${base} / ${big})`);
+
+  const atDefault = rowsBySize();
+  assert(atDefault.size > 1, `the side carrier must draw more than one row (${atDefault.size})`);
+  sandbox.haloTuning.contextScale = 0;
+  const atZero = rowsBySize();
+  sandbox.haloTuning.contextScale = 1;
+  const atFull = rowsBySize();
+  sandbox.haloTuning.contextScale = sandbox.HALO_TUNING_SCHEMA.contextScale.def;
+  sandbox.haloTuning.axialLyric = axialBefore;
+
+  const sizesOf = (map) => Array.from(map.values());
+  const biggestDefault = Math.max.apply(null, sizesOf(atDefault));
+  assert(Math.abs(biggestDefault - base) < 1e-6,
+    `the row on the read spot carries the app size at the default context (${biggestDefault} against ${base})`);
+  let smaller = 0;
+  atZero.forEach((px, text) => {
+    assert(px <= atDefault.get(text) + 1e-9,
+      `row "${text}" cannot grow when 旁句相对大小 goes down (${atDefault.get(text)} -> ${px})`);
+    if (px < atDefault.get(text) - 1e-9) smaller++;
+  });
+  assert(smaller > 0, 'at 0 the neighbours have to be smaller than they were at 0.72');
+  assert(sizesOf(atFull).every((px) => Math.abs(px - base) < 1e-6),
+    `at 1 every row is the sung row's size (${sizesOf(atFull).join(', ')} against ${base})`);
+  console.log(`  font knobs: lyricSize 0.5/1/2 -> ${small}/${base}/${big}px; ` +
+    `contextScale 0 shrinks ${smaller} of ${atZero.size} rows, at 1 all ${atFull.size} draw at ${base}px`);
+}
+
 console.log('[OK] The ring turn lasts the 转环时长 knob, the cull follows the screen and the lyric rows keep one size.');

@@ -392,4 +392,21 @@ console.log('  carriers: ' + readings.join(' | '));
   assert.strictEqual(context.haloCam.zoom, 1, 'and the zoom');
 }
 
+// ------------------------------------------------ 整圈字号 is the console's, not a constant
+{
+  tuning.radialScale = 2;
+  const doubled = sandbox.haloRadialPlan('whole').font;
+  tuning.radialScale = 1;
+  const flat = sandbox.haloRadialPlan('whole').font;
+  tuning.radialScale = sandbox.HALO_TUNING_SCHEMA.radialScale.def;
+  const shipped = sandbox.haloRadialPlan('whole').font;
+  assert(Math.abs(doubled - baseFont * 2) < 1e-9,
+    `整圈字号 at 2 must double the whole-ring carrier (${baseFont} -> ${doubled})`);
+  assert(Math.abs(flat - baseFont) < 1e-9,
+    `整圈字号 at 1 must leave the carrier at the row size, found ${flat}`);
+  assert(Math.abs(shipped - baseFont * 1.55) < 1e-9,
+    `the shipped default has to keep the reading the ring shipped with, found ${shipped}`);
+  console.log(`  radialScale: ${flat} / ${shipped.toFixed(1)} / ${doubled} at 1 / 1.55 / 2 on a ${baseFont}px row`);
+}
+
 console.log('[OK] The ring picks its lyric carrier from the camera, keeps the text on screen and paints it in the app\'s colours.');
