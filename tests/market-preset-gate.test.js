@@ -289,20 +289,43 @@ function stubCamera() {
   return cam;
 }
 
-test('a locked free camera keeps the camera: the preset must yield', () => {
+test('a pinned free camera does not hold the market view', () => {
+  // locked but not active is where the free camera was left, not an input. Holding the preset
+  // at that pose leaves the chart unframed and makes the panel's 重置视角 move nothing.
   reset({ shown: 0 });
   S.camera = stubCamera();
-  S.freeCamera = { locked: true, active: false, resetTween: false };
+  S.freeCamera = { locked: true, active: false, resetTween: null };
   S.marketCam.blend = 1;
-  S.marketCam.primed = true;
-  const before = [S.camera.position.x, S.camera.position.y, S.camera.position.z];
+  S.marketCam.primed = false;
+  S.marketCam.yaw = 0;
+  S.marketCam.pitch = 0;
+  S.marketCam.zoom = 1;
   S.applyStockCameraPose(0.016);
-  assert.deepEqual([S.camera.position.x, S.camera.position.y, S.camera.position.z], before,
-    'the market wrote the camera while the free camera was locked');
-  assert.equal(S.marketCam.primed, true, 'the preset must not spend its damp state while it is yielding');
+  assert.ok(Math.abs(S.camera.position.x - (S.marketCandleX(0) + S.marketParam('camLead'))) < 1e-6,
+    `the pin held the camera at (${S.camera.position.x}, ${S.camera.position.y}, ${S.camera.position.z})`);
   S.freeCamera = undefined;
   S.camera = undefined;
 });
+
+for (const [name, freeCamera] of [
+  ['a free camera the user is flying', { locked: false, active: true, resetTween: null }],
+  ['a free camera easing back into place', { locked: true, active: false, resetTween: {} }],
+]) {
+  test(`${name} keeps the camera`, () => {
+    reset({ shown: 0 });
+    S.camera = stubCamera();
+    S.freeCamera = freeCamera;
+    S.marketCam.blend = 1;
+    S.marketCam.primed = true;
+    const before = [S.camera.position.x, S.camera.position.y, S.camera.position.z];
+    S.applyStockCameraPose(0.016);
+    assert.deepEqual([S.camera.position.x, S.camera.position.y, S.camera.position.z], before,
+      'the market wrote the camera while the free camera owned it');
+    assert.equal(S.marketCam.primed, true, 'the preset must not spend its damp state while it is yielding');
+    S.freeCamera = undefined;
+    S.camera = undefined;
+  });
+}
 
 test('with the free camera released the pose damps onto the head, learned from real dt', () => {
   reset({ shown: 0 });

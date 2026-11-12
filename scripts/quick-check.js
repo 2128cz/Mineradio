@@ -2001,8 +2001,14 @@ function runRhythmMarketPresetCheck() {
   if (!/1 - Math\.exp\(-step \/ Math\.max\(0\.005, marketParam\('camDamp'\)\)\)/.test(presetText)) {
     fail('the camera damp must be exponential in real dt, or the stop is not visible at low frame rates');
   }
-  if (!/freeCamera\.active \|\| freeCamera\.locked \|\| freeCamera\.resetTween/.test(presetText)) {
-    fail('the preset must yield the camera to an active, locked or resetting free camera');
+  // A free camera the user is flying (or one easing back) outranks the preset; a mere pin does
+  // not, or the chart is left at a pose it is not framed for and 重置视角 moves nothing.
+  const guardLine = (presetText.match(/if \(typeof freeCamera !== 'undefined' && freeCamera[\s\S]{0,120}?return;/) || [''])[0];
+  if (!/freeCamera\.active \|\| freeCamera\.resetTween/.test(guardLine)) {
+    fail('the market must yield to a free camera that is active or easing back');
+  }
+  if (/freeCamera\.locked/.test(guardLine)) {
+    fail('the market must not yield to a pinned free camera: the ring and the black hole do not, and a pin is not an input');
   }
   if (!/wallParallax/.test(presetText) || !/wallOverscan/.test(presetText)) {
     fail('the backdrop has to be sized from the camera frustum, or it scrolls off the edge of the view');

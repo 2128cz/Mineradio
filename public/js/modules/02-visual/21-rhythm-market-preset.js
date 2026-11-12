@@ -812,9 +812,12 @@ function marketCameraGoal(pos, look) {
 
 function applyStockCameraPose(dt) {
   if (typeof camera === 'undefined' || !camera) return;
-  // The free camera is the user's explicit takeover; a preset must not fight it.
+  // A free camera the user is flying, or one that is easing back into place, outranks the preset.
+  // A mere pin (locked but not active) does not: it is where the free camera was left, not an
+  // input, and a pin holds this view at a pose the chart is not framed for - the ring and the
+  // black hole do not consult it either, and the panel's 重置视角 would then move nothing.
   if (typeof freeCamera !== 'undefined' && freeCamera
-    && (freeCamera.active || freeCamera.locked || freeCamera.resetTween)) return;
+    && (freeCamera.active || freeCamera.resetTween)) return;
   var active = marketPresetIsActive();
   var step = Math.max(0, Number(dt) || 0);
   marketCam.blend += ((active ? 1 : 0) - marketCam.blend) * Math.min(1, step * (active ? 4.8 : 7.2));
