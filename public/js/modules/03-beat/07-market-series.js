@@ -87,29 +87,117 @@ function marketSpectrum(pcm, start, n) {
   return s.mag;
 }
 
-// The strongest bin inside [minHz,maxHz], refined between bins. A chunk's pitch is rarely on a
-// bin centre, and rounding to the bin would quantise the whole chart into 43 Hz steps.
-function marketPeakHz(mag, n, sampleRate, minHz, maxHz) {
+// A-weighting: the standard one-curve approximation of "how much quieter does a tone have to be
+// at this frequency to sound as loud as 1 kHz". 1.0 at 1 kHz, far below 1 in the bass, a little
+// above 1 around 3-4 kHz. It is the numbers behind "hearing is not flat", and it is what keeps a
+// strong kick from reading as the loudest thing in the mix.
+function marketAWeight(hz) {
+  var f2 = hz * hz;
+  var num = 12194 * 12194 * f2 * f2;
+  var den = (f2 + 20.6 * 20.6) * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12194 * 12194);
+  var db = 20 * Math.log10(num / Math.max(1e-12, den)) + 2.0;
+  return Math.pow(10, db / 20);
+}
+
+// Bands per octave, equal-loudness mix and peak prominence, with the same defaults the console
+// ships, so a bare marketBuildSeries() behaves like the app does.
+var MARKET_PEAK_DEFAULTS = { bandsPerOctave: 12, earWeight: 0.75, peakGate: 0.25 };
+
+// The strongest band on a LOG frequency axis, weighted for hearing.
+//
+// The bins are evenly spaced in Hz, so scanning the raw bins gives the top octave an overwhelming
+// advantage: 8 kHz holds far more bins than 40 Hz and therefore far more chances to contain a
+// noise maximum. A cymbal would beat a kick by arithmetic, not by loudness. The spectrum is
+// therefore read on a constant-width log grid - the axis an analyser is drawn on - and each band
+// is the mean power of the bins under it, so a wide band does not win just for holding more bins.
+//
+// `earWeight` mixes in the A-weighting curve (0 flat, 1 full): a bass note has to be much stronger
+// to read as the peak, which is what the ear actually does.
+//
+// `peakGate` is the threshold: the winning band has to stand out from the mean band level, or the
+// block holds the previous reading. Without it silence picks a different winner every window and
+// the chart draws noise as if it were price.
+//
+// The band decides WHICH region sounds; the strongest bin inside it decides WHERE, refined between
+// bins, so the reading keeps the transform's own resolution instead of snapping to a band centre.
+function marketPeakHz(mag, n, sampleRate, minHz, maxHz, opts) {
+  opts = opts || {};
+  var bpo = Math.max(2, Math.round(Number(opts.bandsPerOctave) || MARKET_PEAK_DEFAULTS.bandsPerOctave));
+  var ear = opts.earWeight == null ? MARKET_PEAK_DEFAULTS.earWeight : Number(opts.earWeight);
+  var gate = opts.peakGate == null ? MARKET_PEAK_DEFAULTS.peakGate : Number(opts.peakGate);
+  ear = Math.min(1, Math.max(0, isFinite(ear) ? ear : MARKET_PEAK_DEFAULTS.earWeight));
+  gate = Math.min(1, Math.max(0, isFinite(gate) ? gate : MARKET_PEAK_DEFAULTS.peakGate));
   var binHz = sampleRate / n;
-  var a = Math.max(1, Math.floor(minHz / binHz));
-  var b = Math.min(mag.length - 2, Math.ceil(maxHz / binHz));
-  if (b < a) return { hz: 0, mag: 0 };
-  var best = a, bestVal = -1;
-  for (var k = a; k <= b; k++) {
-    if (mag[k] > bestVal) { bestVal = mag[k]; best = k; }
+  var lo = Math.max(1, minHz);
+  var hi = Math.min(maxHz, sampleRate * 0.5);
+  if (!(hi > lo) || mag.length < 4) return { hz: 0, level: 0, held: false };
+  var step = 1 / bpo;
+  var bands = Math.max(1, Math.round(Math.log(hi / lo) / Math.LN2 * bpo));
+  var bestWeighted = -1, bestBin = -1, bestLevel = 0, bestCentre = 0;
+  var sum = 0, used = 0;
+  for (var b = 0; b < bands; b++) {
+    var bLo = lo * Math.pow(2, b * step);
+    var bHi = lo * Math.pow(2, (b + 1) * step);
+    var kA = Math.max(1, Math.ceil(bLo / binHz));
+    var kB = Math.min(mag.length - 2, Math.floor(bHi / binHz));
+    if (kB < kA) {
+      // Narrower than one bin - the bottom octaves at this transform size. The band is the bin
+      // its centre falls in, which is exactly the linear resolution the transform can offer there.
+      kA = Math.max(1, Math.round((bLo + bHi) * 0.5 / binHz));
+      kB = kA;
+      if (kA > mag.length - 2) break;
+    }
+    var acc = 0, peakBin = kA, peakMag = -1;
+    for (var k = kA; k <= kB; k++) {
+      var m = mag[k];
+      acc += m * m;
+      if (m > peakMag) { peakMag = m; peakBin = k; }
+    }
+    if (peakMag <= 0) continue;
+    var centre = 0.5 * (bLo + bHi);
+    var gain = 1 - ear + ear * marketAWeight(centre);
+    // The band's level is its MEAN power, not its loudest bin. A constant-Q band holds more bins
+    // as it climbs, and a max would hand the top octave the chart for arithmetic reasons: measured
+    // on white noise, max-in-band puts 70% of the blocks above 4 kHz while the mean puts 0%. The
+    // mean's price is that a pure tone in a wide band is diluted by the empty bins around it,
+    // which is also how the ear integrates energy over a critical band.
+    var weighted = Math.sqrt(acc / (kB - kA + 1)) * gain;
+    sum += weighted;
+    used++;
+    if (weighted > bestWeighted) {
+      bestWeighted = weighted;
+      bestBin = peakBin;
+      bestLevel = peakMag;
+      bestCentre = centre;
+    }
   }
-  if (bestVal <= 0) return { hz: 0, mag: 0 };
-  var l = Math.log(mag[best - 1] + 1e-12);
-  var c = Math.log(bestVal + 1e-12);
-  var r = Math.log(mag[best + 1] + 1e-12);
+  if (bestBin < 0 || bestLevel <= 0) {
+    // Digital silence has no peak. Holding the previous price keeps one silent block from drawing
+    // a spike to the floor; with nothing before it there is no price yet, and 0 says that.
+    if (Number(opts.prevHz) > 0) return { hz: Number(opts.prevHz), level: 0, held: true };
+    return { hz: 0, level: 0, held: false };
+  }
+  var mean = used ? sum / used : 0;
+  if (gate > 0 && bestWeighted < mean * (1 + gate * 8) && Number(opts.prevHz) > 0) {
+    return { hz: Number(opts.prevHz), level: bestLevel, held: true, bandHz: bestCentre };
+  }
+  var l = Math.log(mag[bestBin - 1] + 1e-12);
+  var c = Math.log(bestLevel + 1e-12);
+  var r = Math.log(mag[bestBin + 1] + 1e-12);
   var den = l - 2 * c + r;
   var delta = den !== 0 ? 0.5 * (l - r) / den : 0;
   if (!isFinite(delta) || delta < -1 || delta > 1) delta = 0;
-  return { hz: (best + delta) * binHz, mag: bestVal };
+  // The top band's right edge rounds past maxHz, so the reading is clamped to the axis the knob
+  // promised; the chart's price axis is the same range.
+  var hzOut = (bestBin + delta) * binHz;
+  if (hzOut < lo) hzOut = lo;
+  if (hzOut > hi) hzOut = hi;
+  return { hz: hzOut, level: bestLevel, held: false, bandHz: bestCentre };
 }
 
 function marketSeriesSignature(opts) {
-  return [opts.chunk, opts.slices, opts.minHz, opts.maxHz].join('|');
+  return [opts.chunk, opts.slices, opts.minHz, opts.maxHz,
+    opts.bandsPerOctave, opts.earWeight, opts.peakGate].join('|');
 }
 
 // ---------------------------------------------------------------- the series
@@ -123,14 +211,25 @@ function marketBuildSeries(pcm, sampleRate, opts) {
   var maxHz = Math.min(sampleRate / 2, Number(opts.maxHz) || sampleRate / 2);
   var sub = Math.max(32, Math.floor(chunk / slices));
   var count = Math.floor(pcm.length / chunk);
+  var bpo = Math.max(2, Math.round(Number(opts.bandsPerOctave) || MARKET_PEAK_DEFAULTS.bandsPerOctave));
+  var ear = opts.earWeight == null ? MARKET_PEAK_DEFAULTS.earWeight : Number(opts.earWeight);
+  var gate = opts.peakGate == null ? MARKET_PEAK_DEFAULTS.peakGate : Number(opts.peakGate);
+  ear = Math.min(1, Math.max(0, isFinite(ear) ? ear : MARKET_PEAK_DEFAULTS.earWeight));
+  gate = Math.min(1, Math.max(0, isFinite(gate) ? gate : MARKET_PEAK_DEFAULTS.peakGate));
+  var peakOpts = { bandsPerOctave: bpo, earWeight: ear, peakGate: gate, prevHz: 0 };
   var out = {
     sampleRate: sampleRate, chunk: chunk, slices: slices, minHz: minHz, maxHz: maxHz,
+    bandsPerOctave: bpo, earWeight: ear, peakGate: gate,
     count: count, duration: pcm.length / sampleRate, candlesPerSec: sampleRate / chunk,
-    signature: marketSeriesSignature({ chunk: chunk, slices: slices, minHz: minHz, maxHz: maxHz }),
+    signature: marketSeriesSignature({
+      chunk: chunk, slices: slices, minHz: minHz, maxHz: maxHz,
+      bandsPerOctave: bpo, earWeight: ear, peakGate: gate
+    }),
     t: new Float32Array(count), open: new Float32Array(count), high: new Float32Array(count),
     low: new Float32Array(count), close: new Float32Array(count), dom: new Float32Array(count),
     energy: new Float32Array(count)
   };
+  var prevDom = 0;
   for (var i = 0; i < count; i++) {
     var start = i * chunk;
     out.t[i] = start / sampleRate;
@@ -138,15 +237,21 @@ function marketBuildSeries(pcm, sampleRate, opts) {
     for (var k = 0; k < chunk; k++) { var v = pcm[start + k]; sum += v * v; }
     out.energy[i] = Math.sqrt(sum / chunk);
     // The chunk's own value: the full-window spectrum, so a bass fundamental is resolved at
-    // sampleRate/chunk rather than at the coarser sub-window spacing.
-    out.dom[i] = marketPeakHz(marketSpectrum(pcm, start, chunk), chunk, sampleRate, minHz, maxHz).hz;
+    // sampleRate/chunk rather than at the coarser sub-window spacing. A block that does not stand
+    // out from its own band mean holds the previous price.
+    peakOpts.prevHz = prevDom;
+    var dom = marketPeakHz(marketSpectrum(pcm, start, chunk), chunk, sampleRate, minHz, maxHz, peakOpts).hz;
+    prevDom = dom;
+    out.dom[i] = dom;
     // The box: each sub-window's own strongest frequency. First is the open, last the close,
     // the extremes the wicks - a real candlestick, every number of it from the audio.
     var o = 0, c = 0, hi = -Infinity, lo = Infinity;
+    peakOpts.prevHz = dom;
     for (var s = 0; s < slices; s++) {
       var at = start + Math.min(chunk - sub, Math.round(s * (chunk - sub) / Math.max(1, slices - 1)));
       if (slices === 1) at = start;
-      var hz = marketPeakHz(marketSpectrum(pcm, at, sub), sub, sampleRate, minHz, maxHz).hz;
+      var hz = marketPeakHz(marketSpectrum(pcm, at, sub), sub, sampleRate, minHz, maxHz, peakOpts).hz || dom;
+      peakOpts.prevHz = hz;
       if (s === 0) o = hz;
       c = hz;
       if (hz > hi) hi = hz;
@@ -222,13 +327,17 @@ async function marketEnsureSeries(key, url, opts) {
     marketSeriesState.key = key;
     marketSeriesState.count = cached.count;
     marketSeriesState.progress = 1;
+    marketSeriesState.bandsPerOctave = cached.bandsPerOctave;
+    marketSeriesState.earWeight = cached.earWeight;
+    marketSeriesState.peakGate = cached.peakGate;
     return cached;
   }
   var token = ++marketSeriesToken;
   var startedAt = Date.now();
   marketSeriesState = {
     key: key, phase: 'fetch', progress: 0, count: 0, error: '',
-    costMs: 0, sampleRate: 0, chunk: opts.chunk, slices: opts.slices, cached: false
+    costMs: 0, sampleRate: 0, chunk: opts.chunk, slices: opts.slices, cached: false,
+    bandsPerOctave: opts.bandsPerOctave, earWeight: opts.earWeight, peakGate: opts.peakGate
   };
   try {
     var pcm = marketPcmCacheGet(key);
@@ -248,6 +357,9 @@ async function marketEnsureSeries(key, url, opts) {
     marketSeriesState.count = series.count;
     marketSeriesState.progress = 1;
     marketSeriesState.costMs = Date.now() - startedAt;
+    marketSeriesState.bandsPerOctave = series.bandsPerOctave;
+    marketSeriesState.earWeight = series.earWeight;
+    marketSeriesState.peakGate = series.peakGate;
     return series;
   } catch (err) {
     if (token !== marketSeriesToken) return null;
@@ -311,6 +423,8 @@ function marketSeriesStatus() {
     count: marketSeriesState.count, error: marketSeriesState.error,
     costMs: marketSeriesState.costMs, sampleRate: marketSeriesState.sampleRate,
     chunk: marketSeriesState.chunk, slices: marketSeriesState.slices,
+    bandsPerOctave: marketSeriesState.bandsPerOctave,
+    earWeight: marketSeriesState.earWeight, peakGate: marketSeriesState.peakGate,
     cached: marketSeriesState.cached,
     pcmHeld: !!MARKET_PCM_CACHE.pcm, seriesHeld: Object.keys(MARKET_SERIES_CACHE).length
   };

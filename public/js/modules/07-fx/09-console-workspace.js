@@ -228,11 +228,14 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhlyricDrift', '歌词飘散', '银河黑洞 歌词 漂移 漂浮 飘散 缓慢'),
         fxConsoleItem({ selector: '.fx-blackhole-tuning .fx-actions' }, '恢复银河黑洞默认', '银河黑洞 重置 还原 默认')
       ] },
-      { key: 'market', title: '节奏股市', hint: 'K线由歌曲自己的频谱算出：前四项改的是测量，要重新分析；实体与影线改的是已画出的K线；停盘与镜头每帧生效', items: [
+      { key: 'market', title: '节奏股市', hint: 'K线由歌曲自己的频谱算出：前七项改的是测量（对数频带 + 等响加权），要重新分析；实体与影线改的是已画出的K线；停盘与镜头每帧生效', items: [
         fxConsoleItem('fx-mkchunkSamples', '分析块长度', '节奏股市 频谱 分析 块 采样 长度 FFT 分辨率'),
         fxConsoleItem('fx-mkwickSlices', '影线切片数', '节奏股市 影线 切片 最高 最低 子窗'),
         fxConsoleItem('fx-mkminHz', '最低频率', '节奏股市 频率 下限 低频 贝斯'),
         fxConsoleItem('fx-mkmaxHz', '最高频率', '节奏股市 频率 上限 高频 人声'),
+        fxConsoleItem('fx-mkbandsPerOctave', '每八度频带数', '节奏股市 对数 频带 分辨率 每八度'),
+        fxConsoleItem('fx-mkearWeight', '等响加权', '节奏股市 等响 A加权 听感 人耳 平坦'),
+        fxConsoleItem('fx-mkpeakGate', '突出度门槛', '节奏股市 门槛 噪声 突出 静音 保持'),
         fxConsoleItem('fx-mkrefHz', '基准频率', '节奏股市 基准 参考 频率 价格 零点'),
         fxConsoleItem('fx-mkoctaveUnits', '每八度高度', '节奏股市 八度 对数 高度 价格 刻度'),
         fxConsoleItem('fx-mkpriceFloor', '价格基线', '节奏股市 基线 价格 上下 平移'),
@@ -243,7 +246,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mkminBody', '最小实体高度', '节奏股市 实体 最小 高度 十字星'),
         fxConsoleItem('fx-mkenergyGain', '响度提亮', '节奏股市 响度 能量 亮度 颜色'),
         fxConsoleItem('fx-mkcurveOpacity', '收盘曲线亮度', '节奏股市 收盘 曲线 折线 透明度'),
-        fxConsoleItem('t-mkcolorFlip', '涨跌反色', '节奏股市 涨跌 反色 红涨 绿跌 配色'),
+        fxConsoleItem('t-mkcolorFlip', '绿涨红跌', '节奏股市 涨跌 配色 红涨 绿跌 海外 反色'),
         fxConsoleItem('t-mkbeatSync', '按鼓点停盘', '节奏股市 鼓点 停盘 卡点 节拍 伸缩'),
         fxConsoleItem('fx-mkhitSlow', '停盘速度', '节奏股市 停盘 速度 慢放 鼓点'),
         fxConsoleItem('fx-mkhitHold', '停盘时长', '节奏股市 停盘 时长 停顿 保持'),

@@ -143,7 +143,7 @@ function toMarkdown(rows) {
     if (!row.ok) { lines.push(`\n${row.label}: ${row.error || 'failed'}`); continue; }
     lines.push(`\n### ${row.label} — ${row.box.cssW}x${row.box.cssH} · 播放头 ${Math.round(row.head * 100)}%`);
     lines.push('');
-    lines.push(`K线 ${row.box.candles} 根 / 已写 ${row.box.written} · 停盘 ${row.box.hits} 次(${row.box.hitSource}) · 画布 ${row.box.canvasW}x${row.box.canvasH} · dpr ${row.box.dpr} · 每样本重绘 ${row.box.repeat} 次 · 频谱分析 ${row.box.analysisMs}ms`);
+    lines.push(`K线 ${row.box.candles} 根 / 已写 ${row.box.written} · 停盘 ${row.box.hits} 次(${row.box.hitSource}) · 画布 ${row.box.canvasW}x${row.box.canvasH} · dpr ${row.box.dpr} · 每样本重绘 ${row.box.repeat} 次 · 频谱分析 ${row.box.analysisMs}ms · 颜色缓冲 ${row.box.colourLen} 项 / 峰值 ${row.box.colourPeak}`);
     lines.push('');
     lines.push(`| 方案 | 中位 ms | 均值 | p95 | 最大 | >${Math.round(FRAME_BUDGET_MS * 10) / 10}ms | 相对 full(中位) | 模块自测 JS 中位 | draw calls | 三角形 |`);
     lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
@@ -260,6 +260,22 @@ const PAGE_RUN = String.raw`async function (opts) {
   }
 
   const info = window.renderer.info.render;
+  // A candle with no colour draws black. setColorAt allocates instanceColor from the mesh count
+  // at the moment of the first call, so an empty buffer is the whole difference between a chart
+  // and a silhouette - and it is invisible to every count and draw-call reading.
+  const ic = st.bodies && st.bodies.instanceColor;
+  let colourPeak = 0;
+  if (ic && ic.array) {
+    for (let k = 0; k < Math.min(ic.array.length, Math.max(0, st.written) * 3); k++) {
+      if (ic.array[k] > colourPeak) colourPeak = ic.array[k];
+    }
+  }
+  if (!ic || !ic.array || !ic.array.length) {
+    return { ok: false, error: 'the bodies have no instanceColor buffer: every candle would draw black' };
+  }
+  if (st.written > 0 && colourPeak <= 0) {
+    return { ok: false, error: 'every written candle colour is zero: the chart is a silhouette' };
+  }
   const out = {
     ok: true,
     costs: costs,
@@ -274,6 +290,7 @@ const PAGE_RUN = String.raw`async function (opts) {
       shown: Math.round(st.shown * 100) / 100,
       hits: st.hits, hitSource: st.hitSource,
       analysisMs: analysisMs, repeat: repeat,
+      colourLen: ic.array.length, colourPeak: Math.round(colourPeak * 1000) / 1000,
       groupVisible: st.group ? st.group.visible : null,
       bodies: st.bodies ? st.bodies.count : 0,
     },
@@ -319,7 +336,7 @@ async function main() {
       const acc = {};
       const jsAcc = {};
       const meta = {};
-      let box = null;
+      const boxes = {};
       let failure = '';
       for (let r = 0; r < args.rounds && !failure; r++) {
         const order = phases.slice(r % phases.length).concat(phases.slice(0, r % phases.length));
@@ -336,7 +353,7 @@ async function main() {
             res = { ok: false, error: String((err && err.message) || err) };
           }
           if (!res || !res.ok) { failure = (res && res.error) || 'failed'; break; }
-          box = res.box;
+          boxes[phase.name] = res.box;
           if (!acc[phase.name]) { acc[phase.name] = []; jsAcc[phase.name] = []; }
           for (const c of res.costs) acc[phase.name].push(c);
           for (const v of res.js) jsAcc[phase.name].push(v);
@@ -358,7 +375,7 @@ async function main() {
         s.tris = meta[phase.name].tris;
         results[phase.name] = s;
       }
-      const row = { label: 'market', ok: true, head, box, results };
+      const row = { label: 'market', ok: true, head, box: boxes.full || boxes[phases[0].name] || null, results };
       rows.push(row);
       emit(outFile, (args.markdown ? toMarkdown([row]) : JSON.stringify(row)) + '\n');
     }

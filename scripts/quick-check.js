@@ -2020,6 +2020,18 @@ function runRhythmMarketPresetCheck() {
   if (!/function marketStatus\(/.test(presetText) || !/target: Math\.round\(marketPlayheadCandles\(\) \* 1000\) \/ 1000/.test(presetText)) {
     fail('marketStatus() must report the two clocks live: shown, target, rate and backlog are how a stall is seen');
   }
+  // setColorAt() sizes instanceColor from the mesh count at the moment of the first call. The draw
+  // count starts at zero, so the buffer has to be allocated before that - otherwise it is born
+  // empty, every instance reads black, and not one count or draw call shows it.
+  const colourAt = presetText.indexOf('mesh.instanceColor = new THREE.InstancedBufferAttribute(');
+  const countAt = presetText.indexOf('mesh.count = 0');
+  if (colourAt < 0) fail('the instanced candles must allocate their instanceColor buffer: setColorAt would size it from a zero draw count and every candle would draw black');
+  if (colourAt >= 0 && countAt >= 0 && colourAt > countAt) {
+    fail('instanceColor must be allocated before mesh.count = 0, or setColorAt() sizes the buffer at zero');
+  }
+  if (!/mesh\.instanceColor\.setUsage\(THREE\.DynamicDrawUsage\)/.test(presetText)) {
+    fail('the colour buffer must be a dynamic attribute: it is rewritten as the chart grows');
+  }
   if (!/mineradio-market-tuning-v1/.test(tuningText) || !/function bindMarketTuningResetButtons\(/.test(tuningText)) {
     fail('the market knobs need their own store and one reset button per row');
   }
@@ -2028,7 +2040,7 @@ function runRhythmMarketPresetCheck() {
   const resetAt = tuningText.indexOf('function resetMarketTuning()');
   const resetFn = resetAt < 0 ? '' : tuningText.slice(resetAt, tuningText.indexOf('\n}', resetAt));
   if (!resetFn || (resetFn.match(/marketTuningApply\(/g) || []).length !== 1 || !/\['series', 'chart', 'wall'\]/.test(resetFn)) {
-    fail('resetting every market knob must apply one rebuild per kind, not one per key: re-measuring the song per knob decodes it 39 times');
+    fail('resetting every market knob must apply one rebuild per kind, not one per key: re-measuring the song per knob decodes it 42 times');
   }
   if (!/key: 'market'/.test(consoleText) || !/title: '节奏股市'/.test(consoleText)) {
     fail('the visual console needs a 节奏股市 group in the 动效 tab');
@@ -2049,8 +2061,19 @@ function runRhythmMarketPresetCheck() {
     presetRel: '02-visual/21-rhythm-market-preset.js',
     presetText, tuningText, htmlText, consoleText, fail
   });
-  if (schema.size !== 39) {
-    fail(`the market knob schema must stay at 39 knobs while the panel has 39 rows (found ${schema.size})`);
+  if (schema.size !== 42) {
+    fail(`the market knob schema must stay at 42 knobs while the panel has 42 rows (found ${schema.size})`);
+  }
+  // The evaluation axis is part of the measurement, not just a rendering detail: a linear bin scan
+  // hands the top octave dozens of times more chances to win, so the peak is searched on a log grid
+  // and weighted by the equal-loudness curve.
+  for (const [pattern, why] of [
+    [/function marketAWeight\(hz\)/, 'the equal-loudness curve has to exist: without it a strong kick reads as the loudest band'],
+    [/var bands = Math\.max\(1, Math\.round\(Math\.log\(hi \/ lo\) \/ Math\.LN2 \* bpo\)\)/, 'the peak must be searched on a log frequency grid, not per linear bin'],
+    [/earWeight: 0\.75/, 'the schema must ship a non-zero equal-loudness mix, or the curve is dead code'],
+    [/peakGate: 0\.25/, 'the schema must ship a non-zero prominence gate, or silence draws noise as price'],
+  ]) {
+    if (!pattern.test(serialText)) fail(why);
   }
 
   // The draw bench is the frame-cost reader. It has to load the SHIPPED modules - a bench that

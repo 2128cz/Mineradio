@@ -279,12 +279,18 @@ test('with beatSync off the rate never drops, even with a beat point waiting', (
 
 // ---------------------------------------------------------------- the camera
 
-function stubCamera() {
+function stubCamera(pos, look) {
+  const p = pos || { x: 1, y: 2, z: 3 };
+  const l = look || { x: 0, y: 0, z: 0 };
   const cam = {
-    position: new THREE.Vector3(1, 2, 3),
+    position: new THREE.Vector3(p.x, p.y, p.z),
     fov: 45, aspect: 1.7,
     lookAt() {}, updateProjectionMatrix() {},
-    getWorldDirection(v) { return v.set(0, 0, -1); }
+    getWorldDirection(v) {
+      const dx = l.x - cam.position.x, dy = l.y - cam.position.y, dz = l.z - cam.position.z;
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      return v.set(dx / len, dy / len, dz / len);
+    }
   };
   return cam;
 }
@@ -342,7 +348,7 @@ test('with the free camera released the pose damps onto the head, learned from r
   const lift = S.marketParam('camHeight');
   assert.ok(Math.abs(S.camera.position.x - (S.marketCandleX(0) + lead)) < 1e-6, `x: ${S.camera.position.x}`);
   assert.ok(Math.abs(S.camera.position.y - (S.marketCurveY(0) + lift)) < 1e-6, `y: ${S.camera.position.y}`);
-  assert.ok(Math.abs(S.camera.position.z - (-dist)) < 1e-6, `z: ${S.camera.position.z}`);
+  assert.ok(Math.abs(S.camera.position.z - dist) < 1e-6, `z: ${S.camera.position.z} (the lens must be on the +Z side)`);
   assert.ok(Math.abs(S.camera.fov - S.marketParam('fovDeg')) < 1e-6, `fov: ${S.camera.fov}`);
   assert.equal(S.marketCam.primed, true, 'the first pose must prime the damp');
 
@@ -377,6 +383,60 @@ test('resetMarketCamera returns the view to the axis and unprimes the damp', () 
   assert.equal(S.marketCam.pitch, 0);
   assert.equal(S.marketCam.zoom, 1);
   assert.equal(S.marketCam.primed, false, 'a camera that is primed would glide from the old view');
+});
+
+// ---------------------------------------------------------------- the colours and the side
+
+test('red on the way up by default, and the switch swaps the pair', () => {
+  reset({ shown: 0 });
+  state.energyRef = 1;
+  assert.equal(S.marketCandleScratch(), true, 'the colour scratch must allocate');
+  const read = () => ({ r: S.marketScratchColor.r, g: S.marketScratchColor.g, b: S.marketScratchColor.b });
+  S.marketTuning = undefined;
+  let c = (S.marketCandleColor(true, 1), read());
+  assert.ok(c.r > c.g * 2 && c.r > c.b * 2, `an up candle must be red by default, got ${c.r}/${c.g}/${c.b}`);
+  c = (S.marketCandleColor(false, 1), read());
+  assert.ok(c.g > c.r * 2, `a down candle must be green by default, got ${c.r}/${c.g}/${c.b}`);
+  S.marketTuning = { colorFlip: 1 };
+  try {
+    c = (S.marketCandleColor(true, 1), read());
+    assert.ok(c.g > c.r * 2, `with 绿涨红跌 on, an up candle must be green, got ${c.r}/${c.g}/${c.b}`);
+    c = (S.marketCandleColor(false, 1), read());
+    assert.ok(c.r > c.g * 2, `with 绿涨红跌 on, a down candle must be red, got ${c.r}/${c.g}/${c.b}`);
+  } finally {
+    S.marketTuning = undefined;
+  }
+});
+
+test('the camera stands on +Z so the chart grows left to right on screen', () => {
+  reset({ shown: 12 });
+  S.camera = stubCamera();
+  S.freeCamera = undefined;
+  S.marketCam.blend = 1;
+  S.marketCam.primed = false;
+  S.marketCam.yaw = 0;
+  S.marketCam.pitch = 0;
+  S.marketCam.zoom = 1;
+  S.applyStockCameraPose(0.016);
+  // A camera looking along -Z has world +X on its screen-right; from -Z (looking along +Z) the
+  // same world axis lands on the left and the chart grows backwards.
+  assert.ok(S.camera.position.z > 0, `the camera must be on the +Z side, got z=${S.camera.position.z}`);
+  assert.ok(S.camera.position.x > S.marketCandleX(12), 'camLead must put the lens past the head, toward the un-drawn future');
+  S.camera = undefined;
+});
+
+test('the wall sits behind the chart, on the far side from the camera', () => {
+  reset({ shown: 0 });
+  state.wall = { position: new THREE.Vector3(), scale: new THREE.Vector3(1, 1, 1), visible: true };
+  state.wallTex = null;
+  S.camera = stubCamera({ x: 4, y: 1.6, z: 9 }, { x: 0, y: 0, z: 0 });
+  S.marketPlaceWall();
+  assert.equal(state.wall.position.z, -S.marketParam('wallDepth'),
+    `the wall must be at -wallDepth, got ${state.wall.position.z}`);
+  assert.ok(state.wall.position.z < 0, 'the wall must be behind the chart from a +Z camera');
+  assert.ok(state.wall.scale.x > 0 && state.wall.scale.y > 0, 'the wall must cover the frustum');
+  state.wall = null;
+  S.camera = undefined;
 });
 
 // ---------------------------------------------------------------- Hz -> price

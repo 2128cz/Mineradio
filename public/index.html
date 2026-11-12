@@ -1232,6 +1232,9 @@
         <div class="fx-slider"><label>影线切片数</label><input id="fx-mkwickSlices" type="range" min="1" max="8" step="1" oninput="setMarketTuning('wickSlices', this.value)"><output></output></div>
         <div class="fx-slider"><label>最低频率</label><input id="fx-mkminHz" type="range" min="20" max="400" step="5" oninput="setMarketTuning('minHz', this.value)"><output></output></div>
         <div class="fx-slider"><label>最高频率</label><input id="fx-mkmaxHz" type="range" min="1000" max="16000" step="100" oninput="setMarketTuning('maxHz', this.value)"><output></output></div>
+        <div class="fx-slider"><label>每八度频带数</label><input id="fx-mkbandsPerOctave" type="range" min="4" max="48" step="1" oninput="setMarketTuning('bandsPerOctave', this.value)"><output></output></div>
+        <div class="fx-slider"><label>等响加权</label><input id="fx-mkearWeight" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('earWeight', this.value)"><output></output></div>
+        <div class="fx-slider"><label>突出度门槛</label><input id="fx-mkpeakGate" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('peakGate', this.value)"><output></output></div>
         <div class="fx-slider"><label>基准频率</label><input id="fx-mkrefHz" type="range" min="20" max="1000" step="5" oninput="setMarketTuning('refHz', this.value)"><output></output></div>
         <div class="fx-slider"><label>每八度高度</label><input id="fx-mkoctaveUnits" type="range" min="0.2" max="4" step="0.05" oninput="setMarketTuning('octaveUnits', this.value)"><output></output></div>
         <div class="fx-slider"><label>价格基线</label><input id="fx-mkpriceFloor" type="range" min="-8" max="8" step="0.1" oninput="setMarketTuning('priceFloor', this.value)"><output></output></div>
@@ -1242,7 +1245,7 @@
         <div class="fx-slider"><label>最小实体高度</label><input id="fx-mkminBody" type="range" min="0" max="0.5" step="0.005" oninput="setMarketTuning('minBody', this.value)"><output></output></div>
         <div class="fx-slider"><label>响度提亮</label><input id="fx-mkenergyGain" type="range" min="0" max="2" step="0.05" oninput="setMarketTuning('energyGain', this.value)"><output></output></div>
         <div class="fx-slider"><label>收盘曲线亮度</label><input id="fx-mkcurveOpacity" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('curveOpacity', this.value)"><output></output></div>
-        <div class="fx-toggle" id="t-mkcolorFlip" onclick="toggleMarketTuning('colorFlip')"><span>涨跌反色（绿涨红跌）</span><span class="dot"></span></div>
+        <div class="fx-toggle" id="t-mkcolorFlip" onclick="toggleMarketTuning('colorFlip')"><span>绿涨红跌（海外习惯，关=红涨绿跌）</span><span class="dot"></span></div>
         <div class="fx-toggle" id="t-mkbeatSync" onclick="toggleMarketTuning('beatSync')"><span>按鼓点停盘</span><span class="dot"></span></div>
         <div class="fx-slider"><label>停盘速度</label><input id="fx-mkhitSlow" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitSlow', this.value)"><output></output></div>
         <div class="fx-slider"><label>停盘时长</label><input id="fx-mkhitHold" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('hitHold', this.value)"><output></output></div>

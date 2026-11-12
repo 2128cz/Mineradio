@@ -33,6 +33,12 @@ var MARKET_TUNING_SCHEMA = {
   wickSlices: { def: 4, min: 1, max: 8, kind: 'count', rebuild: 'series' },
   minHz: { def: 40, min: 20, max: 400, kind: 'hz', rebuild: 'series' },
   maxHz: { def: 8000, min: 1000, max: 16000, kind: 'hz', rebuild: 'series' },
+  // The evaluation axis and the ear. The bins are linear in Hz and the ear is not, so the peak is
+  // searched on a log grid; earWeight mixes in the equal-loudness curve, and peakGate is how far
+  // the winner has to stand out from the band mean before it counts as this block's price.
+  bandsPerOctave: { def: 12, min: 4, max: 48, kind: 'count', rebuild: 'series' },
+  earWeight: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
+  peakGate: { def: 0.25, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
   // ---- Hz to world height. Logarithmic: 230 Hz and 1.2 kHz are 2.4 octaves apart, and a linear
   // map would crush every bass passage onto the floor.
   refHz: { def: 110, min: 20, max: 1000, kind: 'hz', rebuild: 'chart' },
@@ -127,7 +133,10 @@ function marketSeriesOpts() {
     chunk: marketParam('chunkSamples'),
     slices: marketParam('wickSlices'),
     minHz: marketParam('minHz'),
-    maxHz: marketParam('maxHz')
+    maxHz: marketParam('maxHz'),
+    bandsPerOctave: marketParam('bandsPerOctave'),
+    earWeight: marketParam('earWeight'),
+    peakGate: marketParam('peakGate')
   };
 }
 
@@ -164,7 +173,11 @@ function marketRequestSeries(force) {
   var url = marketSongUrl();
   if (!key || !url) return;
   var opts = marketSeriesOpts();
-  var signature = [opts.chunk, opts.slices, opts.minHz, opts.maxHz].join('|');
+  // One home for the key order: the series module builds the same string and stores it on the
+  // series, so a knob that changes the measurement can never be mistaken for a cache hit.
+  var signature = (typeof marketSeriesSignature === 'function')
+    ? marketSeriesSignature(opts)
+    : [opts.chunk, opts.slices, opts.minHz, opts.maxHz].join('|');
   if (!force && marketState.seriesKey === key && marketState.seriesSignature === signature) return;
   if (!force && marketState.pendingKey === key && marketState.pendingSignature === signature) return;
   marketState.pendingKey = key;
@@ -462,6 +475,13 @@ function marketBuildChart() {
     new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }), need);
   [bodies, wicks].forEach(function (mesh) {
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // setColorAt() allocates instanceColor from this.count the first time it is called, and the
+    // draw count below starts at zero - so the buffer has to be sized here, white, or it is born
+    // empty and every instance reads black. That is the difference between a chart and a silhouette.
+    var white = new Float32Array(need * 3);
+    for (var w = 0; w < white.length; w++) white[w] = 1;
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(white, 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     mesh.count = 0;
     marketState.group.add(mesh);
@@ -720,12 +740,14 @@ function marketStepClock(dt, nowSec) {
 function marketPlaceWall() {
   var wall = marketState.wall;
   if (!wall || typeof camera === 'undefined' || !camera) return;
-  var depth = Math.max(1, marketParam('wallDepth'));
+  // The wall sits behind the chart from the camera's side, so its plane is at -wallDepth: the
+  // camera is on +Z looking toward -Z, the chart is at z=0 and the wall is further behind it.
+  var depth = -Math.max(1, marketParam('wallDepth'));
   if (!marketCandleScratch()) return;
   var dir = marketScratchPos;
   camera.getWorldDirection(dir);
-  var t = Math.abs(dir.z) > 1e-4 ? (depth - camera.position.z) / dir.z : depth;
-  if (!(t > 0.5)) t = depth;
+  var t = Math.abs(dir.z) > 1e-4 ? (depth - camera.position.z) / dir.z : -depth;
+  if (!(t > 0.5)) t = -depth;
   var cx = camera.position.x + dir.x * t;
   var cy = camera.position.y + dir.y * t;
   var over = marketParam('wallOverscan');
@@ -793,7 +815,9 @@ function marketCameraScratch() {
 
 // The follow pose before damping. The growing head is the look target; camLead slides it ahead
 // of the lens so the un-drawn future is on screen, camHeight lifts the eye off the price axis,
-// camDist backs it off along -Z (the wall is at +Z, so this is the side the chart is seen from).
+// and camDist puts the camera on the +Z side of the chart. The side matters: a camera looking
+// along +Z has its screen-right along world -X, which would make the chart grow right to left.
+// From +Z the chart's +X is screen-right, so the candles march left to right like a price series.
 function marketCameraGoal(pos, look) {
   var at = marketState.shown;
   look.set(marketCandleX(at), marketCurveY(at), 0);
@@ -804,8 +828,8 @@ function marketCameraGoal(pos, look) {
   var lead = marketParam('camLead');
   var height = marketParam('camHeight') * zoom;
   var cy = Math.cos(yaw), sy = Math.sin(yaw);
-  var ox = lead * cy - dist * sy;
-  var oz = -lead * sy - dist * cy;
+  var ox = lead * cy + dist * sy;
+  var oz = -lead * sy + dist * cy;
   var cp = Math.cos(pitch), sp = Math.sin(pitch);
   pos.set(look.x + ox, look.y + height * cp - oz * sp, look.z + height * sp + oz * cp);
 }
