@@ -66,11 +66,26 @@ var MARKET_TUNING_SCHEMA = {
   hitHold: { def: 0.10, min: 0, max: 0.6, kind: 'sec', rebuild: 'live' },
   hitStrength: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   reboundTau: { def: 0.22, min: 0.02, max: 2, kind: 'sec', rebuild: 'live' },
+  // Pulling the rate down has to read as a stop inside hitHold; letting it go is reboundTau. Two
+  // time constants, or the speed jumps at the edges of every beat.
+  hitAttack: { def: 0.06, min: 0.01, max: 0.4, kind: 'sec', rebuild: 'live' },
   catchGain: { def: 0.35, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   maxRate: { def: 6, min: 1, max: 24, kind: 'ratio', rebuild: 'live' },
-  seekSnap: { def: 6, min: 1, max: 200, kind: 'count', rebuild: 'live' },
+  // A seek is the audio clock itself jumping by this many candles' worth of time. It is not the
+  // display's lag: snapping on the lag is what made the head teleport after a hiccup.
+  seekSnap: { def: 12, min: 1, max: 200, kind: 'count', rebuild: 'live' },
+  // ---- the beat's kickback: the camera shakes and the wall lights up on the same hit
+  hitDecay: { def: 0.16, min: 0.04, max: 0.6, kind: 'sec', rebuild: 'live' },
+  camShake: { def: 0.1, min: 0, max: 0.6, kind: 'unit', rebuild: 'live' },
+  wallFlash: { def: 0.5, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // ---- the camera. camDamp is a time constant against REAL dt, never the stretched clock.
   camDamp: { def: 0.42, min: 0.02, max: 3, kind: 'sec', rebuild: 'live' },
+  // Auto zoom frames the recent swing to zoomFill of the visible height, so a quiet passage is
+  // not a flat line at the far end of the lens. The wheel still scales on top of it.
+  autoZoom: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  zoomFill: { def: 0.45, min: 0.15, max: 0.9, kind: 'ratio', rebuild: 'live' },
+  // A falling candle that lands far below the recent range throws sparks where it hit.
+  crashSpark: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   camDist: { def: 9, min: 2, max: 40, kind: 'unit', rebuild: 'live' },
   camHeight: { def: 1.6, min: -6, max: 12, kind: 'unit', rebuild: 'live' },
   camLead: { def: 4, min: -20, max: 20, kind: 'unit', rebuild: 'live' },
@@ -106,14 +121,16 @@ var marketState = {
   energyRef: 0.05, group: null, bodies: null, wicks: null, curve: null,
   wall: null, wallTex: null, wallCanvas: null, icons: [], iconSource: '',
   hitList: [], hitIdx: 0, hitSource: '', hits: 0, snaps: 0, backlog: 0,
-  lastCostMs: 0, frames: 0, error: '', errorToast: '', failedKey: '', failedSignature: '', coverKey: ''
+  lastCostMs: 0, frames: 0, error: '', errorToast: '', failedKey: '', failedSignature: '', coverKey: '',
+  wallFlash: 0, zoomDist: 0, zoomRange: 0, sparks: null, lastStep: 0.016
 };
 
 // The user's own view offset, on top of the follow pose. The preset owns these rather than
 // orbit.user*, so the app's own drag (which spins the cover particles) cannot fight the chart.
 var marketCam = {
   yaw: 0, pitch: 0, zoom: 1, blend: 0, dragging: false, lastX: 0, lastY: 0,
-  lookX: 0, lookY: 0, lookZ: 0, posX: 0, posY: 0, posZ: 0, primed: false
+  lookX: 0, lookY: 0, lookZ: 0, posX: 0, posY: 0, posZ: 0, primed: false,
+  shake: 0, shakePhase: 0, dist: 0
 };
 
 function marketPresetIsActive() {
@@ -463,6 +480,7 @@ function marketBuildScene() {
   marketState.wallDrift = 0;
   marketState.wallLastX = null;
   marketBuildChart();
+  marketBuildSparks();
   marketState.built = true;
   return true;
 }
@@ -529,6 +547,13 @@ function marketBuildChart() {
 
 function marketDisposeScene() {
   marketDisposeChart();
+  if (marketState.sparks) {
+    var sp = marketState.sparks;
+    if (marketState.group) marketState.group.remove(sp.points);
+    if (sp.geo) sp.geo.dispose();
+    if (sp.mat) sp.mat.dispose();
+    marketState.sparks = null;
+  }
   if (marketState.wall) {
     if (marketState.group) marketState.group.remove(marketState.wall);
     if (marketState.wall.geometry) marketState.wall.geometry.dispose();
@@ -630,7 +655,11 @@ function marketUpdateInstances() {
   var full = Math.min(s.count, Math.floor(shown));
   var head = Math.min(s.count - 1, full);
   var from = Math.min(marketState.written, full);
-  for (var i = marketState.written; i < full; i++) marketWriteCandle(i, 1);
+  for (var i = marketState.written; i < full; i++) {
+    marketWriteCandle(i, 1);
+    // Each candle is crossed once, so a crash is seen once - no need for a per-candle flag.
+    if (marketParam('crashSpark') > 0.5) marketSpawnCrashSpark(i);
+  }
   marketState.written = Math.max(marketState.written, full);
   var growing = shown > full + 1e-6 && full < s.count;
   if (growing) marketWriteCandle(head, marketClamp(shown - head, 0, 1));
@@ -647,7 +676,146 @@ function marketUpdateInstances() {
     marketFlagRange(curve.geometry.attributes.position, from, to, 3);
     curve.material.opacity = marketParam('curveOpacity');
   }
-  if (marketState.wall) marketState.wall.material.opacity = marketParam('wallOpacity');
+  if (marketState.wall) {
+    var mat = marketState.wall.material;
+    mat.opacity = marketParam('wallOpacity');
+    // A basic material multiplies its map by this colour, so the wall can flare without the
+    // texture being touched.
+    var flash = marketState.wallFlash * marketParam('wallFlash');
+    mat.color.setRGB(1 + flash, 1 + flash * 0.94, 1 + flash * 0.72);
+  }
+  marketUpdateZoom();
+}
+
+// How tall the recent swing is in world units: the camera frames it to zoomFill of the visible
+// height, so a quiet passage is not a flat line drawn at the far end of the lens. The range is
+// remembered (zoomRange) because a sudden expansion is itself an event worth animating.
+var MARKET_ZOOM_WINDOW = 60;
+function marketUpdateZoom() {
+  var s = marketState.series;
+  if (!s || !s.count) return;
+  var head = marketClamp(Math.floor(marketState.shown), 0, s.count - 1);
+  var fromIdx = Math.max(0, head - MARKET_ZOOM_WINDOW);
+  var hi = -Infinity, lo = Infinity;
+  for (var i = fromIdx; i <= head; i++) {
+    var h = marketSeriesY(s.high[i]);
+    var l = marketSeriesY(s.low[i]);
+    if (h > hi) hi = h;
+    if (l < lo) lo = l;
+  }
+  if (!(hi >= lo)) return;
+  var range = Math.max(0.001, hi - lo);
+  marketState.zoomRange = range;
+  var fill = marketClamp(marketParam('zoomFill'), 0.1, 0.95);
+  var tan = Math.tan(marketClamp(marketParam('fovDeg'), 20, 100) * Math.PI / 360);
+  var want = Math.max(0.5, range / (fill * 2 * tan));
+  if (!(marketState.zoomDist > 0)) marketState.zoomDist = want;
+  var k = 1 - Math.exp(-marketState.lastStep / Math.max(0.05, marketParam('camDamp')));
+  marketState.zoomDist += (want - marketState.zoomDist) * k;
+  marketCam.dist = marketState.zoomDist;
+}
+
+// ---------------------------------------------------------------- the crash sparks
+//
+// A candle that lands far below the swing before it throws a handful of embers where it hit.
+// Points with per-particle colour, additive and depth-write off: the cheapest glowing thing on
+// this three build, and the whole pool is one draw call.
+
+var MARKET_SPARK_POOL = 128;
+var MARKET_SPARK_PER_CRASH = 14;
+var MARKET_SPARK_LIFE = 0.75;
+
+function marketBuildSparks() {
+  if (marketState.sparks || typeof THREE === 'undefined' || !marketState.group) return;
+  var pos = new Float32Array(MARKET_SPARK_POOL * 3);
+  var col = new Float32Array(MARKET_SPARK_POOL * 3);
+  for (var i = 0; i < MARKET_SPARK_POOL; i++) pos[i * 3 + 1] = -9999;
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  var mat = new THREE.PointsMaterial({
+    size: 0.085, vertexColors: true, transparent: true, opacity: 0.95,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, toneMapped: false
+  });
+  var points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+  marketState.group.add(points);
+  marketState.sparks = {
+    points: points, geo: geo, mat: mat, pos: pos, col: col,
+    vel: new Float32Array(MARKET_SPARK_POOL * 2), life: new Float32Array(MARKET_SPARK_POOL), next: 0
+  };
+}
+
+// How far this candle fell below the swing it was walking on. Called once per candle, from the
+// write cursor, so a crash is seen exactly once.
+function marketSpawnCrashSpark(at) {
+  var s = marketState.series;
+  if (!s || !s.count || at < 3) return 0;
+  var from = Math.max(0, at - MARKET_ZOOM_WINDOW);
+  var hi = -Infinity, lo = Infinity;
+  for (var k = from; k < at; k++) {
+    if (s.high[k] > hi) hi = s.high[k];
+    if (s.low[k] < lo) lo = s.low[k];
+  }
+  var swing = hi - lo;
+  if (!(swing > 1e-3)) return 0;
+  var drop = s.close[at - 1] - s.low[at];
+  var ratio = drop / swing;
+  if (!(ratio > 0.6)) return 0;
+  var power = Math.min(1, (ratio - 0.6) * 2.5 + 0.2);
+  if (!marketState.sparks) marketBuildSparks();
+  var sp = marketState.sparks;
+  if (!sp) return power;
+  var x = marketCandleX(at);
+  var y = marketSeriesY(s.low[at]);
+  for (var j = 0; j < MARKET_SPARK_PER_CRASH; j++) {
+    var slot = (sp.next + j) % MARKET_SPARK_POOL;
+    // Slot-based angles: the same crash throws the same fan every time, so a seek that re-crosses
+    // the candle draws the same picture instead of a different one.
+    var a = slot * 2.399963 + j * 0.7;
+    var speed = (0.35 + (slot % 5) * 0.14) * power;
+    sp.pos[slot * 3] = x;
+    sp.pos[slot * 3 + 1] = y;
+    sp.pos[slot * 3 + 2] = 0;
+    sp.vel[slot * 2] = Math.cos(a) * speed;
+    sp.vel[slot * 2 + 1] = Math.abs(Math.sin(a)) * speed + 0.5 * power;
+    sp.life[slot] = 1;
+    sp.col[slot * 3] = 1;
+    sp.col[slot * 3 + 1] = 0.72;
+    sp.col[slot * 3 + 2] = 0.22;
+  }
+  sp.next = (sp.next + MARKET_SPARK_PER_CRASH) % MARKET_SPARK_POOL;
+  sp.geo.attributes.position.needsUpdate = true;
+  sp.geo.attributes.color.needsUpdate = true;
+  return power;
+}
+
+function marketStepSparks(dt) {
+  var sp = marketState.sparks;
+  if (!sp) return;
+  var any = false;
+  for (var i = 0; i < MARKET_SPARK_POOL; i++) {
+    if (sp.life[i] <= 0) continue;
+    any = true;
+    sp.life[i] -= dt / MARKET_SPARK_LIFE;
+    if (sp.life[i] <= 0) {
+      sp.life[i] = 0;
+      sp.pos[i * 3 + 1] = -9999;
+      sp.col[i * 3] = sp.col[i * 3 + 1] = sp.col[i * 3 + 2] = 0;
+      continue;
+    }
+    sp.vel[i * 2 + 1] -= 2.4 * dt;
+    sp.pos[i * 3] += sp.vel[i * 2] * dt;
+    sp.pos[i * 3 + 1] += sp.vel[i * 2 + 1] * dt;
+    var f = sp.life[i];
+    sp.col[i * 3] = f;
+    sp.col[i * 3 + 1] = f * 0.72;
+    sp.col[i * 3 + 2] = f * 0.22;
+  }
+  if (any) {
+    sp.geo.attributes.position.needsUpdate = true;
+    sp.geo.attributes.color.needsUpdate = true;
+  }
 }
 
 // ---------------------------------------------------------------- the beat
@@ -726,12 +894,28 @@ function marketConsumeHit(nowSec) {
 //
 // This is the only place the stretch lives. The data position (target) is the playhead, always;
 // the displayed position chases it at a rate the drum hits pull down and the backlog pushes up.
+//
+// The rate is never set, only eased: an instant drop from 1x to hitSlow stops the head dead in one
+// frame, which reads as a stutter, and an instant climb back reads as a teleport. hitAttack and
+// reboundTau are the two time constants, so the speed is continuous through the whole beat.
 function marketStepClock(dt, nowSec) {
   var s = marketState.series;
   if (!s || !s.count) return;
+  var step = Math.max(0, Number(dt) || 0);
+  // The beat's kickback decays on the same clock: the shake and the wall flash are one gesture.
+  var decay = Math.exp(-step / Math.max(0.02, marketParam('hitDecay')));
+  marketCam.shake *= decay;
+  marketCam.shakePhase += step;
+  marketState.wallFlash *= decay;
+  var playhead = marketPlayheadSeconds();
+  var played = playhead - marketState.lastPlayhead;
+  marketState.lastPlayhead = playhead;
   var target = marketPlayheadCandles();
   var prev = marketState.shown;
-  if (target < prev - 1e-6 || target - prev > marketParam('seekSnap')) {
+  // A SEEK is the audio clock itself jumping - a drag, a new song, a resume. Accumulated lag is
+  // not a seek: that is what the rebound exists for, and snapping on the lag is what makes the
+  // head teleport to the latest candle after any hiccup.
+  if (target < prev - 1e-6 || played > marketParam('seekSnap') / Math.max(0.001, s.candlesPerSec)) {
     marketState.shown = target;
     marketState.rate = 1;
     marketState.slowUntil = 0;
@@ -742,21 +926,28 @@ function marketStepClock(dt, nowSec) {
     marketSyncHitCursor();
     return;
   }
-  if (marketParam('beatSync') > 0.5 && marketConsumeHit(nowSec) > 0) {
-    marketState.rate = marketParam('hitSlow');
-    marketState.slowUntil = nowSec + marketParam('hitHold');
-    marketState.hits++;
+  if (marketParam('beatSync') > 0.5) {
+    var hit = marketConsumeHit(nowSec);
+    if (hit > 0) {
+      marketState.slowUntil = nowSec + marketParam('hitHold');
+      marketState.hits++;
+      // The same hit kicks the camera and lights the wall: one event, three surfaces.
+      marketCam.shake = Math.min(1, marketParam('camShake')) * marketClamp(hit, 0.2, 1);
+      marketState.wallFlash = 1;
+    }
   }
   var backlog = Math.max(0, target - marketState.shown);
   marketState.backlog = backlog;
-  if (nowSec < marketState.slowUntil) {
-    marketState.rate = marketParam('hitSlow');
-  } else {
-    var goal = Math.min(marketParam('maxRate'), 1 + marketParam('catchGain') * backlog);
-    var k = 1 - Math.exp(-dt / Math.max(0.005, marketParam('reboundTau')));
-    marketState.rate += (goal - marketState.rate) * k;
-  }
-  var next = marketState.shown + marketState.rate * s.candlesPerSec * dt;
+  var holding = nowSec < marketState.slowUntil;
+  var goal = holding
+    ? marketParam('hitSlow')
+    : Math.min(marketParam('maxRate'), 1 + marketParam('catchGain') * backlog);
+  // Two time constants, not one: pulling the rate down has to read as a stop within hitHold, and
+  // letting it go has to read as a catch-up. Easing both keeps the speed continuous.
+  var tau = holding ? marketParam('hitAttack') : marketParam('reboundTau');
+  var k = 1 - Math.exp(-step / Math.max(0.005, tau));
+  marketState.rate += (goal - marketState.rate) * k;
+  var next = marketState.shown + marketState.rate * s.candlesPerSec * step;
   marketState.shown = marketClamp(next, prev, target);
 }
 
@@ -811,8 +1002,11 @@ function updateStockMarket(now, dt) {
     if (marketState.built) marketBakeWall();
   }
   marketRefreshHits();
-  marketStepClock(Math.max(0, Math.min(0.1, dt || 0)), (now || 0) / 1000);
+  var step = Math.max(0, Math.min(0.1, dt || 0));
+  marketState.lastStep = step;
+  marketStepClock(step, (now || 0) / 1000);
   marketUpdateInstances();
+  marketStepSparks(step);
   marketPlaceWall();
   marketState.lastCostMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - startedAt;
   marketState.frames++;
@@ -850,6 +1044,9 @@ function marketCameraGoal(pos, look) {
   var pitch = marketClamp(marketCam.pitch, -1.35, 1.35);
   var zoom = marketClamp(marketCam.zoom, 0.25, 4);
   var dist = marketParam('camDist') * zoom;
+  // Auto zoom puts the recent swing at zoomFill of the visible height; the wheel still scales on
+  // top of it, so the framing can be nudged without turning the auto framing off.
+  if (marketParam('autoZoom') > 0.5 && marketState.zoomDist > 0) dist = marketState.zoomDist * zoom;
   var lead = marketParam('camLead');
   var height = marketParam('camHeight') * zoom;
   var cy = Math.cos(yaw), sy = Math.sin(yaw);
@@ -895,6 +1092,16 @@ function applyStockCameraPose(dt) {
     camera.getWorldDirection(marketCamMixedLook).multiplyScalar(10).add(camera.position);
   }
   marketCamMixedLook.lerp(marketCamGoalLook, marketCam.blend);
+  // The beat's kickback: a short, high-frequency wobble whose amplitude decays with hitDecay. It
+  // is written after the damp so the follow pose itself is untouched - the shake rides on top.
+  var shake = marketCam.shake;
+  if (shake > 1e-4) {
+    var ph = marketCam.shakePhase;
+    camera.position.x += Math.sin(ph * 61.7) * shake;
+    camera.position.y += Math.sin(ph * 43.3 + 1.7) * shake * 0.7;
+    marketCamMixedLook.x += Math.sin(ph * 71.3) * shake * 0.5;
+    marketCamMixedLook.y += Math.sin(ph * 53.9 + 0.9) * shake * 0.5;
+  }
   camera.lookAt(marketCamMixedLook);
   camera.fov += (marketParam('fovDeg') - camera.fov) * marketCam.blend;
   camera.updateProjectionMatrix();

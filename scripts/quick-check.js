@@ -1986,10 +1986,9 @@ function runRhythmMarketPresetCheck() {
   // chart that draws the playhead directly would have nothing to slow down.
   for (const [pattern, why] of [
     [/function marketStepClock\(dt, nowSec\)/, 'the display clock has to be its own step'],
-    [/marketState\.rate = marketParam\('hitSlow'\)/, 'a beat point has to drop the display rate'],
+    [/marketState\.slowUntil = nowSec \+ marketParam\('hitHold'\)/, 'a beat point has to hold the display back for hitHold'],
     [/var target = marketPlayheadCandles\(\)/, 'the data position must come from the playhead, never from the stretched clock'],
-    [/if \(target < prev - 1e-6 \|\| target - prev > marketParam\('seekSnap'\)\)/, 'a seek has to snap instead of being chased through the whole song'],
-    [/1 - Math\.exp\(-dt \/ Math\.max\(0\.005, marketParam\('reboundTau'\)\)\)/, 'the rebound has to be exponential in real dt, not a fixed per-frame step'],
+    [/1 - Math\.exp\(-step \/ Math\.max\(0\.005, tau\)\)/, 'the rate has to be eased exponentially in real dt, not stepped per frame'],
   ]) {
     if (!pattern.test(presetText)) fail(why);
   }
@@ -2061,8 +2060,8 @@ function runRhythmMarketPresetCheck() {
     presetRel: '02-visual/21-rhythm-market-preset.js',
     presetText, tuningText, htmlText, consoleText, fail
   });
-  if (schema.size !== 43) {
-    fail(`the market knob schema must stay at 43 knobs while the panel has 43 rows (found ${schema.size})`);
+  if (schema.size !== 50) {
+    fail(`the market knob schema must stay at 50 knobs while the panel has 50 rows (found ${schema.size})`);
   }
   // The price is an iterated position, not the block's frequency. Reading the frequency straight
   // onto the axis draws a line that tracks the measurement and never goes anywhere - the one shape
@@ -2077,6 +2076,22 @@ function runRhythmMarketPresetCheck() {
   }
   if (!/var o = marketSeriesY\(s\.open\[i\]\);/.test(presetText) || !/var c = marketSeriesY\(s\.close\[i\]\);/.test(presetText)) {
     fail('the candles must be drawn from the iterated price through marketSeriesY, or the chart and the camera disagree about the same data');
+  }
+  // Smoothness and the beat's kickback. A seek has to be detected from the audio clock jumping,
+  // not from the display falling behind - snapping on the lag is the "stutter then teleport".
+  for (const [pattern, why] of [
+    [/played > marketParam\('seekSnap'\) \/ Math\.max\(0\.001, s\.candlesPerSec\)/, 'a seek must be the audio clock jumping, never the display lagging: snapping on the lag teleports the head'],
+    [/marketState\.rate \+= \(goal - marketState\.rate\) \* k/, 'the rate must be eased, or the speed jumps at every beat edge'],
+    [/var tau = holding \? marketParam\('hitAttack'\) : marketParam\('reboundTau'\)/, 'pulling the rate down and letting it go need their own time constants'],
+    [/marketCam\.shake = Math\.min\(1, marketParam\('camShake'\)\)/, 'a beat has to kick the camera'],
+    [/marketState\.wallFlash = 1;/, 'the same beat has to light the wall'],
+    [/mat\.color\.setRGB\(1 \+ flash/, 'the wall flare has to reach the material, or the knob is dead'],
+    [/dist = marketState\.zoomDist \* zoom/, 'auto zoom has to drive the camera distance'],
+    [/range \/ \(fill \* 2 \* tan\)/, 'the auto zoom must frame the recent swing to zoomFill of the visible height'],
+    [/if \(marketParam\('crashSpark'\) > 0\.5\) marketSpawnCrashSpark\(i\);/, 'the crash spark has to fire as the head crosses the candle'],
+    [/marketSeriesY\(s\.low\[at\]\)/, 'the sparks belong where the candle landed, not at its open'],
+  ]) {
+    if (!pattern.test(presetText)) fail(why);
   }
   for (const [pattern, why] of [
     [/function marketAWeight\(hz\)/, 'the equal-loudness curve has to exist: without it a strong kick reads as the loudest band'],

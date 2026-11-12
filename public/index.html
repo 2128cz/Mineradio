@@ -1252,9 +1252,16 @@
         <div class="fx-slider"><label>停盘时长</label><input id="fx-mkhitHold" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('hitHold', this.value)"><output></output></div>
         <div class="fx-slider"><label>鼓点强度门槛</label><input id="fx-mkhitStrength" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitStrength', this.value)"><output></output></div>
         <div class="fx-slider"><label>回弹时间常数</label><input id="fx-mkreboundTau" type="range" min="0.02" max="2" step="0.01" oninput="setMarketTuning('reboundTau', this.value)"><output></output></div>
+        <div class="fx-slider"><label>压速时间常数</label><input id="fx-mkhitAttack" type="range" min="0.01" max="0.4" step="0.01" oninput="setMarketTuning('hitAttack', this.value)"><output></output></div>
         <div class="fx-slider"><label>追赶增益</label><input id="fx-mkcatchGain" type="range" min="0" max="3" step="0.05" oninput="setMarketTuning('catchGain', this.value)"><output></output></div>
         <div class="fx-slider"><label>最高回放倍速</label><input id="fx-mkmaxRate" type="range" min="1" max="24" step="0.5" oninput="setMarketTuning('maxRate', this.value)"><output></output></div>
         <div class="fx-slider"><label>跳转吸附阈值</label><input id="fx-mkseekSnap" type="range" min="1" max="200" step="1" oninput="setMarketTuning('seekSnap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>鼓点余震时长</label><input id="fx-mkhitDecay" type="range" min="0.04" max="0.6" step="0.01" oninput="setMarketTuning('hitDecay', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头抖动</label><input id="fx-mkcamShake" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('camShake', this.value)"><output></output></div>
+        <div class="fx-slider"><label>背景闪光</label><input id="fx-mkwallFlash" type="range" min="0" max="2" step="0.05" oninput="setMarketTuning('wallFlash', this.value)"><output></output></div>
+        <div class="fx-toggle" id="t-mkautoZoom" onclick="toggleMarketTuning('autoZoom')"><span>自动缩放（按 45% 可见高度取景）</span><span class="dot"></span></div>
+        <div class="fx-slider"><label>取景占比</label><input id="fx-mkzoomFill" type="range" min="0.15" max="0.9" step="0.01" oninput="setMarketTuning('zoomFill', this.value)"><output></output></div>
+        <div class="fx-toggle" id="t-mkcrashSpark" onclick="toggleMarketTuning('crashSpark')"><span>暴跌触地火花</span><span class="dot"></span></div>
         <div class="fx-slider"><label>镜头阻尼</label><input id="fx-mkcamDamp" type="range" min="0.02" max="3" step="0.01" oninput="setMarketTuning('camDamp', this.value)"><output></output></div>
         <div class="fx-slider"><label>镜头距离</label><input id="fx-mkcamDist" type="range" min="2" max="40" step="0.1" oninput="setMarketTuning('camDist', this.value)"><output></output></div>
         <div class="fx-slider"><label>镜头高度</label><input id="fx-mkcamHeight" type="range" min="-6" max="12" step="0.1" oninput="setMarketTuning('camHeight', this.value)"><output></output></div>

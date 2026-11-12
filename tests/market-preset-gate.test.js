@@ -40,7 +40,19 @@ function stubThree() {
     this.scale = { x: s.x, y: s.y, z: s.z };
     return this;
   };
-  return { Vector3, Quaternion, Color, Matrix4 };
+  // The crash sparks: one Points with two attributes and a material.
+  function BufferAttribute(array, itemSize) { this.array = array; this.itemSize = itemSize; this.needsUpdate = false; }
+  function BufferGeometry() { this.attributes = {}; this.disposed = false; }
+  BufferGeometry.prototype.setAttribute = function (name, attr) { this.attributes[name] = attr; return this; };
+  BufferGeometry.prototype.dispose = function () { this.disposed = true; };
+  function PointsMaterial(opts) { Object.assign(this, opts || {}); }
+  PointsMaterial.prototype.dispose = function () { this.disposed = true; };
+  function Points(geo, mat) { this.geometry = geo; this.material = mat; this.frustumCulled = true; }
+  return {
+    Vector3, Quaternion, Color, Matrix4,
+    BufferAttribute, BufferGeometry, PointsMaterial, Points,
+    AdditiveBlending: 2
+  };
 }
 
 const THREE = stubThree();
@@ -103,15 +115,27 @@ function fakeCurve(count) {
   };
 }
 
+function fakeGroup() {
+  return {
+    children: [],
+    add(o) { this.children.push(o); },
+    remove(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); }
+  };
+}
+
 function reset(over) {
   Object.assign(state, {
-    series: makeSeries(1000), group: {}, bodies: fakeMesh(), wicks: fakeMesh(),
+    series: makeSeries(1000), group: fakeGroup(), bodies: fakeMesh(), wicks: fakeMesh(),
     curve: fakeCurve(1000), wall: null, written: 0, shown: 0, rate: 1, slowUntil: 0,
-    hitList: [], hitIdx: 0, hitSource: '', hits: 0, snaps: 0, backlog: 0, energyRef: 1
+    hitList: [], hitIdx: 0, hitSource: '', hits: 0, snaps: 0, backlog: 0, energyRef: 1,
+    lastPlayhead: -1, wallFlash: 0, zoomDist: 0, zoomRange: 0, sparks: null, lastStep: 0.016
   }, over || {});
   S.audio.currentTime = 0;
   S.currentBeatMap = null;
   S.fx = { preset: 16 };
+  S.marketCam.shake = 0;
+  S.marketCam.shakePhase = 0;
+  S.marketCam.dist = 0;
 }
 
 const results = [];
@@ -130,8 +154,8 @@ function test(name, fn) {
 // ---------------------------------------------------------------- the two clocks
 
 test('the display head never passes the playhead and never moves backwards', () => {
-  reset({ shown: 98 });
-  S.audio.currentTime = 10;             // target = 100 candles
+  reset({ shown: 98, lastPlayhead: 9.984 });
+  S.audio.currentTime = 10;             // target = 100 candles, a normal 16ms frame
   let prev = state.shown;
   for (let i = 0; i < 40; i++) {
     S.marketStepClock(0.05, 1 + i * 0.05);
@@ -140,38 +164,64 @@ test('the display head never passes the playhead and never moves backwards', () 
     prev = state.shown;
   }
   assert.ok(Math.abs(state.shown - 100) < 1e-6, `the head did not reach the playhead: ${state.shown}`);
+  assert.equal(state.snaps, 0, 'a two-candle lag is not a seek');
 });
 
-test('a beat point drops the rate to hitSlow for hitHold, then the rebound outruns 1x to repay it', () => {
-  reset({ shown: 98 });
+test('lag left by a hiccup is chased, never snapped to the latest candle', () => {
+  // 30 candles of lag, but the audio clock only moved 16ms since the last frame. That is the head
+  // being behind, not the user seeking - and snapping here is the "stutter then teleport" the
+  // chart used to do.
+  reset({ shown: 0, lastPlayhead: 2.984 });
+  S.audio.currentTime = 3;              // target = 30
+  S.marketStepClock(0.016, 1);
+  assert.equal(state.snaps, 0, 'accumulated lag must not be treated as a seek');
+  assert.ok(state.shown < 1, `the head teleported: ${state.shown}`);
+  assert.ok(state.backlog > 25, `the backlog has to be visible: ${state.backlog}`);
+  assert.ok(state.rate > 1, 'the rate has to climb to repay the backlog');
+});
+
+test('a beat eases the rate down and back: the speed is continuous through the beat', () => {
+  reset({ shown: 98, lastPlayhead: 9.984 });
   S.audio.currentTime = 10;
-  // The grid, not the hits: this is what the app supplies for a song whose intro has no drums.
   state.hitList = [{ time: 9.5, strength: 1 }];
   state.hitIdx = 0;
   state.hitSource = 'map';
   const hitSlow = S.marketParam('hitSlow');
+  const maxRate = S.marketParam('maxRate');
   assert.equal(hitSlow, 0.14, 'the default hitSlow moved; this test pinned 0.14');
 
+  const rates = [];
   S.marketStepClock(0.05, 1.00);
   assert.equal(state.hits, 1, 'the beat point was not consumed');
-  assert.ok(Math.abs(state.rate - hitSlow) < 1e-9, `the rate did not drop to hitSlow: ${state.rate}`);
-  const afterHit = state.shown;
-  assert.ok(afterHit > 98 && afterHit < 98.1, `the slowed step moved ${afterHit - 98} candles, expected ~0.07`);
+  rates.push(state.rate);
+  assert.ok(state.rate < 1, `the rate did not start dropping: ${state.rate}`);
+  assert.ok(state.rate > hitSlow, `the rate dropped to hitSlow in one frame - that is the stutter, not an ease: ${state.rate}`);
+  assert.ok(state.shown < 98.5, `the first slowed frame still moved ${state.shown - 98} candles`);
 
-  S.marketStepClock(0.05, 1.05);        // still inside hitHold (0.10s from 1.00)
-  assert.ok(Math.abs(state.rate - hitSlow) < 1e-9, `the rate recovered before the hold ended: ${state.rate}`);
-  assert.ok(state.backlog > 1, `the backlog has to grow while the head is held: ${state.backlog}`);
+  for (const now of [1.03, 1.06, 1.09]) {
+    S.marketStepClock(0.05, now);       // inside hitHold (0.10s from 1.00)
+    rates.push(state.rate);
+  }
+  assert.ok(state.rate < hitSlow + 0.12, `the rate never reached the stall: ${state.rate}`);
+  assert.ok(state.backlog > 0.5, `the backlog has to grow while the head is held: ${state.backlog}`);
 
-  S.marketStepClock(0.05, 1.12);        // past the hold: the catch-up starts
+  for (const now of [1.14, 1.2, 1.3]) {
+    S.marketStepClock(0.05, now);
+    rates.push(state.rate);
+  }
   assert.ok(state.rate > hitSlow, `the rate did not rebound: ${state.rate}`);
-  assert.ok(state.rate < S.marketParam('maxRate'), `the rate overshot maxRate: ${state.rate}`);
+  assert.ok(state.rate <= maxRate + 1e-9, `the rate overshot maxRate: ${state.rate}`);
 
-  for (let i = 0; i < 400; i++) S.marketStepClock(0.05, 1.2 + i * 0.05);
+  for (let i = 1; i < rates.length; i++) {
+    assert.ok(Math.abs(rates[i] - rates[i - 1]) < 0.6,
+      `the rate jumped ${Math.abs(rates[i] - rates[i - 1]).toFixed(2)} in one frame: ${rates.map((r) => r.toFixed(2)).join(' ')}`);
+  }
+  for (let i = 0; i < 400; i++) S.marketStepClock(0.05, 1.4 + i * 0.05);
   assert.ok(Math.abs(state.shown - 100) < 1e-6, `the stall was never repaid: shown ${state.shown}, target 100`);
 });
 
 test('the rate stays inside [hitSlow, maxRate] on every step of a full catch-up', () => {
-  reset({ shown: 90 });
+  reset({ shown: 90, lastPlayhead: 9.984 });
   S.audio.currentTime = 10;
   state.hitList = [{ time: 9, strength: 1 }, { time: 9.5, strength: 1 }];
   state.hitIdx = 0;
@@ -186,7 +236,7 @@ test('the rate stays inside [hitSlow, maxRate] on every step of a full catch-up'
 });
 
 test('seeking backwards makes the head land on the new playhead instead of running to it', () => {
-  reset({ shown: 90, snaps: 0 });
+  reset({ shown: 90, snaps: 0, lastPlayhead: 10 });
   S.audio.currentTime = 5;              // target = 50
   S.marketStepClock(0.016, 3);
   assert.ok(Math.abs(state.shown - 50) < 1e-9, `the seek did not snap: shown ${state.shown}, expected 50`);
@@ -194,12 +244,101 @@ test('seeking backwards makes the head land on the new playhead instead of runni
   assert.equal(state.written, 0, 'a seek has to reset the write cursor');
 });
 
-test('a jump bigger than seekSnap is a seek, not a chase', () => {
-  reset({ shown: 10, snaps: 0 });
-  S.audio.currentTime = 100;            // target = 1000, far past seekSnap
+test('a jump in the audio clock bigger than seekSnap is a seek, not a chase', () => {
+  reset({ shown: 10, snaps: 0, lastPlayhead: 0 });
+  S.audio.currentTime = 100;            // the audio clock itself jumped 100s
   S.marketStepClock(0.016, 3);
   assert.ok(Math.abs(state.shown - 1000) < 1e-9, `the jump was chased instead of snapped: shown ${state.shown}`);
   assert.equal(state.snaps, 1);
+});
+
+// ---------------------------------------------------------------- the beat's kickback
+
+test('a beat kicks the camera and lights the wall on the same hit, and both decay', () => {
+  reset({ shown: 98, lastPlayhead: 9.984 });
+  S.audio.currentTime = 10;
+  state.hitList = [{ time: 9.5, strength: 0.8 }];
+  state.hitIdx = 0;
+  state.hitSource = 'map';
+  S.marketStepClock(0.016, 1);
+  const amp = S.marketParam('camShake') * 0.8;
+  assert.ok(Math.abs(S.marketCam.shake - amp) < 1e-9, `the shake must be camShake * strength, got ${S.marketCam.shake}`);
+  assert.equal(state.wallFlash, 1, 'the wall has to flash on the same hit');
+  const before = S.marketCam.shake;
+  for (let i = 0; i < 25; i++) S.marketStepClock(0.016, 1.1 + i * 0.016);
+  assert.ok(S.marketCam.shake < before * 0.2, `the shake has to decay: ${S.marketCam.shake} from ${before}`);
+  assert.ok(state.wallFlash < 0.2, `the flash has to decay: ${state.wallFlash}`);
+  assert.ok(S.marketCam.shakePhase > 0.3, 'the shake needs a phase, or it has no wobble frequency');
+});
+
+test('the wall flare reaches the material colour, and is white when there is none', () => {
+  reset({ shown: 10 });
+  let rgb = null;
+  state.wall = { material: { opacity: 1, color: { setRGB(r, g, b) { rgb = [r, g, b]; } } } };
+  state.wallFlash = 1;
+  S.marketUpdateInstances();
+  assert.ok(rgb, 'the wall material colour must be written every frame');
+  assert.ok(rgb[0] > 1.1, `the flare must brighten the map: ${rgb}`);
+  assert.ok(rgb[0] > rgb[1] && rgb[1] > rgb[2], 'the flare should be warm, not grey');
+  state.wallFlash = 0;
+  S.marketUpdateInstances();
+  assert.ok(Math.abs(rgb[0] - 1) < 1e-9 && Math.abs(rgb[2] - 1) < 1e-9, `no flash must leave the map white: ${rgb}`);
+  state.wall = null;
+});
+
+// ---------------------------------------------------------------- the framing
+
+test('auto zoom frames the recent swing to zoomFill of the visible height', () => {
+  reset({ shown: 1, lastStep: 1 });
+  state.series.high[0] = 2; state.series.high[1] = 2;
+  state.series.low[0] = -2; state.series.low[1] = -2;
+  state.zoomDist = 0;
+  S.marketUpdateZoom();
+  const range = S.marketSeriesY(2) - S.marketSeriesY(-2);
+  const tan = Math.tan(S.marketParam('fovDeg') * Math.PI / 360);
+  const want = range / (S.marketParam('zoomFill') * 2 * tan);
+  assert.ok(Math.abs(state.zoomDist - want) < 1e-6, `zoom distance ${state.zoomDist} vs ${want}`);
+  assert.ok(Math.abs(state.zoomRange - range) < 1e-9, `the framed range has to be remembered: ${state.zoomRange}`);
+
+  // And the pose uses it: on +Z, at yaw 0 and pitch 0, the eye sits `dist` behind the head.
+  assert.equal(S.marketCameraScratch(), true);
+  const pos = new THREE.Vector3(), look = new THREE.Vector3();
+  S.marketCameraGoal(pos, look);
+  assert.ok(Math.abs(pos.z - want) < 1e-6, `the camera must stand at the framed distance, got z=${pos.z}`);
+
+  // Turning auto zoom off must give the manual distance back.
+  S.marketTuning = { autoZoom: 0 };
+  try {
+    S.marketCameraGoal(pos, look);
+    assert.ok(Math.abs(pos.z - S.marketParam('camDist')) < 1e-6, `auto off must use camDist: ${pos.z}`);
+  } finally {
+    S.marketTuning = undefined;
+  }
+});
+
+// ---------------------------------------------------------------- the crash sparks
+
+test('a candle that lands far below the swing throws embers where it hit, then burns out', () => {
+  reset({ shown: 50 });
+  const s = state.series;
+  for (let i = 0; i < 40; i++) {
+    s.high[i] = 0.5; s.low[i] = -0.5; s.open[i] = -0.3; s.close[i] = -0.3;
+  }
+  s.high[40] = 0; s.low[40] = -4; s.open[40] = -0.3; s.close[40] = -3.5;
+  const calm = S.marketSpawnCrashSpark(30);
+  assert.equal(calm, 0, 'a candle inside the swing is not a crash');
+  const power = S.marketSpawnCrashSpark(40);
+  assert.ok(power > 0.5, `a 3.7 unit drop on a 1 unit swing has to fire: ${power}`);
+  const sp = state.sparks;
+  let alive = 0;
+  for (let i = 0; i < sp.life.length; i++) if (sp.life[i] > 0) alive++;
+  assert.ok(alive >= 14, `the crash must light a fan of embers: ${alive}`);
+  // They start at the landing point: the crash candle's low, on the chart plane.
+  assert.ok(Math.abs(sp.pos[1] - S.marketSeriesY(-4)) < 1e-6, `the first ember must sit on the low: ${sp.pos[1]}`);
+  for (let i = 0; i < 200; i++) S.marketStepSparks(0.016);
+  let still = 0;
+  for (let i = 0; i < sp.life.length; i++) if (sp.life[i] > 0) still++;
+  assert.equal(still, 0, 'the embers must burn out');
 });
 
 // ---------------------------------------------------------------- what is already on screen
