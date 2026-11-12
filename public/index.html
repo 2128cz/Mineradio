@@ -1225,6 +1225,50 @@
         <div class="fx-slider"><label>歌词飘散</label><input id="fx-bhlyricDrift" type="range" min="0" max="1.5" step="0.05" oninput="setBlackHoleTuning('lyricDrift', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetBlackHoleTuning()">恢复银河黑洞默认</button></div>
       </div>
+      <!-- 节奏股市's own knobs (preset 16). The console moves these into 动效 → 节奏股市.
+           The measurement knobs re-analyse the song; the rest redraw or are read every frame. -->
+      <div class="fx-market-tuning">
+        <div class="fx-slider"><label>分析块长度</label><input id="fx-mkchunkSamples" type="range" min="512" max="16384" step="512" oninput="setMarketTuning('chunkSamples', this.value)"><output></output></div>
+        <div class="fx-slider"><label>影线切片数</label><input id="fx-mkwickSlices" type="range" min="1" max="8" step="1" oninput="setMarketTuning('wickSlices', this.value)"><output></output></div>
+        <div class="fx-slider"><label>最低频率</label><input id="fx-mkminHz" type="range" min="20" max="400" step="5" oninput="setMarketTuning('minHz', this.value)"><output></output></div>
+        <div class="fx-slider"><label>最高频率</label><input id="fx-mkmaxHz" type="range" min="1000" max="16000" step="100" oninput="setMarketTuning('maxHz', this.value)"><output></output></div>
+        <div class="fx-slider"><label>基准频率</label><input id="fx-mkrefHz" type="range" min="20" max="1000" step="5" oninput="setMarketTuning('refHz', this.value)"><output></output></div>
+        <div class="fx-slider"><label>每八度高度</label><input id="fx-mkoctaveUnits" type="range" min="0.2" max="4" step="0.05" oninput="setMarketTuning('octaveUnits', this.value)"><output></output></div>
+        <div class="fx-slider"><label>价格基线</label><input id="fx-mkpriceFloor" type="range" min="-8" max="8" step="0.1" oninput="setMarketTuning('priceFloor', this.value)"><output></output></div>
+        <div class="fx-slider"><label>K线间距</label><input id="fx-mkcandleSpacing" type="range" min="0.08" max="2" step="0.01" oninput="setMarketTuning('candleSpacing', this.value)"><output></output></div>
+        <div class="fx-slider"><label>实体宽度</label><input id="fx-mkbodyWidth" type="range" min="0.02" max="1.5" step="0.01" oninput="setMarketTuning('bodyWidth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>实体厚度</label><input id="fx-mkbodyDepth" type="range" min="0.02" max="1.5" step="0.01" oninput="setMarketTuning('bodyDepth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>影线粗细</label><input id="fx-mkwickWidth" type="range" min="0.005" max="0.4" step="0.005" oninput="setMarketTuning('wickWidth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>最小实体高度</label><input id="fx-mkminBody" type="range" min="0" max="0.5" step="0.005" oninput="setMarketTuning('minBody', this.value)"><output></output></div>
+        <div class="fx-slider"><label>响度提亮</label><input id="fx-mkenergyGain" type="range" min="0" max="2" step="0.05" oninput="setMarketTuning('energyGain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>收盘曲线亮度</label><input id="fx-mkcurveOpacity" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('curveOpacity', this.value)"><output></output></div>
+        <div class="fx-toggle" id="t-mkcolorFlip" onclick="toggleMarketTuning('colorFlip')"><span>涨跌反色（绿涨红跌）</span><span class="dot"></span></div>
+        <div class="fx-toggle" id="t-mkbeatSync" onclick="toggleMarketTuning('beatSync')"><span>按鼓点停盘</span><span class="dot"></span></div>
+        <div class="fx-slider"><label>停盘速度</label><input id="fx-mkhitSlow" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitSlow', this.value)"><output></output></div>
+        <div class="fx-slider"><label>停盘时长</label><input id="fx-mkhitHold" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('hitHold', this.value)"><output></output></div>
+        <div class="fx-slider"><label>鼓点强度门槛</label><input id="fx-mkhitStrength" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitStrength', this.value)"><output></output></div>
+        <div class="fx-slider"><label>回弹时间常数</label><input id="fx-mkreboundTau" type="range" min="0.02" max="2" step="0.01" oninput="setMarketTuning('reboundTau', this.value)"><output></output></div>
+        <div class="fx-slider"><label>追赶增益</label><input id="fx-mkcatchGain" type="range" min="0" max="3" step="0.05" oninput="setMarketTuning('catchGain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>最高回放倍速</label><input id="fx-mkmaxRate" type="range" min="1" max="24" step="0.5" oninput="setMarketTuning('maxRate', this.value)"><output></output></div>
+        <div class="fx-slider"><label>跳转吸附阈值</label><input id="fx-mkseekSnap" type="range" min="1" max="200" step="1" oninput="setMarketTuning('seekSnap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头阻尼</label><input id="fx-mkcamDamp" type="range" min="0.02" max="3" step="0.01" oninput="setMarketTuning('camDamp', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头距离</label><input id="fx-mkcamDist" type="range" min="2" max="40" step="0.1" oninput="setMarketTuning('camDist', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头高度</label><input id="fx-mkcamHeight" type="range" min="-6" max="12" step="0.1" oninput="setMarketTuning('camHeight', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头前瞻</label><input id="fx-mkcamLead" type="range" min="-20" max="20" step="0.1" oninput="setMarketTuning('camLead', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视锥角度</label><input id="fx-mkfovDeg" type="range" min="20" max="100" step="1" oninput="setMarketTuning('fovDeg', this.value)"><output></output></div>
+        <div class="fx-slider"><label>棋盘格列数</label><input id="fx-mkwallCols" type="range" min="4" max="48" step="1" oninput="setMarketTuning('wallCols', this.value)"><output></output></div>
+        <div class="fx-slider"><label>棋盘格行数</label><input id="fx-mkwallRows" type="range" min="2" max="32" step="1" oninput="setMarketTuning('wallRows', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面距离</label><input id="fx-mkwallDepth" type="range" min="6" max="120" step="1" oninput="setMarketTuning('wallDepth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面视差</label><input id="fx-mkwallParallax" type="range" min="0" max="3" step="0.05" oninput="setMarketTuning('wallParallax', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面过扫描</label><input id="fx-mkwallOverscan" type="range" min="1" max="2" step="0.01" oninput="setMarketTuning('wallOverscan', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面底色</label><input id="fx-mkwallBase" type="range" min="0" max="0.5" step="0.01" oninput="setMarketTuning('wallBase', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面对比</label><input id="fx-mkwallContrast" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('wallContrast', this.value)"><output></output></div>
+        <div class="fx-slider"><label>墙面不透明度</label><input id="fx-mkwallOpacity" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('wallOpacity', this.value)"><output></output></div>
+        <div class="fx-slider"><label>图标像素</label><input id="fx-mkiconPx" type="range" min="8" max="96" step="1" oninput="setMarketTuning('iconPx', this.value)"><output></output></div>
+        <div class="fx-slider"><label>二值化阈值</label><input id="fx-mkiconThreshold" type="range" min="0.05" max="0.95" step="0.01" oninput="setMarketTuning('iconThreshold', this.value)"><output></output></div>
+        <div class="fx-slider"><label>图标来源</label><input id="fx-mkiconSource" type="range" min="0" max="1" step="1" oninput="setMarketTuning('iconSource', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetMarketTuning()">恢复节奏股市默认</button><button class="fx-mini-btn" id="market-camera-reset" onclick="resetMarketCamera()">重置视角</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

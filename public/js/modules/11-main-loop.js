@@ -645,6 +645,9 @@ function animate() {
   // The black hole's frustum knob has to be on the camera before the lyric layout measures the
   // visible height, or the stage scales for one fov and renders at another.
   if (typeof blackHoleApplyCamera === 'function') blackHoleApplyCamera(dt);
+  // 节奏股市 (preset 16) follows the growing head of its chart. It damps on real dt, so it is
+  // written here with the other camera owners rather than inside the chart's own frame gate.
+  if (typeof applyStockCameraPose === 'function') applyStockCameraPose(dt);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('camera.update', cameraPerfStart);
 
   // v7.2 旋转 = 头部+眼球追踪 + 鼠标/手势拖动 + 惯性
@@ -657,6 +660,9 @@ function animate() {
   if (typeof updatePvLayer === 'function') updatePvLayer(now, dt);
   // HALO ring (preset 14) draws into its own DOM layer too, with its own frame gate.
   if (typeof updateHaloLayer === 'function') updateHaloLayer(now, dt);
+  // 节奏股市 (preset 16) draws into the WebGL scene, so it has to be stepped before the render
+  // below. It costs nothing while another preset is selected.
+  if (typeof updateStockMarket === 'function') updateStockMarket(now, dt);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;

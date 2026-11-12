@@ -54,6 +54,10 @@ function jsCheckFiles() {
   walk(path.join(appRoot, 'cuefield')).forEach(file => {
     if (file.endsWith('.js')) files.push(file);
   });
+  // The gate instruments ship too: a bench with a syntax error would only surface when someone
+  // finally runs it to price a frame.
+  addIfExists(path.join(appRoot, 'scripts', 'market-arms.js'));
+  addIfExists(path.join(appRoot, 'scripts', 'market-draw-bench.js'));
 
   return [...new Set(files)].sort();
 }
@@ -1114,7 +1118,8 @@ function runHaloPresetCheck() {
   // was really the claim "the ring is the newest preset" and stopped being true on purpose.
   const declaredIndexes = {};
   ['00-state/00-core-stores.js', '02-visual/01-float-skull-backcover.js', '02-visual/17-pv-preset.js',
-    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js'].forEach(function (rel) {
+    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js',
+    '02-visual/21-rhythm-market-preset.js'].forEach(function (rel) {
     const text = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', rel), 'utf8');
     const re = /\b([A-Z][A-Z0-9_]*_PRESET_INDEX) = (\d+)/g;
     let found;
@@ -1918,6 +1923,163 @@ function runBlackHolePresetCheck() {
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Galactic black hole wired: preset ${index}, scene->target->quad lens, ${schema.size} knobs, lyric flight from the sides.`);
+}
+
+function runRhythmMarketPresetCheck() {
+  logStep('Rhythm market preset (spectrum candles, beat-stretched clock, tiled wall, knobs)');
+  const presetPath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '21-rhythm-market-preset.js');
+  const seriesPath = path.join(appRoot, 'public', 'js', 'modules', '03-beat', '07-market-series.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '13-market-tuning.js');
+  if (!fs.existsSync(presetPath)) fail('02-visual/21-rhythm-market-preset.js is missing; preset 16 would be an empty card');
+  if (!fs.existsSync(seriesPath)) fail('03-beat/07-market-series.js is missing; the chart would have no data');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/13-market-tuning.js is missing; the chart would have knobs without a store');
+  const presetText = fs.readFileSync(presetPath, 'utf8');
+  const serialText = fs.readFileSync(seriesPath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+
+  const index = Number((presetText.match(/MARKET_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 16) fail(`MARKET_PRESET_INDEX must be 16 (found ${index}) and is never renumbered`);
+  for (const [relPath, why] of [
+    ['js/modules/02-visual/21-rhythm-market-preset.js', 'the preset module must be loaded, or the card selects nothing'],
+    ['js/modules/03-beat/07-market-series.js', 'the series module must be loaded, or the chart never gets data'],
+    ['js/modules/07-fx/13-market-tuning.js', 'the knob store must be loaded, or every slider is detached from the schema'],
+  ]) {
+    if (loaderText.indexOf(`'${relPath}'`) < 0) fail(`${relPath} is not listed in index-loader.js: ${why}`);
+  }
+  if (!/节奏股市/.test(archiveText) || !/RHYTHM MARKET/.test(archiveText)) {
+    fail('the market must be a labelled, selectable card');
+  }
+  if (!/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, /.test(archiveText)) {
+    fail('the display order must place the market where its card is, not wherever the array ends up');
+  }
+  if (!/applyMarketPresetNow\(prev, p\)/.test(gridText)) {
+    fail('selecting the preset must build the chart and leaving it must release the scene');
+  }
+  // The chart is written into the shared WebGL scene, so it has to be stepped in the loop before
+  // the frame is drawn; and the camera pose is written after the app's own camera writers, or
+  // they would overwrite it.
+  const atHalo = loopText.indexOf('updateHaloLayer(now, dt)');
+  const atChart = loopText.indexOf('updateStockMarket(now, dt)');
+  const atMainRender = loopText.indexOf('renderer.render(scene, camera)', atHalo);
+  if (atHalo < 0 || atChart < 0 || atMainRender < 0 || !(atHalo < atChart && atChart < atMainRender)) {
+    fail('updateStockMarket must run after the other scene layers and before the frame is rendered');
+  }
+  const atBhCamera = loopText.indexOf('blackHoleApplyCamera(dt)');
+  const atMarketCamera = loopText.indexOf('applyStockCameraPose(dt)');
+  if (atBhCamera < 0 || atMarketCamera < 0 || atMarketCamera < atBhCamera) {
+    fail('the market camera pose must be written after the other camera owners, or they win the frame');
+  }
+  const ownerBlock = presetText.slice(presetText.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'market-layer'/.test(ownerBlock)) fail('the market must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) {
+      fail(`the market must take the ${layer} layer over: the wall is the backdrop, not the layer under it`);
+    }
+  }
+  // The two clocks are the whole design: one from the playhead, one stretched by the beat. A
+  // chart that draws the playhead directly would have nothing to slow down.
+  for (const [pattern, why] of [
+    [/function marketStepClock\(dt, nowSec\)/, 'the display clock has to be its own step'],
+    [/marketState\.rate = marketParam\('hitSlow'\)/, 'a beat point has to drop the display rate'],
+    [/var target = marketPlayheadCandles\(\)/, 'the data position must come from the playhead, never from the stretched clock'],
+    [/if \(target < prev - 1e-6 \|\| target - prev > marketParam\('seekSnap'\)\)/, 'a seek has to snap instead of being chased through the whole song'],
+    [/1 - Math\.exp\(-dt \/ Math\.max\(0\.005, marketParam\('reboundTau'\)\)\)/, 'the rebound has to be exponential in real dt, not a fixed per-frame step'],
+  ]) {
+    if (!pattern.test(presetText)) fail(why);
+  }
+  // The camera damps on REAL dt and follows the displayed head. Following the playhead would make
+  // the pause invisible; damping on the stretched clock would double-count the stretch.
+  if (!/var at = marketState\.shown;/.test(presetText)) {
+    fail('the camera must follow the displayed head, not the playhead, or a stall moves the view anyway');
+  }
+  if (!/1 - Math\.exp\(-step \/ Math\.max\(0\.005, marketParam\('camDamp'\)\)\)/.test(presetText)) {
+    fail('the camera damp must be exponential in real dt, or the stop is not visible at low frame rates');
+  }
+  if (!/freeCamera\.active \|\| freeCamera\.locked \|\| freeCamera\.resetTween/.test(presetText)) {
+    fail('the preset must yield the camera to an active, locked or resetting free camera');
+  }
+  if (!/wallParallax/.test(presetText) || !/wallOverscan/.test(presetText)) {
+    fail('the backdrop has to be sized from the camera frustum, or it scrolls off the edge of the view');
+  }
+  // r128 applies vColor only under USE_COLOR: instanceColor alone renders every candle white.
+  if (!/vertexColors: true/.test(presetText) || !/marketWhiteVertexColors\(/.test(presetText)) {
+    fail('the instanced candles need vertexColors and a white colour attribute, or the up/down colours never reach the screen');
+  }
+  if (!/function marketStatus\(/.test(presetText) || !/target: Math\.round\(marketPlayheadCandles\(\) \* 1000\) \/ 1000/.test(presetText)) {
+    fail('marketStatus() must report the two clocks live: shown, target, rate and backlog are how a stall is seen');
+  }
+  if (!/mineradio-market-tuning-v1/.test(tuningText) || !/function bindMarketTuningResetButtons\(/.test(tuningText)) {
+    fail('the market knobs need their own store and one reset button per row');
+  }
+  // A reset loops over every key; dispatching a rebuild per key would re-measure the song a few
+  // dozen times. The reset has to apply one pass per kind, outside the per-key loop.
+  const resetAt = tuningText.indexOf('function resetMarketTuning()');
+  const resetFn = resetAt < 0 ? '' : tuningText.slice(resetAt, tuningText.indexOf('\n}', resetAt));
+  if (!resetFn || (resetFn.match(/marketTuningApply\(/g) || []).length !== 1 || !/\['series', 'chart', 'wall'\]/.test(resetFn)) {
+    fail('resetting every market knob must apply one rebuild per kind, not one per key: re-measuring the song per knob decodes it 39 times');
+  }
+  if (!/key: 'market'/.test(consoleText) || !/title: '节奏股市'/.test(consoleText)) {
+    fail('the visual console needs a 节奏股市 group in the 动效 tab');
+  }
+
+  // The bundle has one namespace. This is the shape that cost a session 634 uncaught TypeErrors
+  // a second while every static check stayed green: a `var` in a later module silently replaced a
+  // function of the same name in an earlier one.
+  const arms = require('./market-arms.js');
+  const moduleListStart = loaderText.indexOf('const modulePaths = [');
+  const moduleBlock = loaderText.slice(moduleListStart, loaderText.indexOf('];', moduleListStart));
+  const moduleTexts = [...moduleBlock.matchAll(/'(js\/modules\/[^']+)'/g)].map((m) => ({
+    rel: m[1],
+    text: fs.readFileSync(path.join(appRoot, 'public', m[1]), 'utf8')
+  }));
+  arms.checkSingleOwner(moduleTexts, fail);
+  const schema = arms.checkKnobWiring({
+    presetRel: '02-visual/21-rhythm-market-preset.js',
+    presetText, tuningText, htmlText, consoleText, fail
+  });
+  if (schema.size !== 39) {
+    fail(`the market knob schema must stay at 39 knobs while the panel has 39 rows (found ${schema.size})`);
+  }
+
+  // The draw bench is the frame-cost reader. It has to load the SHIPPED modules - a bench that
+  // inlines a copy prices a file that does not ship - and it has to keep the arms that make its
+  // numbers separable (full / no draw / nothing).
+  const benchPath = path.join(appRoot, 'scripts', 'market-draw-bench.js');
+  if (!fs.existsSync(benchPath)) fail('scripts/market-draw-bench.js is missing; the frame cost would be a guess again');
+  const benchText = fs.readFileSync(benchPath, 'utf8');
+  for (const [pattern, why] of [
+    [/public\/js\/modules\/02-visual\/21-rhythm-market-preset\.js/, 'the bench must copy the shipped preset module, not a re-typed copy'],
+    [/public\/js\/modules\/03-beat\/07-market-series\.js/, 'the bench must copy the shipped series module'],
+    [/public\/vendor\/three\.r128\.min\.js/, 'the bench must load the shipped three.js build'],
+    [/\{ name: 'nodraw', hide: 'group'/, "the bench needs the no-draw arm, or the draw cost cannot be separated from the update"],
+    [/\{ name: 'none', hide: 'group', stubUpdate: true \}/, 'the bench needs the empty-scene floor'],
+  ]) {
+    if (!pattern.test(benchText)) fail(why);
+  }
+  const armsPath = path.join(appRoot, 'scripts', 'market-arms.js');
+  if (!fs.existsSync(armsPath)) fail('scripts/market-arms.js is missing; the mutation driver has nothing to run');
+
+  for (const testFile of [
+    'tests/market-preset-gate.test.js',
+    'tests/market-arms-mutation.test.js',
+    'tests/market-series.test.js',
+  ]) {
+    const full = path.join(appRoot, testFile);
+    if (!fs.existsSync(full)) { fail(`${testFile} is missing; that invariant would only be checked by shape`); continue; }
+    const result = spawnSync(process.execPath, [full], { cwd: appRoot, encoding: 'utf8' });
+    process.stdout.write(result.stdout || '');
+    if (result.status !== 0) {
+      process.stderr.write(result.stderr || '');
+      fail(`${testFile} failed: ${rel(full)}`);
+    }
+  }
+  console.log(`[OK] Rhythm market wired: preset ${index}, ${schema.size} knobs, beat-stretched clock, damping camera on real dt, tiled wall.`);
 }
 
 function runVisualTakeoverMaskCheck() {
@@ -5223,10 +5385,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 15/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 16/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -7607,6 +7769,7 @@ async function main() {
   runBeatTempoCeilingCheck();
   runHaloPresetCheck();
   runBlackHolePresetCheck();
+  runRhythmMarketPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

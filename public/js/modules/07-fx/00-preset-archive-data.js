@@ -16,6 +16,7 @@ var presetMeta = [
 { name: '歌词PV', nameHtml: '歌词PV <span class="pc-name-en">LYRIC PV</span>', desc: '文字分镜 · 接管背景' },
 { name: '环形数据流', nameHtml: '环形数据流 <span class="pc-name-en">RING DATA STREAM</span>', desc: '数据圆环 · 歌词随鼓' },
 { name: '银河黑洞', nameHtml: '银河黑洞 <span class="pc-name-en">GALACTIC BLACK HOLE</span>', desc: '引力透镜 · 歌词坠入', premiumVisual: true, accent: '#ffb36b', accent2: '#79c8ff' },
+{ name: '节奏股市', nameHtml: '节奏股市 <span class="pc-name-en">RHYTHM MARKET</span>', desc: '频谱K线 · 鼓点停盘', premiumVisual: true, accent: '#f2685c', accent2: '#3ddc84' },
 ];
 var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 14c3-2 5-2 8 0s5 2 8 0M3 10c3-2 5-2 8 0s5 2 8 0M3 18c3-2 5-2 8 0s5 2 8 0"/></svg>',
@@ -34,8 +35,9 @@ var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6h13M4 12h16M4 18h9"/><path d="M20 5.5v6"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="3.1"/><path d="M12 1.6v2.6M12 19.8v2.6M1.6 12h2.6M19.8 12h2.6M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="9.2" ry="3.1" transform="rotate(-16 12 12)"/><path d="M12 6.3a5.7 5.7 0 0 1 0 11.4" opacity=".5"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M5 5v14M12 3v14M19 7v14"/><rect x="3.2" y="9" width="3.6" height="6" rx="0.5"/><rect x="10.2" y="6" width="3.6" height="7" rx="0.5" fill="currentColor" stroke="none"/><rect x="17.2" y="11" width="3.6" height="6" rx="0.5"/></svg>',
 ];
-var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 6, 7, 8, 5, 4, 2, 1, 3];
+var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 16, 6, 7, 8, 5, 4, 2, 1, 3];
 var lyricColorPresets = [
   { name: '雾蓝', color: '#a9b8c8' },
   { name: '银蓝', color: '#9db8cf' },

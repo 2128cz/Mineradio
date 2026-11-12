@@ -23,7 +23,7 @@ var FX_CONSOLE_LAYOUT = [
     key: 'home',
     groups: [
       { key: 'presets', title: '视觉预设', hint: '先选整体风格，再进入细节调整', open: true, items: [
-        fxConsoleItem('preset-grid', '视觉预设', '风格 场景 Emily 安魂 音域 星河 唱片 星球 滚筒 虚空 月蚀圣环 雨幕霓虹 折光蝶群 深海绽放 歌词PV 环形数据流 银河黑洞 Eclipse Halo Neon Drizzle Prism Flock Abyssal Bloom Lyric PV Ring Data Stream Galactic Black Hole')
+        fxConsoleItem('preset-grid', '视觉预设', '风格 场景 Emily 安魂 音域 星河 唱片 星球 滚筒 虚空 月蚀圣环 雨幕霓虹 折光蝶群 深海绽放 歌词PV 环形数据流 银河黑洞 节奏股市 Eclipse Halo Neon Drizzle Prism Flock Abyssal Bloom Lyric PV Ring Data Stream Galactic Black Hole Rhythm Market')
       ] },
       { key: 'archives', title: '用户存档', hint: '保存、应用和分享整套视觉参数', items: [
         fxConsoleItem('user-archive-grid', '用户存档', '方案 快照 预设码 应用 回退')
@@ -227,6 +227,49 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-bhlyricWind', '歌词旋入', '银河黑洞 歌词 吸入 螺旋 旋入 绕转 引力'),
         fxConsoleItem('fx-bhlyricDrift', '歌词飘散', '银河黑洞 歌词 漂移 漂浮 飘散 缓慢'),
         fxConsoleItem({ selector: '.fx-blackhole-tuning .fx-actions' }, '恢复银河黑洞默认', '银河黑洞 重置 还原 默认')
+      ] },
+      { key: 'market', title: '节奏股市', hint: 'K线由歌曲自己的频谱算出：前四项改的是测量，要重新分析；实体与影线改的是已画出的K线；停盘与镜头每帧生效', items: [
+        fxConsoleItem('fx-mkchunkSamples', '分析块长度', '节奏股市 频谱 分析 块 采样 长度 FFT 分辨率'),
+        fxConsoleItem('fx-mkwickSlices', '影线切片数', '节奏股市 影线 切片 最高 最低 子窗'),
+        fxConsoleItem('fx-mkminHz', '最低频率', '节奏股市 频率 下限 低频 贝斯'),
+        fxConsoleItem('fx-mkmaxHz', '最高频率', '节奏股市 频率 上限 高频 人声'),
+        fxConsoleItem('fx-mkrefHz', '基准频率', '节奏股市 基准 参考 频率 价格 零点'),
+        fxConsoleItem('fx-mkoctaveUnits', '每八度高度', '节奏股市 八度 对数 高度 价格 刻度'),
+        fxConsoleItem('fx-mkpriceFloor', '价格基线', '节奏股市 基线 价格 上下 平移'),
+        fxConsoleItem('fx-mkcandleSpacing', 'K线间距', '节奏股市 K线 间距 密度 横向'),
+        fxConsoleItem('fx-mkbodyWidth', '实体宽度', '节奏股市 实体 宽度 蜡烛'),
+        fxConsoleItem('fx-mkbodyDepth', '实体厚度', '节奏股市 实体 厚度 纵深 立体'),
+        fxConsoleItem('fx-mkwickWidth', '影线粗细', '节奏股市 影线 粗细 wick'),
+        fxConsoleItem('fx-mkminBody', '最小实体高度', '节奏股市 实体 最小 高度 十字星'),
+        fxConsoleItem('fx-mkenergyGain', '响度提亮', '节奏股市 响度 能量 亮度 颜色'),
+        fxConsoleItem('fx-mkcurveOpacity', '收盘曲线亮度', '节奏股市 收盘 曲线 折线 透明度'),
+        fxConsoleItem('t-mkcolorFlip', '涨跌反色', '节奏股市 涨跌 反色 红涨 绿跌 配色'),
+        fxConsoleItem('t-mkbeatSync', '按鼓点停盘', '节奏股市 鼓点 停盘 卡点 节拍 伸缩'),
+        fxConsoleItem('fx-mkhitSlow', '停盘速度', '节奏股市 停盘 速度 慢放 鼓点'),
+        fxConsoleItem('fx-mkhitHold', '停盘时长', '节奏股市 停盘 时长 停顿 保持'),
+        fxConsoleItem('fx-mkhitStrength', '鼓点强度门槛', '节奏股市 鼓点 强度 门槛 过滤 弱拍'),
+        fxConsoleItem('fx-mkreboundTau', '回弹时间常数', '节奏股市 回弹 指数 恢复 时间常数'),
+        fxConsoleItem('fx-mkcatchGain', '追赶增益', '节奏股市 追赶 积压 补画 增益'),
+        fxConsoleItem('fx-mkmaxRate', '最高回放倍速', '节奏股市 倍速 上限 回放 追赶'),
+        fxConsoleItem('fx-mkseekSnap', '跳转吸附阈值', '节奏股市 跳转 拖动 吸附 阈值 进度'),
+        fxConsoleItem('fx-mkcamDamp', '镜头阻尼', '节奏股市 镜头 阻尼 跟随 平滑'),
+        fxConsoleItem('fx-mkcamDist', '镜头距离', '节奏股市 镜头 距离 远近'),
+        fxConsoleItem('fx-mkcamHeight', '镜头高度', '节奏股市 镜头 高度 俯视 仰视'),
+        fxConsoleItem('fx-mkcamLead', '镜头前瞻', '节奏股市 镜头 前瞻 提前 构图'),
+        fxConsoleItem('fx-mkfovDeg', '视锥角度', '节奏股市 视锥 视野 透视 焦距'),
+        fxConsoleItem('fx-mkwallCols', '棋盘格列数', '节奏股市 棋盘格 墙面 列数 图标'),
+        fxConsoleItem('fx-mkwallRows', '棋盘格行数', '节奏股市 棋盘格 墙面 行数 图标'),
+        fxConsoleItem('fx-mkwallDepth', '墙面距离', '节奏股市 墙面 距离 背景 纵深'),
+        fxConsoleItem('fx-mkwallParallax', '墙面视差', '节奏股市 墙面 视差 跟随 移动'),
+        fxConsoleItem('fx-mkwallOverscan', '墙面过扫描', '节奏股市 墙面 过扫描 铺满 边缘'),
+        fxConsoleItem('fx-mkwallBase', '墙面底色', '节奏股市 墙面 底色 亮度 压抑'),
+        fxConsoleItem('fx-mkwallContrast', '墙面对比', '节奏股市 墙面 对比 棋盘 明暗'),
+        fxConsoleItem('fx-mkwallOpacity', '墙面不透明度', '节奏股市 墙面 透明度 淡出'),
+        fxConsoleItem('fx-mkiconPx', '图标像素', '节奏股市 图标 像素 分辨率 清晰'),
+        fxConsoleItem('fx-mkiconThreshold', '二值化阈值', '节奏股市 二值化 阈值 图标 黑白'),
+        fxConsoleItem('fx-mkiconSource', '图标来源', '节奏股市 图标 来源 封面 通道 内置'),
+        fxConsoleItem({ selector: '.fx-market-tuning .fx-actions' }, '恢复节奏股市默认', '节奏股市 重置 还原 默认'),
+        fxConsoleItem('market-camera-reset', '重置视角', '节奏股市 视角 复位 拖拽 缩放')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
         fxConsoleItem('t-float', '浮空粒子层', '漂浮粒子'),
