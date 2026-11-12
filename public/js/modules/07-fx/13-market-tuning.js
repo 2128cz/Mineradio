@@ -47,6 +47,8 @@ function marketTuningFormat(key) {
   if (spec.kind === 'sec') return (Math.round(value * 100) / 100) + 's';
   if (spec.kind === 'px') return Math.round(value) + 'px';
   if (spec.kind === 'hz') return Math.round(value) + 'Hz';
+  // 0 is not a frequency here, it is "this song's own midline".
+  if (spec.kind === 'autoHz') return value > 0 ? (Math.round(value) + 'Hz') : '自动';
   if (spec.kind === 'pow2') return String(Math.round(value));
   // World-unit knobs are distances in the scene's own scale, not percentages of anything.
   if (spec.kind === 'unit') return (Math.round(value * 100) / 100) + 'u';

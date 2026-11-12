@@ -2061,12 +2061,23 @@ function runRhythmMarketPresetCheck() {
     presetRel: '02-visual/21-rhythm-market-preset.js',
     presetText, tuningText, htmlText, consoleText, fail
   });
-  if (schema.size !== 42) {
-    fail(`the market knob schema must stay at 42 knobs while the panel has 42 rows (found ${schema.size})`);
+  if (schema.size !== 43) {
+    fail(`the market knob schema must stay at 43 knobs while the panel has 43 rows (found ${schema.size})`);
   }
-  // The evaluation axis is part of the measurement, not just a rendering detail: a linear bin scan
-  // hands the top octave dozens of times more chances to win, so the peak is searched on a log grid
-  // and weighted by the equal-loudness curve.
+  // The price is an iterated position, not the block's frequency. Reading the frequency straight
+  // onto the axis draws a line that tracks the measurement and never goes anywhere - the one shape
+  // this preset exists to avoid.
+  for (const [pattern, why] of [
+    [/p = p \* \(1 - revert\) \+ dev \* inv/, 'the price must be a cumulative offset against a midline, not the block\'s own peak'],
+    [/out\.centreHz = centre;/, 'the midline has to be chosen and reported, or the walk has no origin to float around'],
+    [/if \(!\(centre > 0\) \|\| !isFinite\(centre\)\) centre = logN \? Math\.pow\(2, logSum \/ logN\)/, 'with no knob the midline must be this song\'s own geometric mean peak, so the drift has no built-in trend'],
+    [/priceRevert: 0\.05/, 'the walk needs a non-zero leak back to the midline, or four minutes of random steps wander off the chart'],
+  ]) {
+    if (!pattern.test(serialText)) fail(why);
+  }
+  if (!/var o = marketSeriesY\(s\.open\[i\]\);/.test(presetText) || !/var c = marketSeriesY\(s\.close\[i\]\);/.test(presetText)) {
+    fail('the candles must be drawn from the iterated price through marketSeriesY, or the chart and the camera disagree about the same data');
+  }
   for (const [pattern, why] of [
     [/function marketAWeight\(hz\)/, 'the equal-loudness curve has to exist: without it a strong kick reads as the loudest band'],
     [/var bands = Math\.max\(1, Math\.round\(Math\.log\(hi \/ lo\) \/ Math\.LN2 \* bpo\)\)/, 'the peak must be searched on a log frequency grid, not per linear bin'],

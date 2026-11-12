@@ -83,18 +83,22 @@ const opts = { chunk: 4096, slices: 4, minHz: 40, maxHz: 8000 };
   console.log('dominant frequency: ' + readings.join(', '));
 }
 
-// ---------------------------------------------------------------- 箱型图的四条边
+// ---------------------------------------------------------------- 箱型图：连续、包住路径、越走越远
 {
-  // 一块里前半 200 Hz、后半 900 Hz：开盘必须读到前半，收盘读到后半，上下影线包住两者。
-  const half = 2048;
-  const pcm = concat([sine(200, half / SR), sine(900, half / SR)]);
-  const series = sandbox.marketBuildSeries(pcm, SR, opts);
-  assert.equal(series.count, 1);
-  const o = series.open[0], c = series.close[0], h = series.high[0], l = series.low[0];
-  assert.ok(Math.abs(o - 200) / 200 < 0.03, 'the open must read the first sub-window, got ' + o);
-  assert.ok(Math.abs(c - 900) / 900 < 0.03, 'the close must read the last sub-window, got ' + c);
-  assert.ok(l <= Math.min(o, c) + 1e-6 && h >= Math.max(o, c) - 1e-6, 'the wicks must bracket the body: ' + [o, h, l, c]);
-  console.log('one candle across a pitch change: open ' + o.toFixed(1) + ' close ' + c.toFixed(1) + ' low ' + l.toFixed(1) + ' high ' + h.toFixed(1));
+  // 价格是累计出来的，所以"收盘读到后半块的峰频"不再是判据；判据是：
+  // 开 = 上一根收盘（没有跳空）、影线包住整根路径、持续在高频的段落会一路上行。
+  // A fixed midline makes "above it climbs, below it falls" a direct claim. With the auto midline
+  // a uniform song has no drift at all (its own mean is the midline), which is also correct.
+  const upOnly = sandbox.marketBuildSeries(sine(1600, 1), SR, Object.assign({}, opts, { priceCentre: 400 }));
+  assert.ok(upOnly.count > 1);
+  for (let i = 1; i < upOnly.count; i++) {
+    assert.equal(upOnly.open[i], upOnly.close[i - 1], 'candle ' + i + ' must open where the last one closed');
+  }
+  assert.ok(upOnly.close[upOnly.count - 1] > upOnly.close[0],
+    'a passage entirely above the midline must climb: ' + upOnly.close[0].toFixed(3) + ' -> ' + upOnly.close[upOnly.count - 1].toFixed(3));
+  const downOnly = sandbox.marketBuildSeries(sine(120, 1), SR, Object.assign({}, opts, { priceCentre: 400 }));
+  assert.ok(downOnly.close[downOnly.count - 1] < downOnly.close[0],
+    'a passage entirely below the midline must fall: ' + downOnly.close[0].toFixed(3) + ' -> ' + downOnly.close[downOnly.count - 1].toFixed(3));
 
   const mixed = concat([sine(110, 0.4), sine(1400, 0.4), sine(300, 0.4), sine(2600, 0.4)]);
   const many = sandbox.marketBuildSeries(mixed, SR, opts);
@@ -102,22 +106,43 @@ const opts = { chunk: 4096, slices: 4, minHz: 40, maxHz: 8000 };
     assert.ok(many.low[i] <= Math.min(many.open[i], many.close[i]) + 1e-6, 'candle ' + i + ': low above the body');
     assert.ok(many.high[i] >= Math.max(many.open[i], many.close[i]) - 1e-6, 'candle ' + i + ': high below the body');
     assert.ok(many.energy[i] > 0, 'candle ' + i + ': a sounding chunk must carry energy');
+    if (i) assert.equal(many.open[i], many.close[i - 1], 'candle ' + i + ' must open where the last one closed');
   }
-  console.log('bracketing holds on ' + many.count + ' candles of a four-tone sweep');
+  console.log('box: ' + many.count + ' continuous candles; 1600 Hz climbs to ' + upOnly.close[upOnly.count - 1].toFixed(2)
+    + ', 120 Hz falls to ' + downOnly.close[downOnly.count - 1].toFixed(2));
 }
 
-// ---------------------------------------------------------------- 用户举的那个例子
+// ---------------------------------------------------------------- 用户举的那个例子，按累计语义
 {
-  // 低频段占优 → 数值低（跌）；人声段 → 1k+（涨）。
-  const pcm = concat([sine(230, 0.5), sine(1200, 0.5)]);
+  // 低频段 → 低于中线 → 一路跌；人声段 → 高于中线 → 一路涨。中线是这首歌自己的峰频几何平均，
+  // 所以两段各自朝相反方向走，而不是各自停在一个绝对数值上。
+  const pcm = concat([sine(230, 1.0), sine(1200, 1.0)]);
   const series = sandbox.marketBuildSeries(pcm, SR, opts);
-  const bassEnd = Math.floor(0.5 * SR / opts.chunk);
-  let bassMax = 0, vocalMin = Infinity;
-  for (let i = 0; i < bassEnd; i++) bassMax = Math.max(bassMax, series.dom[i]);
-  for (let i = bassEnd + 1; i < series.count; i++) vocalMin = Math.min(vocalMin, series.dom[i]);
-  assert.ok(bassMax < 300, 'the bass passage must stay under 300 Hz, got ' + bassMax);
-  assert.ok(vocalMin > 1000, 'the vocal passage must read above 1 kHz, got ' + vocalMin);
-  console.log('bass passage peaks at ' + bassMax.toFixed(0) + ' Hz, vocal passage floors at ' + vocalMin.toFixed(0) + ' Hz');
+  const half = Math.floor(series.count / 2);
+  assert.ok(Math.abs(series.centreHz - Math.sqrt(230 * 1200)) / series.centreHz < 0.03,
+    'the auto midline must sit between the two passages (got ' + series.centreHz.toFixed(0) + ' Hz)');
+  assert.ok(series.close[half - 1] < series.close[0], 'the bass passage must fall');
+  assert.ok(series.close[series.count - 1] > series.close[half], 'the vocal passage must rise');
+  const low = Math.min.apply(null, Array.from(series.close));
+  const high = Math.max.apply(null, Array.from(series.close));
+  assert.ok(high - low > 1, 'the chart must actually move: range ' + (high - low).toFixed(2) + ' octaves');
+  console.log('bass then vocal: midline ' + series.centreHz.toFixed(0) + ' Hz, closes ' +
+    series.close[0].toFixed(2) + ' -> ' + series.close[half - 1].toFixed(2) + ' -> ' + series.close[series.count - 1].toFixed(2));
+}
+
+// ---------------------------------------------------------------- 回中线：0 是纯迭代，越大越贴中线
+{
+  const song = concat([sine(120, 2), sine(2400, 2), sine(150, 2), sine(3000, 2)]);
+  const spread = (revert) => {
+    const s = sandbox.marketBuildSeries(song, SR, Object.assign({}, opts, { priceRevert: revert }));
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < s.count; i++) { lo = Math.min(lo, s.close[i]); hi = Math.max(hi, s.close[i]); }
+    return hi - lo;
+  };
+  const pure = spread(0);
+  const leaky = spread(0.3);
+  assert.ok(pure > leaky * 1.5, 'a leak back to the midline must hold the walk in: pure ' + pure.toFixed(2) + ' vs ' + leaky.toFixed(2));
+  console.log('revert 0 vs 0.3: walk range ' + pure.toFixed(2) + ' vs ' + leaky.toFixed(2) + ' octaves');
 }
 
 // ---------------------------------------------------------------- 确定性
@@ -230,14 +255,25 @@ const opts = { chunk: 4096, slices: 4, minHz: 40, maxHz: 8000 };
 
 // ---------------------------------------------------------------- 分块异步 == 一次算完
 {
-  const pcm = concat([sine(150, 0.6), sine(880, 0.6), sine(2100, 0.6), sine(420, 0.6)]);
+  // Longer than the 48-candle slice the async path measures in, so the join is actually exercised:
+  // with one part the equality would hold no matter how the parts were stitched.
+  const pcm = concat([sine(150, 1.5), sine(880, 1.5), sine(2100, 1.5), sine(420, 1.5),
+    sine(120, 1.5), sine(1800, 1.5), sine(640, 1.5), sine(2600, 1.5)]);
   const whole = sandbox.marketBuildSeries(pcm, SR, opts);
+  assert.ok(whole.count > 48 * 2, 'the fixture must span more than two async slices (got ' + whole.count + ' candles)');
   return sandbox.marketBuildSeriesAsync(pcm, SR, opts, sandbox.marketSeriesToken).then(function (joined) {
     assert.ok(joined, 'the async path must produce a series');
     assert.equal(joined.count, whole.count, 'the joined series must have every candle');
-    for (const field of ['t', 'open', 'high', 'low', 'close', 'dom', 'energy']) {
+    for (const field of ['open', 'high', 'low', 'close', 'dom', 'energy']) {
       const x = Array.from(joined[field]), y = Array.from(whole[field]);
-      assert.deepEqual(x, y, field + ' must survive the chunked join (timestamps are shifted onto the song clock)');
+      assert.deepEqual(x, y, field + ' must survive the chunked join');
+    }
+    // Timestamps are shifted onto the song clock by adding each slice's offset, and they live in a
+    // Float32Array: at 8.7 s one float32 step is ~5e-7, so they agree to a microsecond rather than
+    // bit for bit. 1 µs against a 93 ms candle is not a difference anyone can see.
+    for (let i = 0; i < whole.count; i++) {
+      assert.ok(Math.abs(joined.t[i] - whole.t[i]) < 1e-6, 'timestamp ' + i + ' must survive the join ('
+        + joined.t[i] + ' vs ' + whole.t[i] + ')');
     }
     assert.ok(Math.abs(joined.duration - whole.duration) < 1e-6, 'duration must survive the join');
     console.log('chunked async join: ' + joined.count + ' candles identical to the one-shot build');

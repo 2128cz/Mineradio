@@ -39,10 +39,17 @@ var MARKET_TUNING_SCHEMA = {
   bandsPerOctave: { def: 12, min: 4, max: 48, kind: 'count', rebuild: 'series' },
   earWeight: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
   peakGate: { def: 0.25, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
-  // ---- Hz to world height. Logarithmic: 230 Hz and 1.2 kHz are 2.4 octaves apart, and a linear
-  // map would crush every bass passage onto the floor.
-  refHz: { def: 110, min: 20, max: 1000, kind: 'hz', rebuild: 'chart' },
-  octaveUnits: { def: 1.1, min: 0.2, max: 4, kind: 'unit', rebuild: 'chart' },
+  bandsPerOctave: { def: 12, min: 4, max: 48, kind: 'count', rebuild: 'series' },
+  earWeight: { def: 0.75, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
+  peakGate: { def: 0.25, min: 0, max: 1, kind: 'ratio', rebuild: 'series' },
+  // ---- the price is an iterated position, not the block's frequency. priceCentre is the midline
+  // the walk is measured against (0 = this song's own geometric mean peak), and priceRevert is how
+  // hard each step leaks back toward it - at 0 the sum is the pure iteration and walks away.
+  priceCentre: { def: 0, min: 0, max: 4000, kind: 'autoHz', rebuild: 'series' },
+  priceRevert: { def: 0.05, min: 0, max: 0.3, kind: 'ratio', rebuild: 'series' },
+  // ---- the chart's own vertical scale. priceDrift is chart units per octave of deviation per
+  // candle: the single number that decides how violently the market moves.
+  priceDrift: { def: 0.22, min: 0.02, max: 1, kind: 'unit', rebuild: 'chart' },
   priceFloor: { def: 0, min: -8, max: 8, kind: 'unit', rebuild: 'chart' },
   // ---- the candles
   candleSpacing: { def: 0.42, min: 0.08, max: 2, kind: 'unit', rebuild: 'chart' },
@@ -99,7 +106,7 @@ var marketState = {
   energyRef: 0.05, group: null, bodies: null, wicks: null, curve: null,
   wall: null, wallTex: null, wallCanvas: null, icons: [], iconSource: '',
   hitList: [], hitIdx: 0, hitSource: '', hits: 0, snaps: 0, backlog: 0,
-  lastCostMs: 0, frames: 0, error: '', coverKey: ''
+  lastCostMs: 0, frames: 0, error: '', errorToast: '', failedKey: '', failedSignature: '', coverKey: ''
 };
 
 // The user's own view offset, on top of the follow pose. The preset owns these rather than
@@ -136,16 +143,16 @@ function marketSeriesOpts() {
     maxHz: marketParam('maxHz'),
     bandsPerOctave: marketParam('bandsPerOctave'),
     earWeight: marketParam('earWeight'),
-    peakGate: marketParam('peakGate')
+    peakGate: marketParam('peakGate'),
+    priceCentre: marketParam('priceCentre'),
+    priceRevert: marketParam('priceRevert')
   };
 }
 
-// Hz on the chart's own axis. Read at draw time, so changing the mapping does not re-measure
-// the song.
-function marketPriceY(hz) {
-  var ref = Math.max(1, marketParam('refHz'));
-  var f = Math.max(1, Number(hz) || 0);
-  return marketParam('priceFloor') + Math.log(f / ref) / Math.LN2 * marketParam('octaveUnits');
+// The series' own price is dimensionless - octaves of accumulated deviation - so the vertical
+// scale lives here and a knob can change it without re-measuring the song.
+function marketSeriesY(v) {
+  return marketParam('priceFloor') + marketParam('priceDrift') * v;
 }
 
 function marketCandleX(index) {
@@ -156,12 +163,12 @@ function marketCandleX(index) {
 // stepping, which is what the camera is damping against.
 function marketCurveY(at) {
   var s = marketState.series;
-  if (!s || !s.count) return marketPriceY(marketParam('refHz'));
+  if (!s || !s.count) return marketParam('priceFloor');
   var i = marketClamp(Math.floor(at), 0, s.count - 1);
   var j = Math.min(s.count - 1, i + 1);
   var f = marketClamp(at - i, 0, 1);
-  var a = marketPriceY(s.close[i]);
-  var b = marketPriceY(s.close[j]);
+  var a = marketSeriesY(s.close[i]);
+  var b = marketSeriesY(s.close[j]);
   return a + (b - a) * f;
 }
 
@@ -180,17 +187,35 @@ function marketRequestSeries(force) {
     : [opts.chunk, opts.slices, opts.minHz, opts.maxHz].join('|');
   if (!force && marketState.seriesKey === key && marketState.seriesSignature === signature) return;
   if (!force && marketState.pendingKey === key && marketState.pendingSignature === signature) return;
+  // One attempt per song and measurement. This runs every frame, so retrying a failed read here
+  // would hammer a stream that is already refusing; the marker clears with the song or the knobs.
+  if (!force && marketState.failedKey === key && marketState.failedSignature === signature) return;
+  function failed(why) {
+    marketState.pendingKey = '';
+    marketState.failedKey = key;
+    marketState.failedSignature = signature;
+    marketState.error = String(why || 'series-unavailable').slice(0, 200);
+    if (typeof showToast === 'function' && marketState.errorToast !== marketState.error) {
+      marketState.errorToast = marketState.error;
+      showToast('节奏股市：这首歌的音频取不到，图表暂时为空');
+    }
+  }
   marketState.pendingKey = key;
   marketState.pendingSignature = signature;
   marketEnsureSeries(key, url, opts).then(function (series) {
     if (marketState.pendingKey !== key || marketState.pendingSignature !== signature) return;
     marketState.pendingKey = '';
-    if (!series) return;
+    if (!series) {
+      failed((typeof marketSeriesStatus === 'function') ? marketSeriesStatus().error : '');
+      return;
+    }
     // A song that changed under the analysis must not have its chart replaced by the old one.
     if (marketSongKey() !== key) return;
+    marketState.failedKey = '';
     marketAcceptSeries(series, key, signature);
   }).catch(function (err) {
-    marketState.error = String(err && (err.message || err)).slice(0, 200);
+    if (marketState.pendingKey !== key || marketState.pendingSignature !== signature) return;
+    failed(err && (err.message || err));
   });
 }
 
@@ -557,10 +582,10 @@ function marketWriteCandle(i, grow) {
   var bodies = marketState.bodies, wicks = marketState.wicks, curve = marketState.curve;
   if (!s || !bodies || !wicks || i < 0 || i >= s.count || !marketCandleScratch()) return;
   var x = marketCandleX(i);
-  var o = marketPriceY(s.open[i]);
-  var c = marketPriceY(s.close[i]);
-  var h = marketPriceY(s.high[i]);
-  var l = marketPriceY(s.low[i]);
+  var o = marketSeriesY(s.open[i]);
+  var c = marketSeriesY(s.close[i]);
+  var h = marketSeriesY(s.high[i]);
+  var l = marketSeriesY(s.low[i]);
   var top = o + (Math.max(o, c) - o) * grow;
   var bot = o + (Math.min(o, c) - o) * grow;
   var wTop = o + (h - o) * grow;

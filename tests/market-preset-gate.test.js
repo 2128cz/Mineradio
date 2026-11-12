@@ -64,19 +64,19 @@ vm.runInContext(source, sandbox, { filename: modulePath });
 const S = sandbox;
 const state = S.marketState;
 
-// A series whose price is flat: every open/close/high/low the same Hz, so the only thing that
-// moves in these tests is the clock and the write cursor.
-const CLOSE = 110;
+// A series whose price sits on the midline: the candles are the iterated drift, so 0 is the
+// midline and a flat song is a flat line. These tests move only the clock and the write cursor.
 function makeSeries(count) {
   const open = new Float32Array(count);
   const close = new Float32Array(count);
   const high = new Float32Array(count);
   const low = new Float32Array(count);
   const energy = new Float32Array(count);
-  for (let i = 0; i < count; i++) {
-    open[i] = CLOSE; close[i] = CLOSE; high[i] = CLOSE; low[i] = CLOSE; energy[i] = 1;
-  }
-  return { count, candlesPerSec: 10, open, close, high, low, energy };
+  for (let i = 0; i < count; i++) energy[i] = 1;
+  return {
+    count, candlesPerSec: 10, open, close, high, low, energy,
+    dom: new Float32Array(count), centreHz: 500, priceRevert: 0.05
+  };
 }
 
 function fakeMesh() {
@@ -439,21 +439,30 @@ test('the wall sits behind the chart, on the far side from the camera', () => {
   S.camera = undefined;
 });
 
-// ---------------------------------------------------------------- Hz -> price
+// ---------------------------------------------------------------- the price axis
 
-test('the price axis is logarithmic, one octaveUnits per doubling, anchored at refHz', () => {
-  const ref = S.marketParam('refHz');
-  const oct = S.marketParam('octaveUnits');
+test('the iterated price is scaled by one knob and offset by another, and the curve follows it', () => {
+  reset({ shown: 0 });
+  const drift = S.marketParam('priceDrift');
   const floor = S.marketParam('priceFloor');
-  assert.ok(Math.abs(S.marketPriceY(ref) - floor) < 1e-9, `refHz must sit on the floor: ${S.marketPriceY(ref)}`);
-  assert.ok(Math.abs((S.marketPriceY(ref * 2) - S.marketPriceY(ref)) - oct) < 1e-9, 'one doubling must be one octaveUnits');
-  assert.ok(Math.abs((S.marketPriceY(ref * 4) - S.marketPriceY(ref)) - 2 * oct) < 1e-9, 'two doublings must be two octaveUnits');
-  let prev = -Infinity;
-  for (const hz of [1, 20, 40, 80, 160, 320, 640, 1280, 2560, 5120, 16000]) {
-    const y = S.marketPriceY(hz);
-    assert.ok(y > prev, `the price axis must rise with frequency, ${hz}Hz gave ${y} after ${prev}`);
-    prev = y;
+  assert.ok(Math.abs(S.marketSeriesY(0) - floor) < 1e-9, 'the midline must land on priceFloor');
+  assert.ok(Math.abs(S.marketSeriesY(1) - (floor + drift)) < 1e-9, 'one octave of drift must be one priceDrift');
+  assert.ok(Math.abs(S.marketSeriesY(-2) - (floor - 2 * drift)) < 1e-9, 'the scale must be linear both ways');
+
+  S.marketTuning = { priceDrift: 0.5, priceFloor: 1.25 };
+  try {
+    assert.ok(Math.abs(S.marketSeriesY(2) - 2.25) < 1e-9, `knobs must be read: got ${S.marketSeriesY(2)}`);
+  } finally {
+    S.marketTuning = undefined;
   }
+
+  // The curve is the closes read through the same scale, so a head between two closes is between
+  // their two heights - that is what the camera damps against.
+  state.series.close[0] = 0;
+  state.series.close[1] = 1;
+  const y0 = S.marketSeriesY(0), y1 = S.marketSeriesY(1);
+  assert.ok(Math.abs(S.marketCurveY(0) - y0) < 1e-9, 'the curve at a candle equals its close');
+  assert.ok(Math.abs(S.marketCurveY(0.5) - (y0 + (y1 - y0) * 0.5)) < 1e-9, 'the curve glides between closes');
 });
 
 test('the candles are laid out left to right at candleSpacing, with their own index', () => {

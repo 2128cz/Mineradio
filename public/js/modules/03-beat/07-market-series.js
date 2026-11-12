@@ -99,9 +99,9 @@ function marketAWeight(hz) {
   return Math.pow(10, db / 20);
 }
 
-// Bands per octave, equal-loudness mix and peak prominence, with the same defaults the console
-// ships, so a bare marketBuildSeries() behaves like the app does.
-var MARKET_PEAK_DEFAULTS = { bandsPerOctave: 12, earWeight: 0.75, peakGate: 0.25 };
+// Bands per octave, equal-loudness mix, peak prominence and the walk's memory, with the same
+// defaults the console ships, so a bare marketBuildSeries() behaves like the app does.
+var MARKET_PEAK_DEFAULTS = { bandsPerOctave: 12, earWeight: 0.75, peakGate: 0.25, priceRevert: 0.05 };
 
 // The strongest band on a LOG frequency axis, weighted for hearing.
 //
@@ -197,14 +197,31 @@ function marketPeakHz(mag, n, sampleRate, minHz, maxHz, opts) {
 
 function marketSeriesSignature(opts) {
   return [opts.chunk, opts.slices, opts.minHz, opts.maxHz,
-    opts.bandsPerOctave, opts.earWeight, opts.peakGate].join('|');
+    opts.bandsPerOctave, opts.earWeight, opts.peakGate,
+    opts.priceCentre, opts.priceRevert].join('|');
 }
 
 // ---------------------------------------------------------------- the series
 //
 // Pure: same samples and same options give the same numbers, every time. No clock, no RNG, no
 // dependency on the app's state - which is what makes the chart reproducible across a seek.
-function marketBuildSeries(pcm, sampleRate, opts) {
+//
+// The price is an ITERATED position, not the absolute peak of the block. Reading the peak
+// straight onto the axis draws a line that tracks the measurement and never goes anywhere: a
+// chart, by definition, is the accumulated movement. So every block banks the offset between its
+// peak and a midline -
+//
+//     price += (log2(peak) - log2(centre)) / slices      (see priceRevert below)
+//
+// - which is the user's "subtract a fixed value, add the difference to the current candle". The
+// log is not decoration: with the offset taken in Hz, a jump into the vocal range would move the
+// price several times further than a drop into the bass, and every song would sawtooth upward.
+//
+// `centre` is this song's own geometric mean peak, so the drift has no built-in trend; a knob
+// overrides it. A pure sum is a random walk, and a random walk over a four-minute song wanders
+// arbitrarily far, so each step also leaks back toward the midline by `priceRevert` - with 0 the
+// sum is exactly the pure iteration, and the chart walks away.
+function marketBuildSeries(pcm, sampleRate, opts, startPrevHz) {
   var chunk = Math.max(64, Math.round(opts.chunk));
   var slices = Math.max(1, Math.round(opts.slices));
   var minHz = Math.max(1, Number(opts.minHz) || 1);
@@ -216,20 +233,27 @@ function marketBuildSeries(pcm, sampleRate, opts) {
   var gate = opts.peakGate == null ? MARKET_PEAK_DEFAULTS.peakGate : Number(opts.peakGate);
   ear = Math.min(1, Math.max(0, isFinite(ear) ? ear : MARKET_PEAK_DEFAULTS.earWeight));
   gate = Math.min(1, Math.max(0, isFinite(gate) ? gate : MARKET_PEAK_DEFAULTS.peakGate));
+  var revert = opts.priceRevert == null ? MARKET_PEAK_DEFAULTS.priceRevert : Number(opts.priceRevert);
+  revert = Math.min(0.95, Math.max(0, isFinite(revert) ? revert : MARKET_PEAK_DEFAULTS.priceRevert));
   var peakOpts = { bandsPerOctave: bpo, earWeight: ear, peakGate: gate, prevHz: 0 };
   var out = {
     sampleRate: sampleRate, chunk: chunk, slices: slices, minHz: minHz, maxHz: maxHz,
-    bandsPerOctave: bpo, earWeight: ear, peakGate: gate,
+    bandsPerOctave: bpo, earWeight: ear, peakGate: gate, priceRevert: revert,
     count: count, duration: pcm.length / sampleRate, candlesPerSec: sampleRate / chunk,
     signature: marketSeriesSignature({
       chunk: chunk, slices: slices, minHz: minHz, maxHz: maxHz,
-      bandsPerOctave: bpo, earWeight: ear, peakGate: gate
+      bandsPerOctave: bpo, earWeight: ear, peakGate: gate,
+      priceCentre: opts.priceCentre, priceRevert: revert
     }),
     t: new Float32Array(count), open: new Float32Array(count), high: new Float32Array(count),
     low: new Float32Array(count), close: new Float32Array(count), dom: new Float32Array(count),
-    energy: new Float32Array(count)
+    energy: new Float32Array(count), peaks: new Float32Array(count * slices),
+    centreHz: 0
   };
-  var prevDom = 0;
+  // Pass 1: measure. Every sub-window's peak is kept, because the candle's shape is the path the
+  // price walked through it, not four independent readings. startPrevHz carries the held price
+  // across a chunked analysis, so the slices measure exactly what one pass would have measured.
+  var prevDom = Number(startPrevHz) || 0;
   for (var i = 0; i < count; i++) {
     var start = i * chunk;
     out.t[i] = start / sampleRate;
@@ -243,23 +267,57 @@ function marketBuildSeries(pcm, sampleRate, opts) {
     var dom = marketPeakHz(marketSpectrum(pcm, start, chunk), chunk, sampleRate, minHz, maxHz, peakOpts).hz;
     prevDom = dom;
     out.dom[i] = dom;
-    // The box: each sub-window's own strongest frequency. First is the open, last the close,
-    // the extremes the wicks - a real candlestick, every number of it from the audio.
-    var o = 0, c = 0, hi = -Infinity, lo = Infinity;
     peakOpts.prevHz = dom;
     for (var s = 0; s < slices; s++) {
       var at = start + Math.min(chunk - sub, Math.round(s * (chunk - sub) / Math.max(1, slices - 1)));
       if (slices === 1) at = start;
       var hz = marketPeakHz(marketSpectrum(pcm, at, sub), sub, sampleRate, minHz, maxHz, peakOpts).hz || dom;
       peakOpts.prevHz = hz;
-      if (s === 0) o = hz;
-      c = hz;
-      if (hz > hi) hi = hz;
-      if (hz < lo) lo = hz;
+      out.peaks[i * slices + s] = hz;
     }
-    out.open[i] = o; out.close[i] = c;
-    out.high[i] = hi === -Infinity ? 0 : hi;
-    out.low[i] = lo === Infinity ? 0 : lo;
+  }
+  // The midline: the knob, or this song's own geometric mean peak. The mean of the LOGS is what
+  // makes the expected drift zero; the mean of the Hz would sit far above most blocks because a
+  // couple of very high blocks drag it up.
+  marketIntegrateSeries(out, opts);
+  out.lastPrevHz = prevDom;
+  return out;
+}
+
+// The integral, on its own so the chunked analysis can measure in slices and then walk the whole
+// song in one pass: a walk restarted at each slice boundary would jump at every join, and each
+// slice would pick its own midline.
+function marketIntegrateSeries(out, opts) {
+  var slices = Math.max(1, out.slices | 0);
+  var minHz = out.minHz, maxHz = out.maxHz;
+  var count = out.count;
+  var revert = opts && opts.priceRevert != null ? Number(opts.priceRevert) : MARKET_PEAK_DEFAULTS.priceRevert;
+  revert = Math.min(0.95, Math.max(0, isFinite(revert) ? revert : MARKET_PEAK_DEFAULTS.priceRevert));
+  out.priceRevert = revert;
+  var logSum = 0, logN = 0;
+  for (var k = 0; k < out.peaks.length; k++) {
+    if (out.peaks[k] > 0) { logSum += Math.log2(out.peaks[k]); logN++; }
+  }
+  var centre = opts ? Number(opts.priceCentre) : 0;
+  if (!(centre > 0) || !isFinite(centre)) centre = logN ? Math.pow(2, logSum / logN) : Math.sqrt(minHz * maxHz);
+  centre = Math.min(maxHz, Math.max(minHz, centre));
+  out.centreHz = centre;
+  var centreLog = Math.log2(centre);
+  // Pass 2: iterate. The open of a candle is the previous close, so the chart is one continuous
+  // price; the wick is the extreme the walk reached inside the block.
+  var p = 0;
+  var inv = 1 / slices;
+  for (var c2 = 0; c2 < count; c2++) {
+    var o = p, hi = p, lo = p;
+    for (var sl = 0; sl < slices; sl++) {
+      var hzS = out.peaks[c2 * slices + sl];
+      var dev = hzS > 0 ? (Math.log2(hzS) - centreLog) : 0;
+      p = p * (1 - revert) + dev * inv;
+      if (p > hi) hi = p;
+      if (p < lo) lo = p;
+    }
+    out.open[c2] = o; out.close[c2] = p;
+    out.high[c2] = hi; out.low[c2] = lo;
   }
   return out;
 }
@@ -300,20 +358,34 @@ function marketReleaseSeries() {
   marketSeriesState.key = '';
 }
 
+// Fetch/decode a song's audio for measurement. The chart is built from the file, not from the
+// playing element, so this is a second read of the same bytes - and it has to give up: a stream
+// that never ends (or a URL that has expired) would otherwise leave the preset loading forever
+// with nothing on screen and nothing said.
+var MARKET_FETCH_TIMEOUT_MS = 20000;
 async function marketDecodeSong(url, token) {
-  var resp = await fetch(url);
-  if (token !== marketSeriesToken) return null;
-  var ab = await resp.arrayBuffer();
-  if (token !== marketSeriesToken) return null;
   var Ctor = window.AudioContext || window.webkitAudioContext;
   if (!Ctor) return null;
-  var ctx = new Ctor();
-  var buffer = await new Promise(function (resolve, reject) {
-    ctx.decodeAudioData(ab.slice(0), resolve, reject);
-  }).catch(function () { return null; });
-  if (ctx.close) ctx.close();
-  if (token !== marketSeriesToken || !buffer) return null;
-  return { pcm: buffer.getChannelData(0), sampleRate: buffer.sampleRate };
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = 0;
+  try {
+    if (ctl) timer = setTimeout(function () { ctl.abort(); }, MARKET_FETCH_TIMEOUT_MS);
+    var resp = await fetch(url, ctl ? { signal: ctl.signal } : undefined);
+    if (token !== marketSeriesToken) return null;
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var ab = await resp.arrayBuffer();
+    if (token !== marketSeriesToken) return null;
+    if (!ab || !ab.byteLength) throw new Error('the audio came back empty');
+    var ctx = new Ctor();
+    var buffer = await new Promise(function (resolve, reject) {
+      ctx.decodeAudioData(ab.slice(0), resolve, reject);
+    }).catch(function () { return null; });
+    if (ctx.close) ctx.close();
+    if (token !== marketSeriesToken || !buffer) return null;
+    return { pcm: buffer.getChannelData(0), sampleRate: buffer.sampleRate };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // Fetch/decode/analyse a song's series. Resolves to the series, or to null when the call was
@@ -330,6 +402,8 @@ async function marketEnsureSeries(key, url, opts) {
     marketSeriesState.bandsPerOctave = cached.bandsPerOctave;
     marketSeriesState.earWeight = cached.earWeight;
     marketSeriesState.peakGate = cached.peakGate;
+    marketSeriesState.centreHz = cached.centreHz;
+    marketSeriesState.priceRevert = cached.priceRevert;
     return cached;
   }
   var token = ++marketSeriesToken;
@@ -337,7 +411,8 @@ async function marketEnsureSeries(key, url, opts) {
   marketSeriesState = {
     key: key, phase: 'fetch', progress: 0, count: 0, error: '',
     costMs: 0, sampleRate: 0, chunk: opts.chunk, slices: opts.slices, cached: false,
-    bandsPerOctave: opts.bandsPerOctave, earWeight: opts.earWeight, peakGate: opts.peakGate
+    bandsPerOctave: opts.bandsPerOctave, earWeight: opts.earWeight, peakGate: opts.peakGate,
+    centreHz: 0, priceRevert: opts.priceRevert
   };
   try {
     var pcm = marketPcmCacheGet(key);
@@ -360,6 +435,8 @@ async function marketEnsureSeries(key, url, opts) {
     marketSeriesState.bandsPerOctave = series.bandsPerOctave;
     marketSeriesState.earWeight = series.earWeight;
     marketSeriesState.peakGate = series.peakGate;
+    marketSeriesState.centreHz = series.centreHz;
+    marketSeriesState.priceRevert = series.priceRevert;
     return series;
   } catch (err) {
     if (token !== marketSeriesToken) return null;
@@ -376,10 +453,12 @@ async function marketBuildSeriesAsync(pcm, sampleRate, opts, token) {
   var total = Math.floor(pcm.length / chunk);
   var step = 48;
   var parts = [];
+  var prevHz = 0;
   for (var at = 0; at < total; at += step) {
     var head = Math.min(total, at + step);
     var view = pcm.subarray(at * chunk, head * chunk);
-    var part = marketBuildSeries(view, sampleRate, opts);
+    var part = marketBuildSeries(view, sampleRate, opts, prevHz);
+    prevHz = part.lastPrevHz;
     // subarray starts at a chunk boundary, so the part's own indices are relative: shift the
     // timestamps back onto the song's clock before joining.
     for (var i = 0; i < part.count; i++) part.t[i] += at * chunk / sampleRate;
@@ -399,8 +478,9 @@ function marketJoinSeries(parts, sampleRate, opts, totalSamples) {
   var count = 0;
   for (var p = 0; p < parts.length; p++) count += parts[p].count;
   var out = marketBuildSeries(new Float32Array(0), sampleRate, opts);
-  ['t', 'open', 'high', 'low', 'close', 'dom', 'energy'].forEach(function (field) {
-    out[field] = new Float32Array(count);
+  var fields = ['t', 'open', 'high', 'low', 'close', 'dom', 'energy', 'peaks'];
+  fields.forEach(function (field) {
+    out[field] = new Float32Array(field === 'peaks' ? count * out.slices : count);
   });
   out.count = count;
   var at = 0;
@@ -409,8 +489,13 @@ function marketJoinSeries(parts, sampleRate, opts, totalSamples) {
     ['t', 'open', 'high', 'low', 'close', 'dom', 'energy'].forEach(function (field) {
       out[field].set(part[field], at);
     });
+    out.peaks.set(part.peaks, at * out.slices);
     at += part.count;
   }
+  // The walk is one integral over the whole song: the slices were measured separately, and only
+  // now is the midline chosen and the price accumulated. Integrating per slice would jump at every
+  // join and give each slice its own midline.
+  marketIntegrateSeries(out, opts);
   // The song's own length, not the last candle's end: a trailing partial chunk is still music.
   out.duration = totalSamples / sampleRate;
   return out;
@@ -425,6 +510,7 @@ function marketSeriesStatus() {
     chunk: marketSeriesState.chunk, slices: marketSeriesState.slices,
     bandsPerOctave: marketSeriesState.bandsPerOctave,
     earWeight: marketSeriesState.earWeight, peakGate: marketSeriesState.peakGate,
+    centreHz: marketSeriesState.centreHz, priceRevert: marketSeriesState.priceRevert,
     cached: marketSeriesState.cached,
     pcmHeld: !!MARKET_PCM_CACHE.pcm, seriesHeld: Object.keys(MARKET_SERIES_CACHE).length
   };
