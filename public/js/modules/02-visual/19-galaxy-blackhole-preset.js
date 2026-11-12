@@ -1746,6 +1746,86 @@ function bhLyricFontPx() {
   return Math.max(11, Math.min(44, 19 * bhClamp(scale, 0.35, 1.65)));
 }
 
+// The sign's font, raster multiplier, line box and translation band are the console's lyric-tab
+// settings (05-lyrics-fonts-texture / 08-lyrics-display-modes). Each getter falls back to the
+// value the hole was tuned with, so a harness that runs this module alone keeps the same sign.
+function bhLyricFontStack() {
+  if (typeof lyricFontStackForKey === 'function' && typeof fx !== 'undefined' && fx) {
+    try {
+      var stack = String(lyricFontStackForKey(fx.lyricFont) || '').trim();
+      if (stack) return stack;
+    } catch (_) {}
+  }
+  return typeof HALO_FONT !== 'undefined' ? HALO_FONT : '"JetBrains Mono","Microsoft YaHei",monospace';
+}
+
+// The console's clarity is a 1..4 tier; the hole's tuned baseline is 2.5x, so the tiers step up
+// from there rather than down to a 1x blur.
+function bhLyricSuperSample() {
+  var tier = 1;
+  if (typeof lyricTextureClarityScale === 'function') tier = Number(lyricTextureClarityScale()) || 1;
+  else if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricTextureClarity))) tier = Number(fx.lyricTextureClarity);
+  return bhClamp(2 + 0.5 * bhClamp(tier, 1, 4), 2, 4);
+}
+
+function bhLyricLineHeightFactor() {
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricLineHeight))) {
+    return bhClamp(Number(fx.lyricLineHeight), 0.72, 1.8);
+  }
+  return 1;
+}
+
+function bhLyricTranslationShown() {
+  if (typeof lyricTranslationLayoutActive === 'function') {
+    try { return !!lyricTranslationLayoutActive(); } catch (_) {}
+  }
+  if (typeof fx !== 'undefined' && fx && fx.lyricTranslationMode !== undefined) {
+    return String(fx.lyricTranslationMode || 'off') !== 'off';
+  }
+  return true;
+}
+
+function bhLyricTranslationScaleFactor() {
+  if (typeof lyricTranslationScaleValue === 'function') {
+    try { return lyricTranslationScaleValue(); } catch (_) {}
+  }
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricTranslationScale))) {
+    return bhClamp(Number(fx.lyricTranslationScale), 0.46, 1.12);
+  }
+  return 0.65;
+}
+
+function bhLyricTranslationOpacityFactor() {
+  if (typeof lyricTranslationOpacityValue === 'function') {
+    try { return lyricTranslationOpacityValue(); } catch (_) {}
+  }
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricTranslationOpacity))) {
+    return bhClamp(Number(fx.lyricTranslationOpacity), 0.2, 1);
+  }
+  return 0.86;
+}
+
+// The gap rides as an offset from the tuned default (0.92), so the console's own default keeps
+// the layout the hole was signed off with.
+function bhLyricTranslationGapPx(fontPx) {
+  var gap = 0.92;
+  if (typeof lyricTranslationGapValue === 'function') {
+    try { gap = lyricTranslationGapValue(); } catch (_) {}
+  } else if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricTranslationGap))) {
+    gap = Number(fx.lyricTranslationGap);
+  }
+  return Math.max(0, (bhClamp(gap, 0.28, 2.2) - 0.92) * Number(fontPx) * 0.5);
+}
+
+// Everything the rasterised sign reads, in one string: a console change to any of it makes the
+// live rows redraw on the next frame instead of waiting for the highlight to move.
+function bhLyricStyleKey() {
+  var palette = bhLyricPaletteState();
+  return [bhLyricFontPx(), bhLyricFontStack(), bhLyricSuperSample(), bhLyricLineHeightFactor(),
+    bhLyricTranslationShown() ? 1 : 0, bhLyricTranslationScaleFactor(),
+    bhLyricTranslationOpacityFactor(), bhLyricTranslationGapPx(100).toFixed(2), palette.signature].join('|');
+}
+
 // The lines, with the app's own timing offset folded in, so a row's start is the moment it is
 // sung rather than the moment the file says.
 function bhLyricItems() {
@@ -1759,6 +1839,8 @@ function bhLyricItems() {
     items.push({
       index: i,
       text: text,
+      // The raw translation always rides along: the console's translation switch is applied at
+      // raster time, so flipping it answers on the next frame instead of on the next song.
       sub: bhLyricTranslationOf(lines[i]),
       startAt: Number(lines[i].t) + offset
     });
@@ -2288,20 +2370,25 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   // The sign is displayed at roughly two to three times the layout typographic size (the plane's
   // height is a fraction of the view), so the canvas is rendered at that multiple. Drawing at the
   // layout size and letting the GPU magnify was exactly the blur.
-  var superSample = 2.5;
+  var superSample = bhLyricSuperSample();
   var fontPx = bhLyricFontPx() * superSample;
-  var subPx = Math.round(fontPx * 0.62);
-  var font = '700 ' + fontPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : '"JetBrains Mono","Microsoft YaHei",monospace');
-  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + (typeof HALO_FONT !== 'undefined' ? HALO_FONT : 'monospace');
+  var fontStack = bhLyricFontStack();
+  var subPx = Math.round(fontPx * bhLyricTranslationScaleFactor());
+  var font = '700 ' + fontPx.toFixed(1) + 'px ' + fontStack;
+  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + fontStack;
   var measure = row.ctx;
   var pad = Math.max(4, fontPx * 0.35);
-  var mainH = fontPx * 1.35;
+  var mainH = fontPx * 1.35 * bhLyricLineHeightFactor();
   var subH = subPx * 1.6;
+  var subGapPx = bhLyricTranslationGapPx(fontPx);
   var maxWidth = Math.min(1900, Math.max(fontPx * 10, 900 * superSample));
   measure.font = font;
   var mainLines = bhWrapText(measure, item.text, maxWidth, 4);
   measure.font = subFont;
-  var subLines = item.sub ? bhWrapText(measure, item.sub, maxWidth, 2) : [];
+  // The console's translation switch is re-read at raster time: the item list is keyed to the
+  // song, not to the mode, so a flip must not depend on the next line arriving.
+  var subText = bhLyricTranslationShown() ? String(item.sub || '') : '';
+  var subLines = subText ? bhWrapText(measure, subText, maxWidth, 2) : [];
   var textWidth = 0;
   measure.font = font;
   for (var li = 0; li < mainLines.length; li++) {
@@ -2315,8 +2402,8 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   // The translation band is reserved on every row, so the glyphs occupy the same share of the
   // plane whether or not the line has a translation and the text does not change size line to line.
   var subBands = Math.max(1, subLines.length);
-  var singleHeight = Math.ceil(mainH + subH + pad * 2);
-  var canvasHeight = Math.ceil(mainLines.length * mainH + subBands * subH + pad * 2);
+  var singleHeight = Math.ceil(mainH + subGapPx + subH + pad * 2);
+  var canvasHeight = Math.ceil(mainLines.length * mainH + subGapPx + subBands * subH + pad * 2);
   row.lineScale = bhClamp(canvasHeight / singleHeight, 1, 2.8);
   row.textureScale = superSample;
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
@@ -2339,8 +2426,8 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   }
   if (subLines.length) {
     ctx.font = subFont;
-    ctx.fillStyle = bhLyricCss(palette.context, alpha * 0.72);
-    var subTop = pad + mainLines.length * mainH;
+    ctx.fillStyle = bhLyricCss(palette.context, alpha * bhLyricTranslationOpacityFactor());
+    var subTop = pad + mainLines.length * mainH + subGapPx;
     for (var sj = 0; sj < subLines.length; sj++) {
       ctx.fillText(subLines[sj], width / 2, subTop + (sj + 0.5) * subH);
     }
@@ -2361,6 +2448,7 @@ function bhDrawRowCanvas(row, item, sung, palette, motion) {
   row.glyphs = glyphs.slice(0, BH_MAX_ROW_GLYPHS);
   row.glyphVersion = (row.glyphVersion || 0) + 1;
   row.sung = sung;
+  row.drawStyle = bhLyricStyleKey();
 }
 
 // Character boxes for one drawn line, in canvas pixels. Whitespace is dropped: a space has no glyph
@@ -2528,6 +2616,7 @@ function bhPlaceLyrics(frame, dt) {
   var time = bhLyrics.time;
   var now = isFinite(Number(bhLyrics.now)) ? Number(bhLyrics.now) : time;
   var motion = bhLyricMotionState();
+  var styleKey = bhLyricStyleKey();
   bhLyrics.layer.position.set(frame.world.x, frame.world.y, frame.world.z);
   var basis = bhOrbitBasis(bhParam('discTilt'));
   var front = bhOrbitFrontAngle(basis, {
@@ -2588,7 +2677,9 @@ function bhPlaceLyrics(frame, dt) {
     var current = index === sung;
     // The row keeps its line, so the canvas has to be redrawn when that line becomes (or stops
     // being) the one being sung: otherwise the highlight stays on whichever line it was drawn for.
-    if (row.sung !== current) {
+    // The style half of the test is the console's lyric tab: a font, clarity or colour change
+    // reaches the live rows on the next frame instead of waiting for the highlight to move.
+    if (row.sung !== current || row.drawStyle !== styleKey) {
       bhDrawRowCanvas(row, items[index], current, bhLyricPaletteState(), motion);
       row.texture.needsUpdate = true;
     }

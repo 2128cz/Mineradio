@@ -541,6 +541,11 @@ async function togglePlay() {
   playToggleBusy = true;
   try {
     forcePlaybackControlsInteractive();
+    // 全局快捷键与媒体键走 IPC 送达，不产生页面按键，启动页不会自己退场；
+    // 只要这一次按键是要开始播放，就替用户按下「点击进入」。
+    if (document.body.classList.contains('splash-active') && (!audio || !audio.src || audio.paused || audio.ended)) {
+      dismissSplash({ reason: 'play-key' });
+    }
     if ((!audio || !audio.src) && playQueue.length && currentIdx >= 0) {
       await playQueueAt(currentIdx, { manual: true });
       return;
@@ -550,7 +555,17 @@ async function togglePlay() {
       return;
     }
     if ((!audio || !audio.src) && currentLocalSong && (currentLocalSong.localMissing || !currentLocalSong.localUrl)) {
+      if (await tryHotkeyBootstrapPlayback()) {
+        showToast('上次播放的是本地文件，已改为播放每日推荐');
+        return;
+      }
       showToast('上次播放的是本地文件，请重新导入后继续');
+      return;
+    }
+    if ((!audio || audio.paused || audio.ended) && (!playQueue.length || currentIdx < 0 || !playQueue[currentIdx])) {
+      if (await tryHotkeyBootstrapPlayback()) return;
+      if (!audio) return;
+      if (!hasAnyPlatformLogin()) showToast('请先登录音乐平台账号，之后即可快捷键播放');
       return;
     }
     if (!audio) return;

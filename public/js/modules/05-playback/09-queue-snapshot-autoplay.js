@@ -314,3 +314,43 @@ function scheduleStartupAutoplayFromSnapshot(reason) {
   );
   return true;
 }
+
+var hotkeyBootstrapInFlight = false;
+// 开机后既没有可恢复的队列、用户又没进界面点过播放时，全局快捷键/媒体键必须自己把
+// 播放启动起来：按播放键本身就是用户意图，所以不受 startupAutoplayPreference 限制，
+// 直接借用每日推荐做兜底队列。
+function tryHotkeyBootstrapPlayback() {
+  if (hotkeyBootstrapInFlight) return Promise.resolve(false);
+  if (!hasAnyPlatformLogin()) return Promise.resolve(false);
+  hotkeyBootstrapInFlight = true;
+  return Promise.resolve()
+    .then(function () {
+      return waitForHomeDiscoverIdle(1800);
+    })
+    .then(function () {
+      if (!homeDiscoverState.loaded || (!homeDiscoverState.songs.length && !homeDiscoverState.loading)) {
+        return loadHomeDiscover(true);
+      }
+      return null;
+    })
+    .then(function () {
+      if (!homeDiscoverState.songs.length) return false;
+      playQueue = homeDiscoverState.songs.map(cloneSong);
+      currentIdx = 0;
+      currentLocalSong = null;
+      pendingPlaybackResumeAt = 0;
+      startupRestoreHomePending = false;
+      safeRenderQueuePanel('hotkey-home-bootstrap', { scrollCurrent: miniQueueOpen });
+      safeShelfRebuild('hotkey-home-bootstrap', true);
+      forcePlaybackControlsInteractive();
+      return playQueueAt(0, { manual: true });
+    })
+    .catch(function (e) {
+      console.warn('[HotkeyBootstrapPlayback]', e);
+      return false;
+    })
+    .then(function (ok) {
+      hotkeyBootstrapInFlight = false;
+      return !!ok;
+    });
+}

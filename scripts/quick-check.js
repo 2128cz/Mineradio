@@ -1851,7 +1851,28 @@ function runBlackHolePresetCheck() {
   if (!/bhEnsureLyricRowCount\(bhParam\('lyricRows'\)\)/.test(text)) fail('the row pool has to be built from the lyricRows knob');
   if (!/function bhLyricWindowRange\(/.test(text)) fail('the window has to be derived from the pool size, not hard-coded');
   // The sign is displayed 2-3x its layout size; rasterising at the layout size is what blurred it.
-  if (!/var superSample = 2\.5;/.test(text)) fail('the lyric canvas has to be supersampled above its display size');
+  // The multiple is the console's 歌词清晰度 tier now, so the guard pins the wiring, not a number.
+  if (!/var superSample = bhLyricSuperSample\(\);/.test(text)) fail('the lyric canvas supersample has to follow the console clarity tier');
+  if (!/function bhLyricSuperSample\(/.test(text) || !/lyricTextureClarityScale/.test(text)) {
+    fail('bhLyricSuperSample must read the app clarity tier');
+  }
+  // The sign's text settings are the console's lyric tab: font, line height and the translation
+  // band all read fx, and a style key makes a console change rasterise on the next frame.
+  for (const [pattern, why] of [
+    [/function bhLyricFontStack\(/, 'the font has to come from the console lyric font'],
+    [/lyricFontStackForKey/, 'bhLyricFontStack must read the app font-stack resolver'],
+    [/function bhLyricLineHeightFactor\(/, 'the line box has to follow the console line height'],
+    [/fx\.lyricLineHeight/, 'bhLyricLineHeightFactor must read fx.lyricLineHeight'],
+    [/function bhLyricTranslationShown\(/, 'the translation switch has to come from the console'],
+    [/lyricTranslationLayoutActive/, 'bhLyricTranslationShown must read the app translation-mode helper'],
+    [/bhLyricTranslationScaleFactor\(\)/, 'the sub line size has to follow the console translation scale'],
+    [/bhLyricTranslationOpacityFactor\(\)/, 'the sub line alpha has to follow the console translation opacity'],
+    [/bhLyricTranslationGapPx\(fontPx\)/, 'the sub line gap has to follow the console translation gap'],
+    [/row\.drawStyle = bhLyricStyleKey\(\);/, 'a drawn row has to record the style it was rasterised with'],
+    [/row\.sung !== current \|\| row\.drawStyle !== styleKey/, 'a console change must redraw the live rows next frame'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
   if (!/row\.textureScale = superSample;/.test(text)) fail('the row has to report its supersample factor');
   // A falling row stops at the rim (the shadow's edge) and turns there; inside the black disk there
   // is nothing to see, and the near/far hand-over flickers where depth stops meaning anything.
@@ -7530,6 +7551,35 @@ function runGlobalHotkeyRoundTripCheck() {
   }
   if (/MINERADIO_KEEP_BACKGROUND_RENDERING/.test(mainText)) {
     fail('background rendering is no longer an opt-in; MINERADIO_THROTTLE_WHEN_HIDDEN=1 is the only measurement switch');
+  }
+  // A hotkey press after boot must be able to start playback on its own, with no queue to
+  // resume: the play key bootstraps from the daily recommendations instead of dying silently.
+  const coldStartTestFile = path.join(appRoot, 'tests', 'hotkey-coldstart-playback.test.js');
+  if (!fs.existsSync(coldStartTestFile)) {
+    fail('tests/hotkey-coldstart-playback.test.js is missing; the cold-start play key would dead-end again');
+  }
+  const coldStartTest = spawnSync(process.execPath, ['--test', coldStartTestFile], { cwd: appRoot, encoding: 'utf8' });
+  if (coldStartTest.status !== 0) {
+    process.stdout.write(coldStartTest.stdout || '');
+    process.stderr.write(coldStartTest.stderr || '');
+    fail(`cold-start hotkey playback regression failed: ${rel(coldStartTestFile)}`);
+  }
+  process.stdout.write(coldStartTest.stdout || '');
+  const autoplayText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '09-queue-snapshot-autoplay.js'), 'utf8');
+  const bootstrapBody = autoplayText.slice(autoplayText.indexOf('function tryHotkeyBootstrapPlayback'));
+  if (!bootstrapBody || bootstrapBody.indexOf('hasAnyPlatformLogin') < 0) {
+    fail('tryHotkeyBootstrapPlayback must build playback from the daily recommendations when nothing can be resumed');
+  }
+  if (bootstrapBody.indexOf('startupAutoplayPreference') >= 0) {
+    fail('the hotkey bootstrap must not wait on the startup-autoplay preference; the key press IS the user consent');
+  }
+  const controlsText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '05-playback', '14-player-controls.js'), 'utf8');
+  const toggleBody = controlsText.slice(controlsText.indexOf('async function togglePlay()'), controlsText.indexOf('function setPlayIcon'));
+  if ((toggleBody.match(/tryHotkeyBootstrapPlayback\(\)/g) || []).length < 2) {
+    fail('togglePlay must bootstrap playback for both the missing-local and the empty-queue cold starts');
+  }
+  if (toggleBody.indexOf('dismissSplash') < 0) {
+    fail('a play key arrives over IPC, not as a page keydown - togglePlay must dismiss the splash itself when it starts playback');
   }
   console.log('[OK] hotkey delivery is witnessed end to end, and Chromium backgrounding stays off by default.');
 }
