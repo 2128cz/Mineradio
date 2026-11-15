@@ -346,7 +346,7 @@ graph LR
 | 功能 | UI 入口 | 状态 / 存储 | 主文件 | 扩展点 |
 |---|---|---|---|---|
 | 视觉控制台 | `#fx-panel`、`#fx-fab`、`#fx-console-search`、`#fx-panel-tabs` | 布局写在代码里（`FX_CONSOLE_LAYOUT`）；卡片状态随 fx 存档 | `07-fx/09-console-workspace.js`、`07-fx/07-bindings-shelf-immersive.js` | `FX_CONSOLE_LAYOUT` |
-| 视觉预设（16 张） | `#preset-grid` | `fx.preset` + 存档 | `07-fx/04-preset-grid-uniforms.js` | `presetMeta` + `setPreset` 钩子 |
+| 视觉预设（18 张） | `#preset-grid` | `fx.preset` + 存档 | `07-fx/04-preset-grid-uniforms.js` | `presetMeta` + `setPreset` 钩子 |
 | 用户存档 / 短码 | `#user-archive-grid` | MR2 存档与分享短码 | `07-fx/00-preset-archive-data.js` | `normalizeFxArchiveSnapshot`、`USER_FX_SHARE_KEYS`（**只能末尾追加**） |
 | 搜索 | `#search-input`、`#search-mode-tabs`、`#search-results` | 搜索历史 | `05-playback/07-search.js` + `server.js` 的 `/api/*/search` | `SEARCH_PROVIDERS`（一张表派生顺序/分桶/模式/路由） |
 | 搜索分页 | `#search-results` 底部哨兵 | — | 同上（IntersectionObserver，首批 18，每批 +14，上限 180） | `loadNextMusicSearchPage` |

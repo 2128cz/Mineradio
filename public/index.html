@@ -1309,6 +1309,33 @@
         <div class="fx-slider"><label>渲染分辨率</label><input id="fx-mixerrenderScale" type="range" min="0.5" max="1" step="0.01" oninput="setMixerTuning('renderScale', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetMixerTuning()">恢复调音台默认</button></div>
       </div>
+      <!-- 彩虹猫小镇 (preset 18)：参考 shader 的复刻；画面常量全部抽成旋钮，默认等于参考字面量。 -->
+      <div class="fx-nyan-tuning">
+        <div class="fx-slider"><label>光线步数</label><input id="fx-nyanraySteps" type="range" min="32" max="220" step="1" oninput="setNyanTownTuning('raySteps', this.value)"><output></output></div>
+        <div class="fx-slider"><label>步进精度</label><input id="fx-nyandetail" type="range" min="0.0002" max="0.006" step="0.0001" oninput="setNyanTownTuning('detail', this.value)"><output></output></div>
+        <div class="fx-slider"><label>亮度</label><input id="fx-nyanbrightness" type="range" min="0.2" max="3" step="0.01" oninput="setNyanTownTuning('brightness', this.value)"><output></output></div>
+        <div class="fx-slider"><label>伽马</label><input id="fx-nyangamma" type="range" min="0.5" max="3" step="0.01" oninput="setNyanTownTuning('gamma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>色彩饱和</label><input id="fx-nyansaturation" type="range" min="0" max="1.5" step="0.01" oninput="setNyanTownTuning('saturation', this.value)"><output></output></div>
+        <div class="fx-slider"><label>边缘强度</label><input id="fx-nyanedgeGain" type="range" min="0" max="40" step="0.5" oninput="setNyanTownTuning('edgeGain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>波浪幅度</label><input id="fx-nyanwaveAmp" type="range" min="0" max="0.6" step="0.01" oninput="setNyanTownTuning('waveAmp', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳尺寸</label><input id="fx-nyansunSize" type="range" min="1" max="12" step="0.1" oninput="setNyanTownTuning('sunSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳随乐缩放</label><input id="fx-nyansunPump" type="range" min="0" max="10" step="0.1" oninput="setNyanTownTuning('sunPump', this.value)"><output></output></div>
+        <div class="fx-slider"><label>取样频段</label><input id="fx-nyansunBand" type="range" min="0" max="1" step="0.01" oninput="setNyanTownTuning('sunBand', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳旋转</label><input id="fx-nyansunSpin" type="range" min="0" max="4" step="0.01" oninput="setNyanTownTuning('sunSpin', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头视野</label><input id="fx-nyanfov" type="range" min="0.2" max="2" step="0.01" oninput="setNyanTownTuning('fov', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视野推进</label><input id="fx-nyanfovPump" type="range" min="0" max="1.5" step="0.01" oninput="setNyanTownTuning('fovPump', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头移动速度</label><input id="fx-nyancamSpeed" type="range" min="0" max="4" step="0.01" oninput="setNyanTownTuning('camSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>时间流速</label><input id="fx-nyantimeScale" type="range" min="0" max="2" step="0.01" oninput="setNyanTownTuning('timeScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>彩虹猫速度</label><input id="fx-nyancatSpeed" type="range" min="0.2" max="8" step="0.1" oninput="setNyanTownTuning('catSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>边框压暗</label><input id="fx-nyanborder" type="range" min="0" max="1" step="0.01" oninput="setNyanTownTuning('border', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频驱动强度</label><input id="fx-nyanaudioDrive" type="range" min="0" max="3" step="0.01" oninput="setNyanTownTuning('audioDrive', this.value)"><output></output></div>
+        <div class="fx-slider"><label>渲染分辨率</label><input id="fx-nyanrenderScale" type="range" min="0.5" max="1" step="0.01" oninput="setNyanTownTuning('renderScale', this.value)"><output></output></div>
+        <div class="fx-toggle-grid">
+          <div class="fx-toggle" id="t-nyancatOn" onclick="toggleNyanTownTuning('catOn')"><span>彩虹猫</span><span class="dot"></span></div>
+          <div class="fx-toggle" id="t-nyanrainbowOn" onclick="toggleNyanTownTuning('rainbowOn')"><span>彩虹拖尾</span><span class="dot"></span></div>
+        </div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNyanTownTuning()">恢复彩虹猫小镇默认</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

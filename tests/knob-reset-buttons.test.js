@@ -28,6 +28,8 @@ const neonModulePath = modulePath('NEON_MODULE_PATH', 'public/js/modules/02-visu
 const neonTuningPath = modulePath('NEON_TUNING_PATH', 'public/js/modules/07-fx/14-neon-tuning.js');
 const mixerModulePath = modulePath('MIXER_MODULE_PATH', 'public/js/modules/02-visual/22-mixer-desk-preset.js');
 const mixerTuningPath = modulePath('MIXER_TUNING_PATH', 'public/js/modules/07-fx/15-mixer-tuning.js');
+const nyanModulePath = modulePath('NYAN_MODULE_PATH', 'public/js/modules/02-visual/23-nyan-town-preset.js');
+const nyanTuningPath = modulePath('NYAN_TUNING_PATH', 'public/js/modules/07-fx/16-nyan-town-tuning.js');
 const fxPanelPath = modulePath('FX_PANEL_PATH', 'public/js/modules/07-fx/05-fx-panel-performance.js');
 const fxDefaultsPath = modulePath('FX_DEFAULTS_PATH', 'public/js/modules/00-state/04-fx-defaults.js');
 
@@ -53,6 +55,8 @@ const neonModuleText = fs.readFileSync(neonModulePath, 'utf8');
 const neonTuningText = fs.readFileSync(neonTuningPath, 'utf8');
 const mixerModuleText = fs.readFileSync(mixerModulePath, 'utf8');
 const mixerTuningText = fs.readFileSync(mixerTuningPath, 'utf8');
+const nyanModuleText = fs.readFileSync(nyanModulePath, 'utf8');
+const nyanTuningText = fs.readFileSync(nyanTuningPath, 'utf8');
 const haloTuningText = fs.readFileSync(haloTuningPath, 'utf8');
 const fxPanelText = fs.readFileSync(fxPanelPath, 'utf8');
 const schemaText = between(haloModuleText, 'var HALO_TUNING_SCHEMA = {', '};', 'HALO_TUNING_SCHEMA');
@@ -60,6 +64,7 @@ const pvFieldsText = between(pvTuningText, 'var PV_TUNING_FIELDS = {', '};', 'PV
 const bhSchemaText = between(bhModuleText, 'var BH_TUNING_SCHEMA = {', '};', 'BH_TUNING_SCHEMA');
 const neonSchemaText = between(neonModuleText, 'var NEON_TUNING_SCHEMA = {', '};', 'NEON_TUNING_SCHEMA');
 const mixerSchemaText = between(mixerModuleText, 'var MIXER_TUNING_SCHEMA = {', '};', 'MIXER_TUNING_SCHEMA');
+const nyanSchemaText = between(nyanModuleText, 'var NYAN_TOWN_TUNING_SCHEMA = {', '};', 'NYAN_TOWN_TUNING_SCHEMA');
 const defaultsText = between(fs.readFileSync(fxDefaultsPath, 'utf8'), 'var fxDefaults = {', '};', 'fxDefaults');
 const panelText = [
   slice(fxPanelText, 'ensureFxSliderResetButton'),
@@ -182,6 +187,7 @@ const pvFields = vm.runInNewContext('(function () {' + pvFieldsText + 'return PV
 const bhSchema = vm.runInNewContext('(function () {' + bhSchemaText + 'return BH_TUNING_SCHEMA;})()');
 const neonSchema = vm.runInNewContext('(function () {' + neonSchemaText + 'return NEON_TUNING_SCHEMA;})()');
 const mixerSchema = vm.runInNewContext('(function () {' + mixerSchemaText + 'return MIXER_TUNING_SCHEMA;})()');
+const nyanSchema = vm.runInNewContext('(function () {' + nyanSchemaText + 'return NYAN_TOWN_TUNING_SCHEMA;})()');
 const fxDefaults = vm.runInNewContext('(function () {' + defaultsText + 'return fxDefaults;})()');
 const haloKeys = Object.keys(schema).filter(function (key) { return schema[key].kind !== 'bool'; });
 const haloBools = Object.keys(schema).filter(function (key) { return schema[key].kind === 'bool'; });
@@ -189,6 +195,7 @@ const pvKeys = Object.keys(pvFields).filter(function (key) { return pvFields[key
 const bhKeys = Object.keys(bhSchema).filter(function (key) { return bhSchema[key].kind !== 'bool'; });
 const neonKeys = Object.keys(neonSchema).filter(function (key) { return neonSchema[key].kind !== 'bool'; });
 const mixerKeys = Object.keys(mixerSchema).filter(function (key) { return mixerSchema[key].kind !== 'bool'; });
+const nyanKeys = Object.keys(nyanSchema).filter(function (key) { return nyanSchema[key].kind !== 'bool'; });
 
 haloKeys.forEach(function (key) { dom.sliderRow('fx-halo' + key); });
 haloBools.forEach(function (key) { dom.toggleRow('t-halo' + key); });
@@ -196,6 +203,7 @@ pvKeys.forEach(function (key) { dom.sliderRow('fx-pv' + key); });
 bhKeys.forEach(function (key) { dom.sliderRow('fx-bh' + key); });
 neonKeys.forEach(function (key) { dom.sliderRow('fx-neon' + key); });
 mixerKeys.forEach(function (key) { dom.sliderRow('fx-mixer' + key); });
+nyanKeys.forEach(function (key) { dom.sliderRow('fx-nyan' + key); });
 dom.toggleRow('t-mixerflowLock');
 dom.toggleRow('t-pvunify');
 // A bool knob is a switch, so its slider id does not exist in the app. Build the row anyway:
@@ -232,12 +240,13 @@ const sandbox = {
 // The rows are already in the DOM when the modules run, so a button can only appear through
 // the modules' own init path: a binder nobody calls leaves its rows bare and fails here.
 const api = vm.runInNewContext(
-  [schemaText, bhSchemaText, neonSchemaText, mixerSchemaText, defaultsText, panelText, pvTuningText, bhTuningText, haloTuningText, neonTuningText, mixerTuningText].join(NL + NL)
+  [schemaText, bhSchemaText, neonSchemaText, mixerSchemaText, nyanSchemaText, defaultsText, panelText, pvTuningText, bhTuningText, haloTuningText, neonTuningText, mixerTuningText, nyanTuningText].join(NL + NL)
     + NL + ';({ setHaloTuning: setHaloTuning, setPvTuning: setPvTuning, haloTuning: haloTuning, pvTuning: pvTuning,'
     + ' haloTuningFormat: haloTuningFormat, pvTuningFormat: pvTuningFormat,'
     + ' ensureFxSliderResetButton: ensureFxSliderResetButton, setBlackHoleTuning: setBlackHoleTuning, blackHoleTuning: blackHoleTuning,'
     + ' setNeonTuning: setNeonTuning, neonTuning: neonTuning, neonTuningFormat: neonTuningFormat,'
-    + ' setMixerTuning: setMixerTuning, mixerTuning: mixerTuning, mixerTuningFormat: mixerTuningFormat })',
+    + ' setMixerTuning: setMixerTuning, mixerTuning: mixerTuning, mixerTuningFormat: mixerTuningFormat,'
+    + ' setNyanTownTuning: setNyanTownTuning, nyanTownTuning: nyanTownTuning, nyanTownTuningFormat: nyanTownTuningFormat })',
   sandbox
 );
 
@@ -254,7 +263,8 @@ const sliderGroups = [
   { keys: pvKeys, specs: pvFields, prefix: 'fx-pv', store: 'mineradio-pv-tuning-v1', storeKey: 'pvTuning', label: 'PV dials' },
   { keys: bhKeys, specs: bhSchema, prefix: 'fx-bh', store: 'mineradio-blackhole-tuning-v1', storeKey: 'blackHoleTuning', label: 'black hole dials' },
   { keys: neonKeys, specs: neonSchema, prefix: 'fx-neon', store: 'mineradio-neon-tuning-v2', storeKey: 'neonTuning', label: 'neon road dials' },
-  { keys: mixerKeys, specs: mixerSchema, prefix: 'fx-mixer', store: 'mineradio-mixer-tuning-v6', storeKey: 'mixerTuning', label: 'mixer desk dials' }
+  { keys: mixerKeys, specs: mixerSchema, prefix: 'fx-mixer', store: 'mineradio-mixer-tuning-v6', storeKey: 'mixerTuning', label: 'mixer desk dials' },
+  { keys: nyanKeys, specs: nyanSchema, prefix: 'fx-nyan', store: 'mineradio-nyan-town-tuning-v1', storeKey: 'nyanTownTuning', label: 'nyan town dials' }
 ];
 const sliderRows = sliderGroups.reduce(function (sum, group) { return sum + group.keys.length; }, 0);
 
@@ -435,6 +445,34 @@ console.log('rows: ' + (sliderRows + haloBools.length + pvBools.length + 2)
     restored += 1;
   });
   console.log('mixer desk dials restored by their own button: ' + restored + '/' + mixerKeys.length);
+}
+
+// ------------------------------------------- the nyan town's dials, same contract, its own store
+{
+  let restored = 0;
+  nyanKeys.forEach(function (key, index) {
+    const spec = nyanSchema[key];
+    const id = 'fx-nyan' + key;
+    api.setNyanTownTuning(key, offDefault(spec));
+    const neighbour = nyanKeys[(index + 1) % nyanKeys.length];
+    const neighbourMoved = offDefault(nyanSchema[neighbour]);
+    if (neighbour !== key) api.setNyanTownTuning(neighbour, neighbourMoved);
+    const before = Object.assign({}, api.nyanTownTuning);
+    dom.click(buttonsOf(id)[0]);
+    assert.strictEqual(api.nyanTownTuning[key], spec.def, key + ': its own button must put it back on ' + spec.def);
+    const changed = Object.keys(api.nyanTownTuning).filter(function (one) { return api.nyanTownTuning[one] !== before[one]; });
+    assert.deepStrictEqual(changed, [key], key + ': one button must move one dial, moved ' + changed.join(', '));
+    if (neighbour !== key) {
+      assert.strictEqual(api.nyanTownTuning[neighbour], neighbourMoved,
+        key + ': its button must leave the neighbour ' + neighbour + ' where the user put it');
+    }
+    assert.strictEqual(storedValue('mineradio-nyan-town-tuning-v1', key), spec.def, key + ': the reset must persist');
+    assert.strictEqual(dom.byId.get(id).value, String(spec.def), key + ': the slider must be written back');
+    assert.strictEqual(rowOf(id).querySelector('output').textContent, api.nyanTownTuningFormat(key),
+      key + ': the read-out must be refreshed with the knob');
+    restored += 1;
+  });
+  console.log('nyan town dials restored by their own button: ' + restored + '/' + nyanKeys.length);
 }
 
 // --------------------------- the app's own sliders still reset through fxDefaults (two arguments)

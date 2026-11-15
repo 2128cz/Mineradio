@@ -2268,6 +2268,133 @@ function runMixerDeskPresetCheck() {
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);
 }
+function runNyanTownPresetCheck() {
+  logStep('Nyan town preset (ported Fractal Cartoon fragment, Nyan Cat cameo, picture knobs)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '23-nyan-town-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '16-nyan-town-tuning.js');
+  const licensePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '23-nyan-town-preset.LICENSE.txt');
+  const fixturePath = path.join(appRoot, 'tests', 'fixtures', 'nyan-town-reference.glsl');
+  if (!fs.existsSync(modulePath)) fail('02-visual/23-nyan-town-preset.js is missing; preset 18 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/16-nyan-town-tuning.js is missing; the town would have knobs without a store');
+  if (!fs.existsSync(licensePath)) fail('23-nyan-town-preset.LICENSE.txt is missing; the port has to carry its attribution and licence status');
+  if (!fs.existsSync(fixturePath)) fail('tests/fixtures/nyan-town-reference.glsl is missing; the port cannot be compared with its reference');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const licenseText = fs.readFileSync(licensePath, 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const noticeText = fs.readFileSync(path.join(appRoot, 'NOTICE.md'), 'utf8');
+  const portsText = fs.readFileSync(path.join(appRoot, 'docs', 'THIRD_PARTY_PORTS.md'), 'utf8');
+  const index = Number((text.match(/NYAN_TOWN_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 18) fail(`NYAN_TOWN_PRESET_INDEX must be 18 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/23-nyan-town-preset.js'") < 0) {
+    fail('23-nyan-town-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/16-nyan-town-tuning.js'") < 0) {
+    fail('16-nyan-town-tuning.js must be listed in index-loader.js; without it the town has no knobs');
+  }
+  if (loaderText.indexOf("'js/modules/02-visual/20-shadertoy-driver.js'") < 0) {
+    fail('the Shadertoy driver must be loaded, or the ported fragment cannot compile');
+  }
+  if (!/彩虹猫小镇/.test(archiveText) || !/NYAN TOWN/.test(archiveText)) fail('the town must be a labelled, selectable card');
+  // The port: reference body kept, GLSL3 for texture(), two channels (audio + sprite strip).
+  for (const [pattern, why] of [
+    [/var NYAN_TOWN_PORT_LINES = \[/, 'the reference body has to be kept as its own line table'],
+    [/shadertoyFragment\(NYAN_TOWN_PORT_BODY, \{ channels: 2 \}\)/, 'the fragment has to go through the driver with the spectrum and the cat sheet'],
+    [/glslVersion: THREE\.GLSL3/, 'texture() and the integer loop bound need GLSL3'],
+    [/vec4 formula\(vec4 p\)/, 'the Amazing Surface formula has to survive the port'],
+    [/float de\(vec3 pos\)/, 'the distance estimator has to survive the port'],
+    [/vec3 normal\(vec3 p\)/, 'the normal/edge function has to survive the port'],
+    [/vec4 rainbow\(vec2 p\)/, 'the rainbow trail has to survive the port'],
+    [/vec4 nyan\(vec2 p\)/, 'the Nyan Cat sprite sampler has to survive the port'],
+    [/vec3 raymarch\(in vec3 from, in vec3 dir\)/, 'the raymarch has to survive the port'],
+    [/vec3 move\(inout vec3 dir\)/, 'the camera path has to survive the port'],
+    [/void mainImage\( out vec4 fragColor, in vec2 fragCoord \)/, 'the reference entry point has to survive the port'],
+    [/texture\(iChannel1,vec2\(uv\.x\/3\.0\+210\.0\/256\.0-nt\+0\.05,1\.-\.5\+uv\.y\+ny\)\)/, 'the cat has to keep the reference texture mapping'],
+    [/NYAN_TOWN_SPRITE_TEXTURE_W = 256/, 'the sprite sheet must be 256 px wide: the reference UV constants are written for that width'],
+    [/float sunsize=uSunSize-max\(0\.,texture\(iChannel0,vec2\(uSunBand,\.5\)\)\.x\*uAudioDrive\)\*uSunPump;/, 'the sun size has to come from its knobs and the spectrum'],
+    [/edge=min\(1\.,pow\(edge,\.55\)\*uEdgeGain\);/, 'the edge gain has to come from its knob'],
+    [/#define RAY_STEPS int\(uRaySteps\)/, 'the ray steps have to come from the knob'],
+    [/#define t \(iTime\*uTimeScale\)/, 'the time scale has to come from its knob'],
+    [/if \(uNyan>\.5\) \{/, 'the cat cameo has to be toggleable'],
+    [/if \(uRainbow>\.5\) \{/, 'the rainbow has to be toggleable'],
+    [/\*uBorder\);/, 'the border has to come from its knob'],
+    [/fragColor = vec4\(color,1\.\);/, 'the fragment has to write opaque alpha so the blit can copy it'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  // Attribution and the honest licence status, including the Nyan Cat author.
+  for (const [body, name] of [[licenseText, 'LICENSE sidecar'], [noticeText, 'NOTICE.md'], [portsText, 'THIRD_PARTY_PORTS.md']]) {
+    if (!/Fractal Cartoon/.test(body) || !/Kali/.test(body)) fail(name + ' has to name the reference and its author');
+    if (!/Nyan Cat/.test(body) || !/mu6k/.test(body)) fail(name + ' has to name the Nyan Cat cameo and its author');
+  }
+  if (!/UNVERIFIED|unverified|待核实/.test(licenseText) || !/UNVERIFIED|unverified|待核实/.test(noticeText)) {
+    fail('the licence status has to be marked unverified in the sidecar and NOTICE until the authors confirm');
+  }
+  // Hooks, takeover and status.
+  if (!/applyNyanTownPresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the town and leaving it must release it');
+  if (!/updateNyanTownLayer\(now, dt, sonicAudioFrame\)/.test(loopText)) fail('the main loop must step the town with the audio frame');
+  if (!/renderNyanTownFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the town pass');
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'nyan-town'/.test(ownerBlock)) fail('the town must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the town must take ${layer} over: the reference scene is the whole picture`);
+  }
+  for (const field of ['frames:', 'error:', 'passScale:', 'rt:', 'raySteps:', 'nyan:']) {
+    if (text.indexOf(field) < 0) fail('nyanTownStatus() has to report ' + field);
+  }
+  // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(text))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 18) fail(`the town knob schema must be complete (found ${schema.size})`);
+  for (const [key, spec] of schema) {
+    if (spec.kind === 'bool') {
+      const id = 't-nyan' + key;
+      if (!htmlText.includes('id="' + id + '"')) fail(`the switch ${id} has no toggle in index.html`);
+      if (!htmlText.includes(`toggleNyanTownTuning('${key}')`)) fail(`the switch ${id} must call toggleNyanTownTuning('${key}')`);
+      if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the switch ${key} must be listed in the console 彩虹猫小镇 group`);
+      continue;
+    }
+    const id = 'fx-nyan' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setNyanTownTuning('${key}', this.value)`)) fail(`the slider ${id} must call setNyanTownTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 彩虹猫小镇 group`);
+  }
+  if (!/key: 'nyan'/.test(consoleText) || !/title: '彩虹猫小镇'/.test(consoleText)) {
+    fail('the visual console needs a 彩虹猫小镇 group in the 动效 tab');
+  }
+  if (!/presets: \[NYAN_TOWN_PRESET_INDEX\]/.test(consoleText)) fail('the 彩虹猫小镇 group has to carry presets: [NYAN_TOWN_PRESET_INDEX]');
+  if (!/mineradio-nyan-town-tuning-v1/.test(tuningText) || !/function bindNyanTownTuningResetButtons\(/.test(tuningText)) {
+    fail('the town knobs need their own store and one reset button per row');
+  }
+  const portTest = path.join(appRoot, 'tests', 'nyan-town-port.test.js');
+  if (!fs.existsSync(portTest)) fail('tests/nyan-town-port.test.js is missing');
+  const result = spawnSync(process.execPath, ['--test', portTest], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail('the nyan town port fidelity test failed: ' + rel(portTest));
+  }
+  process.stdout.write(result.stdout || '');
+  console.log(`[OK] Nyan town wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);
+}
 function runFeatureIndexCheck() {
   logStep('Feature index (preset and console registries still match the code)');
   const script = path.join(appRoot, 'scripts', 'dev-feature-index.js');
@@ -5590,10 +5717,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 17/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 18/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -7976,6 +8103,7 @@ async function main() {
   runBlackHolePresetCheck();
   runNeonFujiPresetCheck();
   runMixerDeskPresetCheck();
+  runNyanTownPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

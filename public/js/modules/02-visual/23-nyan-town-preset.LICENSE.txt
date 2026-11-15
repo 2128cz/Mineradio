@@ -1,0 +1,46 @@
+Visual preset 18「彩虹猫小镇」(NYAN TOWN) — reference port, licence UNVERIFIED
+=============================================================================
+
+POSTURE
+-------
+This build contains a direct port of a Shadertoy shader and a text-free recreation of the Nyan Cat
+sprite. Nothing containing this preset may be distributed until the authors confirm the terms.
+
+REFERENCE SHADERS
+-----------------
+1. "Fractal Cartoon" (formerly "DE edge detection") by Kali.
+   Supplied by the requester as source; no URL and no licence header were included.
+   The distance estimator, camera path, edge detection, sun/sky background and post curve are
+   kept as written in public/js/modules/02-visual/23-nyan-town-preset.js (NYAN_TOWN_PORT_LINES).
+
+2. Nyan Cat cameo code from mu6k — https://www.shadertoy.com/view/4dXGWH
+   The rainbow() and nyan() functions and the invocation in raymarch() are kept as written.
+   The iChannel1 sprite texture could not be fetched (Shadertoy returned 403), so
+   23-nyan-town-preset.js paints its own 240x24 strip of six 40x24 frames with the classic
+   silhouette. It is an approximation, not the original asset.
+
+LICENCE STATUS
+--------------
+UNVERIFIED. Shadertoy's default licence is CC BY-NC-SA 3.0 (non-commercial, share-alike), which is
+not compatible with this repository's GPL-3.0-only distribution; Kali or mu6k may also have chosen a
+different licence on the page. Nyan Cat is a copyrighted character created by Chris Torres.
+Do not publish a build containing this preset, its screenshot, or its sprite strip until the
+licence is confirmed and this file is updated.
+
+CHANGES FROM THE REFERENCE
+--------------------------
+- GLSL3 output declaration (`out vec4 outColor; #define gl_FragColor outColor`) because three r128
+  no longer provides gl_FragColor in GLSL3.
+- The constants that used to be #defines/literals are now uniforms whose defaults equal the
+  reference literals: ray steps 150, detail .001, brightness 1.2, gamma 1.4, saturation .65,
+  edge gain 15, wave amplitude .15, sun size 7 with audio pump 5, sun spin 1.5, FOV .9 with pump .7,
+  camera path speed 1.5, time scale .5, Nyan speed 3, border 1. The defaults reproduce the
+  reference frame.
+- The Nyan Cat / rainbow block is guarded by runtime toggles (both default on); the rainbow is
+  sampled before the cat, as in the reference.
+- iChannel0 is the app's 64-bin log spectrum; the sun reads the bin at sunBand (default .6) scaled
+  by audioDrive.
+- The fragment is rendered into an offscreen target at renderScale (default .8) and copied to the
+  screen; the reference already applies its own gamma/brightness/saturation/border.
+- The app's stage lyrics and particle layers are suppressed: the reference scene is the whole
+  picture.

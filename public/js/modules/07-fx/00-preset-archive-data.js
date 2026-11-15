@@ -18,6 +18,7 @@ var presetMeta = [
 { name: '银河黑洞', nameHtml: '银河黑洞 <span class="pc-name-en">GALACTIC BLACK HOLE</span>', desc: '引力透镜 · 歌词坠入', premiumVisual: true, accent: '#ffb36b', accent2: '#79c8ff' },
 { name: '日本霓虹', nameHtml: '日本霓虹 <span class="pc-name-en">NEON FUJI</span>', desc: '合成波公路 · 歌词驶来', premiumVisual: true, accent: '#ff4fd8', accent2: '#39e6ff' },
 { name: '调音台', nameHtml: '调音台 <span class="pc-name-en">MIXER DESK</span>', desc: '模块走带 · 歌词上屏', premiumVisual: true, accent: '#ffb156', accent2: '#57f0d0' },
+{ name: '彩虹猫小镇', nameHtml: '彩虹猫小镇 <span class="pc-name-en">NYAN TOWN</span>', desc: '分形小镇 · 彩虹猫掠过', premiumVisual: true, accent: '#ff4fd8', accent2: '#ffe94a' },
 ];
 var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 14c3-2 5-2 8 0s5 2 8 0M3 10c3-2 5-2 8 0s5 2 8 0M3 18c3-2 5-2 8 0s5 2 8 0"/></svg>',
@@ -38,8 +39,9 @@ var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="9.2" ry="3.1" transform="rotate(-16 12 12)"/><path d="M12 6.3a5.7 5.7 0 0 1 0 11.4" opacity=".5"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="10" r="4"/><path d="M2 15h20M2 19h20M6 15v4M12 15v4M18 15v4"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="7" cy="12" r="2"/><path d="M12 9v6M16 9v6M20 9v6"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17c2-3.2 4.6-3.2 6.6 0s4.6 3.2 6.6 0 2.6-2.6 3.8-2"/><path d="M4 12c2-2.6 4.6-2.6 6.6 0s4.6 2.6 6.6 0"/><path d="M14 9V6.5l2-1.8 2 1.8V9"/><circle cx="15.6" cy="7.4" r=".7" fill="currentColor" stroke="none"/><path d="M13 9h5"/></svg>',
 ];
-var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 6, 7, 8, 5, 4, 2, 1, 3];
+var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 6, 7, 8, 5, 4, 2, 1, 3];
 var lyricColorPresets = [
   { name: '雾蓝', color: '#a9b8c8' },
   { name: '银蓝', color: '#9db8cf' },

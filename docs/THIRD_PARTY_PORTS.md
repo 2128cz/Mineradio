@@ -56,10 +56,18 @@ modified builds.
 ## Visual preset 17「调音台」(MIXER DESK) — reference port (licence unverified)
 
 - Reference: <https://www.shadertoy.com/view/cs2GWD> (author marker 0b5vr)
-- Landing file: 
-- Attribution sidecar: 
+- Landing file: `public/js/modules/02-visual/22-mixer-desk-preset.js`
+- Attribution sidecar: `public/js/modules/02-visual/22-mixer-desk-preset.LICENSE.txt`
 
 The page was not reachable and the supplied source carried no licence header, so the licence is **UNVERIFIED**. At the requester's instruction the reference body is kept as written; the changes are limited to a handful of uniforms (camera pan/sway/roll/fov, grid scale, level gain, march/shadow steps, max distance), an opaque alpha so the post pass can copy the frame, and an audio-driven level table on iChannel0. Before distributing a build that contains this preset, confirm the author's licence and update this file, NOTICE.md and the sidecar.
+
+## Visual preset 18「彩虹猫小镇」(NYAN TOWN) — reference port (licence unverified)
+
+- Reference: Shadertoy "Fractal Cartoon" (formerly "DE edge detection") by Kali (source supplied by the requester; no page URL or licence header), plus the Nyan Cat cameo by mu6k: <https://www.shadertoy.com/view/4dXGWH>
+- Landing file: `public/js/modules/02-visual/23-nyan-town-preset.js`
+- Attribution sidecar: `public/js/modules/02-visual/23-nyan-town-preset.LICENSE.txt`
+
+At the requester's instruction the reference body is kept as written; the changes are limited to uniforms whose defaults equal the reference literals (ray steps, detail, brightness/gamma/saturation, edge gain, wave amplitude, sun size/pump/spin, fov/pump, camera speed, time scale, nyan speed, border), runtime toggles for the cat and its rainbow, an opaque alpha, and a spectrum channel for the sun. The reference's iChannel1 Nyan Cat texture could not be fetched (403), so the sprite strip is painted in code with the same frame size — an approximation of the original art. The licence is **UNVERIFIED**; Shadertoy's default CC BY-NC-SA is incompatible with this GPL build, and Nyan Cat is a copyrighted character (Chris Torres). Do not distribute a build containing this preset until terms are confirmed and this file, NOTICE.md and the sidecar are updated.
 
 ## Qishui Passport Web QR authentication
 

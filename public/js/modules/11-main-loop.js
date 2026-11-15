@@ -662,6 +662,8 @@ function animate() {
   if (typeof updateNeonLayer === 'function') updateNeonLayer(now, dt);
   // 调音台 (preset 17): raymarches its own desk and drives the lyric panels that ride it.
   if (typeof updateMixerDeskLayer === 'function') updateMixerDeskLayer(now, dt, sonicAudioFrame);
+  // 彩虹猫小镇 (preset 18): its own raymarched town, spectrum-fed sun and Nyan Cat cameo.
+  if (typeof updateNyanTownLayer === 'function') updateNyanTownLayer(now, dt, sonicAudioFrame);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;
@@ -734,6 +736,7 @@ function animate() {
   var lensFrameDone = false;
   if (typeof renderBlackHoleFrame === 'function') lensFrameDone = renderBlackHoleFrame();
   if (!lensFrameDone && typeof renderMixerDeskFrame === 'function') lensFrameDone = renderMixerDeskFrame();
+  if (!lensFrameDone && typeof renderNyanTownFrame === 'function') lensFrameDone = renderNyanTownFrame();
   if (!lensFrameDone) renderer.render(scene, camera);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('renderer.render', rendererPerfStart);
   var frameCostMs = performance.now() - framePerfStart;
