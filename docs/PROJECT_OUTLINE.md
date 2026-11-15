@@ -368,7 +368,7 @@ graph LR
 | 账号登录（4 家） | `#login-provider-netease/qq/kugou/qishui`、`#user-provider-*` | `%APPDATA%\<runtime>\` 下 `.cookie` / `.qq-cookie` / `.kugou-cookie` / `.qishui-cookie` | `08-account/03-login-modal-flows.js`、`desktop/main.js`（按 `session.fromPartition` 采 cookie） | `connectLoginMode` |
 | 歌词抓取与解析 | — | — | `06-lyrics/00-lyrics-fetch-parse.js` | `parseLyricText` / `parseYrcText` |
 | 歌词渲染：舞台 | `#stage-lyrics` | fx 存档 | `02-visual/14-stage-lyrics-rendering.js` | 接管掩码的 `stageLyrics` 通道 |
-| 歌词渲染：预设内 | `#pv-layer`、`#halo-layer`、`#halo-canvas`（黑洞在其场景内） | — | `02-visual/17`、`18`、`19` | 各自 `registerVisualTakeoverOwner` |
+| 歌词渲染：预设内 | `#pv-layer`、`#halo-layer`、`#halo-canvas`（黑洞、彩虹猫小镇在其场景内） | — | `02-visual/17`、`18`、`19`、`23` | 各自 `registerVisualTakeoverOwner`；23 的歌词相机逐帧复刻场景 `path()/move()` 姿态，单行板按天空仰角摆放 |
 | 3D 歌单架 | 控制台「歌单架」tab 的 `#shelf-*` | fx 存档 | `04-shelf/01-manager-core.js` | 同一份 `FX_CONSOLE_LAYOUT` |
 | 手势 | `#gesture-hud` | 摄像头权限 | `10-shell/00-gesture-control.js` | — |
 | 全局快捷键 | `#hotkey-modal` | 主进程注册 | `07-fx/06-hotkeys.js` + `HOTKEY_ACTIONS`（8 个动作） | 新增动作要同时接本地与全局 |

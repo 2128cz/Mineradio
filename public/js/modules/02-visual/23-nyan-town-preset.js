@@ -38,9 +38,13 @@ var NYAN_TOWN_TUNING_SCHEMA = {
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   catOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   rainbowOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  // ---- the lyric lane: lines fly through the town and are depth-tested against the march
+  // ---- the lyric lane: single-line plates ride across the sky, aligned with the town camera
   lyricOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   lyricRows: { def: 10, min: 3, max: 16, kind: 'count', rebuild: 'live' },
+  // 0 keeps a whole line on one plate; >0 cuts it into that many characters per plate, each
+  // taking its own sky lane so the pieces read as a stream instead of stacking on top of each other.
+  lyricSplit: { def: 0, min: 0, max: 20, kind: 'count', rebuild: 'live' },
+  lyricSkyElev: { def: 36, min: 0, max: 65, kind: 'deg', rebuild: 'live' },
   lyricSize: { def: 1, min: 0.4, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricSpeed: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
   lyricLead: { def: 4.5, min: 0, max: 8, kind: 'sec', rebuild: 'live' },
@@ -656,46 +660,19 @@ function nyanTownLyricPalette() {
   };
 }
 
+function nyanTownLyricWeight() {
+  if (typeof lyricFontWeightValue === 'function') {
+    try { return Number(lyricFontWeightValue()) || 900; } catch (_) {}
+  }
+  return 900;
+}
+
 function nyanTownLyricStyleKey() {
   var pal = nyanTownLyricPalette();
   return [nyanTownLyricFontStack(), nyanTownLyricRasterPx(), nyanTownLyricTranslationShown() ? 1 : 0,
     nyanTownLyricTranslationScale().toFixed(2), nyanTownLyricTranslationOpacity().toFixed(2),
-    nyanTownLyricLineHeight().toFixed(2), pal.signature].join('|');
-}
-
-// Greedy wrap, same policy as the rest of the lyric surfaces: Latin at spaces, CJK between glyphs.
-function nyanTownLyricWrapText(ctx, text, maxWidth, maxLines) {
-  var source = String(text || '');
-  var out = [];
-  var current = '';
-  var limit = Math.max(1, Math.round(Number(maxLines) || 1));
-  var truncated = false;
-  for (var i = 0; i < source.length; i++) {
-    var ch = source.charAt(i);
-    var candidate = current + ch;
-    if (current && ctx.measureText(candidate).width > maxWidth) {
-      var space = current.lastIndexOf(' ');
-      if (space > 0 && ch !== ' ') {
-        out.push(current.slice(0, space));
-        current = current.slice(space + 1) + ch;
-      } else {
-        out.push(current);
-        current = ch;
-      }
-      if (out.length >= limit) { current = ''; truncated = true; break; }
-    } else {
-      current = candidate;
-    }
-  }
-  if (current && out.length < limit) out.push(current);
-  if (!out.length) out.push('');
-  if (truncated && out.length) {
-    var lastIndex = out.length - 1;
-    var last = String(out[lastIndex] || '');
-    while (last.length > 0 && ctx.measureText(last + '…').width > maxWidth) last = last.slice(0, -1);
-    out[lastIndex] = last + '…';
-  }
-  return out;
+    nyanTownLyricLineHeight().toFixed(2), pal.signature, nyanTownLyricWeight().toFixed(0),
+    nyanTownLyricConsoleScale().toFixed(2)].join('|');
 }
 
 function nyanTownLyricRowCount() {
@@ -748,7 +725,7 @@ function nyanTownMakeLyricRow() {
   return {
     canvas: canvas, ctx: ctx, texture: texture, material: material, mesh: mesh,
     depthMat: depthMat, depthMesh: depthMesh,
-    itemIndex: -1, drawKey: '', needsDraw: false, widthRatio: 1
+    plateKey: '', drawKey: '', needsDraw: false, widthRatio: 1
   };
 }
 
@@ -761,72 +738,97 @@ function nyanTownDisposeLyricRow(row) {
   if (row.depthMat && row.depthMat.dispose) row.depthMat.dispose();
 }
 
+function nyanTownLyricConsoleScale() {
+  var scale = 1;
+  if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricScale))) scale = Number(fx.lyricScale);
+  return nyanTownClamp(scale, 0.35, 1.65);
+}
+
+function nyanTownLyricFontCss(px) {
+  if (typeof lyricFontCss === 'function') {
+    try { return lyricFontCss(px); } catch (_) {}
+  }
+  return '900 ' + px.toFixed(1) + 'px ' + nyanTownLyricFontStack();
+}
+
+function nyanTownLyricLetterSpacingPx(px) {
+  if (typeof lyricLetterSpacingPx === 'function') {
+    try { return lyricLetterSpacingPx(px); } catch (_) {}
+  }
+  return 0;
+}
+
 function nyanTownDrawLyricRow(row, item, current, palette, styleKey) {
   var raster = nyanTownLyricRasterPx();
-  var stack = nyanTownLyricFontStack();
-  var font = '700 ' + raster.toFixed(1) + 'px ' + stack;
+  var ctx = row.ctx;
+  var font = nyanTownLyricFontCss(raster);
+  var spacing = nyanTownLyricLetterSpacingPx(raster);
+  ctx.font = font;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
+  // One line, never wrapped: the plate is a danmaku strip and a wrapped block would read as a
+  // paragraph. A very long line shrinks instead of breaking, so it still fits one texture.
+  var mainText = String(item.text || '');
+  var mainWidth = ctx.measureText(mainText).width || 0;
+  if (mainWidth > 1900) {
+    raster = Math.max(18, raster * 1900 / mainWidth);
+    font = nyanTownLyricFontCss(raster);
+    spacing = nyanTownLyricLetterSpacingPx(raster);
+    ctx.font = font;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
+    mainWidth = ctx.measureText(mainText).width || 0;
+  }
+  var subText = nyanTownLyricTranslationShown() ? String(item.sub || '') : '';
   var subPx = Math.max(10, Math.round(raster * nyanTownLyricTranslationScale()));
-  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + stack;
+  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + nyanTownLyricFontStack();
+  ctx.font = subFont;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  var subWidth = subText ? (ctx.measureText(subText).width || 0) : 0;
   var pad = Math.max(4, raster * 0.22);
   var mainH = raster * 1.2 * nyanTownLyricLineHeight();
   var subH = subPx * 1.55;
   var gap = raster * 0.18;
-  var maxWidth = 1100;
-  var measure = row.ctx;
-  measure.font = font;
-  var mainLines = nyanTownLyricWrapText(measure, item.text, maxWidth, 3);
-  measure.font = subFont;
-  var subText = nyanTownLyricTranslationShown() ? String(item.sub || '') : '';
-  var subLines = subText ? nyanTownLyricWrapText(measure, subText, maxWidth, 2) : [];
-  var textWidth = 0;
-  measure.font = font;
-  for (var mi = 0; mi < mainLines.length; mi++) {
-    textWidth = Math.max(textWidth, measure.measureText(mainLines[mi]).width || 0);
-  }
-  measure.font = subFont;
-  for (var si = 0; si < subLines.length; si++) {
-    textWidth = Math.max(textWidth, measure.measureText(subLines[si]).width || 0);
-  }
+  var textWidth = Math.max(mainWidth, subWidth);
   var canvasWidth = Math.max(raster * 3, Math.min(2048, Math.ceil(textWidth + pad * 2)));
-  var canvasHeight = Math.ceil(pad * 2 + mainLines.length * mainH + (subLines.length ? gap + subLines.length * subH : 0));
+  var canvasHeight = Math.ceil(pad * 2 + mainH + (subText ? gap + subH : 0));
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
     row.canvas.width = canvasWidth;
     row.canvas.height = canvasHeight;
     row.ctx = row.canvas.getContext('2d');
   }
-  var ctx = row.ctx;
+  ctx = row.ctx;
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   var colour = current ? palette.highlight : palette.primary;
   var alpha = current ? 1 : 0.82;
-  var coreY = pad + mainH * 0.5;
+  function setMainFont() {
+    ctx.font = font;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
+  }
+  function setSubFont() {
+    ctx.font = subFont;
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+  }
   // Two passes: a wide glow first, then the crisp core. Both share the same box.
   function fillLines() {
     // A dark stroke first: the town's sky and sun are bright, and a pale glyph with no outline
     // disappears into them. The stroke is baked into the plate so it costs nothing per frame.
+    setMainFont();
     ctx.strokeStyle = 'rgba(6, 10, 16, 0.55)';
     ctx.lineWidth = Math.max(1, raster * 0.055);
     ctx.lineJoin = 'round';
     ctx.fillStyle = colour;
-    for (var st = 0; st < mainLines.length; st++) {
-      ctx.strokeText(mainLines[st], canvasWidth / 2, pad + (st + 0.5) * mainH);
-    }
-    for (var m = 0; m < mainLines.length; m++) {
-      ctx.fillText(mainLines[m], canvasWidth / 2, pad + (m + 0.5) * mainH);
-    }
-    if (subLines.length) {
-      ctx.font = subFont;
+    ctx.strokeText(mainText, canvasWidth / 2, pad + mainH * 0.5);
+    ctx.fillText(mainText, canvasWidth / 2, pad + mainH * 0.5);
+    if (subText) {
+      setSubFont();
       ctx.fillStyle = palette.context;
       ctx.globalAlpha = alpha * nyanTownLyricTranslationOpacity();
-      var subTop = pad + mainLines.length * mainH + gap;
-      for (var s = 0; s < subLines.length; s++) {
-        ctx.fillText(subLines[s], canvasWidth / 2, subTop + (s + 0.5) * subH);
-      }
+      ctx.fillText(subText, canvasWidth / 2, pad + mainH + gap + subH * 0.5);
       ctx.globalAlpha = alpha;
-      ctx.font = font;
       ctx.fillStyle = colour;
     }
+    setMainFont();
   }
   ctx.globalAlpha = alpha;
   ctx.save();
@@ -839,38 +841,127 @@ function nyanTownDrawLyricRow(row, item, current, palette, styleKey) {
   ctx.globalAlpha = 1;
   row.widthRatio = canvasWidth / Math.max(1, canvasHeight);
   row.texture.needsUpdate = true;
-  row.drawKey = [item.text, item.sub, styleKey, current ? 1 : 0].join('|');
+  row.drawKey = [row.plateKey, item.text, item.sub, styleKey, current ? 1 : 0].join('|');
   row.needsDraw = false;
-  void coreY;
 }
 
-// Pure flight math, so the timing can be checked without a camera: p runs 0 (spawn, far) to 1
-// (nearest point, fading out). The depth is exponential so the approach slows down near the eye.
+// Pure sky-flight math, so the lane can be checked without a camera. p runs 0 (entering one edge
+// of the sky) to 1 (leaving the other); the plate keeps its distance and only slides in azimuth,
+// so it reads as a danmaku strip in the sky instead of an object rushing past the eye.
 function nyanTownLyricFlight(item, p, isCurrent, opts) {
-  var near = Math.max(1, Number(opts.near) || 4);
-  var far = Math.max(near + 1, Number(opts.far) || 20);
   var spread = nyanTownClamp(opts.spread === undefined ? 1 : opts.spread, 0, 1.5);
   var rollDeg = nyanTownClamp(opts.roll === undefined ? 10 : opts.roll, 0, 40);
-  var fov = Math.max(0.2, Number(opts.fov) || 45) * Math.PI / 180;
-  var aspect = Math.max(0.2, Number(opts.aspect) || 1.78);
   var idx = Math.max(0, Math.round(Number(item && item.index) || 0));
   var t = nyanTownClamp(p, 0, 1);
-  var depth = near * Math.pow(far / near, 1 - t);
-  var halfH = Math.tan(fov * 0.5) * depth;
-  var halfW = halfH * aspect;
   var side = (idx % 2 === 0) ? 1 : -1;
-  var lane = (((idx * 37) % 100) / 100 - 0.5) * 0.55 * spread;
-  if (isCurrent) lane *= 0.25;
-  // The sung line crosses the centre early enough to be read while it is bright; the others
-  // sweep the full width and leave the readable moment to the current line.
-  var x0 = side * (isCurrent ? 1.0 : 1.18);
-  var x1 = isCurrent ? -side * 1.1 : -side * 0.32;
-  var x = (x0 + (x1 - x0) * t) * halfW + Math.sin(t * 6.283 + idx) * 0.02 * halfW;
-  var y = lane * halfH + Math.sin(t * 5.1 + idx * 0.7) * 0.015 * halfH;
-  var roll = side * (1 - t) * (rollDeg * Math.PI / 180) + Math.sin(t * 4.3 + idx) * 0.015;
-  var fadeStart = isCurrent ? 0.86 : 0.78;
-  var alpha = nyanTownClamp(t / 0.1, 0, 1) * (1 - nyanTownClamp((t - fadeStart) / (1 - fadeStart), 0, 1));
-  return { depth: depth, x: x, y: y, roll: roll, alpha: alpha, side: side };
+  // The current line crosses a little slower and lower so it can be read while it is bright.
+  var sweep = (isCurrent ? 34 : 46) * Math.max(0.15, spread);
+  var azimuth = side * (sweep * 0.5 - sweep * t);
+  var lane = ((((idx * 37) % 100) / 100 - 0.5) * 3.4) * spread;
+  if (isCurrent) lane *= 0.35;
+  var elevation = (Number(opts.elevation) || 0) + lane + (Number(opts.laneShift) || 0);
+  var fadeIn = nyanTownClamp(t / 0.08, 0, 1);
+  var fadeStart = isCurrent ? 0.9 : 0.84;
+  var fadeOut = 1 - nyanTownClamp((t - fadeStart) / (1 - fadeStart), 0, 1);
+  return {
+    azimuth: azimuth * Math.PI / 180,
+    elevation: elevation * Math.PI / 180,
+    distance: Math.max(1, Number(opts.distance) || 14),
+    roll: side * (1 - t) * rollDeg * Math.PI / 180,
+    alpha: fadeIn * fadeOut,
+    side: side
+  };
+}
+
+// The reference camera, replicated so the plates can live in the same view: same eye on the
+// path, same bank, same field of view. The shader's frame is (right, up, forward); its fov value
+// is the tangent at unit depth, so the vertical fov depends on the aspect as well.
+function nyanTownScenePose(t, iTime, opts) {
+  var camSpeed = Math.max(0.05, Number(opts.camSpeed) || 1.5);
+  var aspect = Math.max(0.2, Number(opts.aspect) || 1.78);
+  var fov = isFinite(Number(opts.fov)) ? Number(opts.fov) : 0.9;
+  var fovPump = Math.max(0, Number(opts.fovPump) || 0.7);
+  function pathAt(tt) {
+    tt *= camSpeed;
+    return [Math.sin(tt) * 0.5, (1 - Math.sin(tt * 2)) * 0.25, -tt * 2.5];
+  }
+  var go = pathAt(t);
+  var adv = pathAt(t + 0.7);
+  var dx = adv[0] - go[0], dy = adv[1] - go[1], dz = adv[2] - go[2];
+  var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+  var advec = [dx / len, dy / len, dz / len];
+  var bank = dx * Math.min(1, Math.abs(dz)) * (dz >= 0 ? 1 : -1) * 0.7;
+  var pitch = advec[1] * 1.7;
+  var yaw = Math.atan2(advec[0], advec[2]);
+  function rotYZ(v, a) { var c = Math.cos(a), s = Math.sin(a); return [v[0], c * v[1] - s * v[2], s * v[1] + c * v[2]]; }
+  function rotXY(v, a) { var c = Math.cos(a), s = Math.sin(a); return [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]]; }
+  function rotXZ(v, a) { var c = Math.cos(a), s = Math.sin(a); return [c * v[0] - s * v[2], v[1], s * v[0] + c * v[2]]; }
+  function aim(v) {
+    // mouse.y defaults to -0.05 in the reference; the rest is move()'s bank, pitch and heading.
+    return rotXZ(rotYZ(rotXY(rotYZ(v, -0.05), bank), pitch), yaw);
+  }
+  var shaderFov = Math.max(0.02, fov - Math.max(0, fovPump - iTime * 0.3));
+  return {
+    pos: [-1 + go[0], 0.7 + go[1], go[2]],
+    right: aim([1, 0, 0]),
+    up: aim([0, 1, 0]),
+    forward: aim([0, 0, 1]),
+    fovDeg: 2 * Math.atan(shaderFov / aspect) * 180 / Math.PI
+  };
+}
+
+// Put a plate in the sky: the azimuth is measured around the camera's heading (so the band stays
+// in the part of the sky the town view faces), while the elevation is a true angle above the
+// world horizon — the band therefore enters and leaves the frame as the path camera raises its
+// head, and never hangs in front of the street.
+function nyanTownSkyPoint(pose, azimuth, elevation, distance) {
+  var fx = pose.forward[0], fz = pose.forward[2];
+  var fl = Math.sqrt(fx * fx + fz * fz) || 1;
+  var hx = fx / fl, hz = fz / fl;
+  var rx = -hz, rz = hx;
+  var ce = Math.cos(elevation), se = Math.sin(elevation);
+  var ca = Math.cos(azimuth), sa = Math.sin(azimuth);
+  var dx = (hx * ca + rx * sa) * ce;
+  var dy = se;
+  var dz = (hz * ca + rz * sa) * ce;
+  var d = Math.max(0.01, Number(distance) || 1);
+  return [pose.pos[0] + dx * d, pose.pos[1] + dy * d, pose.pos[2] + dz * d];
+}
+
+// Face the plate at the eye while keeping the camera's own roll, so the text sits parallel to the
+// town view instead of floating upright in world space.
+function nyanTownFaceCamera(mesh, cam, inverse) {
+  if (!mesh || !cam) return false;
+  if (!nyanTownState.faceVec) nyanTownState.faceVec = new THREE.Vector3();
+  var v = nyanTownState.faceVec.copy(mesh.position).sub(cam.position).applyQuaternion(inverse);
+  var len = v.length() || 1;
+  mesh.quaternion.copy(cam.quaternion);
+  mesh.rotateY(Math.atan2(-v.x, -v.z));
+  mesh.rotateX(Math.asin(nyanTownClamp(v.y / len, -0.98, 0.98)));
+  return true;
+}
+
+function nyanTownApplyLyricCamera(pose) {
+  var cam = nyanTownState.lyricCam;
+  if (!cam || !pose) return false;
+  cam.position.set(pose.pos[0], pose.pos[1], pose.pos[2]);
+  if (!nyanTownState.cameraBasis) {
+    nyanTownState.cameraBasis = new THREE.Matrix4();
+    nyanTownState.cameraX = new THREE.Vector3();
+    nyanTownState.cameraY = new THREE.Vector3();
+    nyanTownState.cameraZ = new THREE.Vector3();
+  }
+  nyanTownState.cameraX.set(-pose.right[0], -pose.right[1], -pose.right[2]);
+  nyanTownState.cameraY.set(pose.up[0], pose.up[1], pose.up[2]);
+  nyanTownState.cameraZ.set(-pose.forward[0], -pose.forward[1], -pose.forward[2]);
+  nyanTownState.cameraBasis.makeBasis(nyanTownState.cameraX, nyanTownState.cameraY, nyanTownState.cameraZ);
+  cam.quaternion.setFromRotationMatrix(nyanTownState.cameraBasis);
+  var fov = nyanTownClamp(pose.fovDeg, 4, 120);
+  if (Math.abs(cam.fov - fov) > 0.01) {
+    cam.fov = fov;
+    cam.updateProjectionMatrix();
+  }
+  return true;
 }
 
 function nyanTownHideLyricRows() {
@@ -879,6 +970,63 @@ function nyanTownHideLyricRows() {
     rows[i].mesh.visible = false;
     rows[i].depthMesh.visible = false;
   }
+}
+
+function nyanTownSplitLyricText(text, size) {
+  var source = String(text || '');
+  var limit = Math.round(Number(size) || 0);
+  if (limit <= 0 || source.length <= limit) return [source];
+  var chars = Array.from(source);
+  var out = [];
+  var current = '';
+  for (var i = 0; i < chars.length; i++) {
+    current += chars[i];
+    if (current.length >= limit) {
+      var space = current.lastIndexOf(' ');
+      if (space >= Math.floor(limit * 0.5)) {
+        out.push(current.slice(0, space).trim());
+        current = current.slice(space + 1);
+      } else {
+        out.push(current);
+        current = '';
+      }
+    }
+  }
+  if (current.trim()) out.push(current.trim());
+  for (var k = 0; k < out.length; k++) if (!out[k]) out.splice(k--, 1);
+  return out.length ? out : [source];
+}
+
+function nyanTownLyricPlateList(items, sung, split) {
+  var out = [];
+  if (!items || !items.length) return out;
+  var anchor = sung < 0 ? 0 : sung;
+  var lo = Math.max(0, anchor - 2);
+  var hi = Math.min(items.length - 1, anchor + 3);
+  for (var i = lo; i <= hi; i++) {
+    var item = items[i];
+    var chunks = split > 0 ? nyanTownSplitLyricText(item.text, split) : [item.text];
+    var slots = Math.min(3, chunks.length);
+    for (var j = 0; j < chunks.length; j++) {
+      out.push({
+        key: i + ':' + (split > 0 ? j : 'w'),
+        itemIndex: i,
+        item: item,
+        text: chunks[j],
+        sub: split > 0 && j > 0 ? '' : item.sub,
+        startAt: item.startAt + (split > 0 ? j * 0.32 : 0),
+        endAt: item.endAt,
+        // All chunks keep their line's index, so they enter from the same side; the lane slot
+        // is what separates them (up to three lanes, cycling for very long splits). The first
+        // chunk takes the top lane so the pieces read in order.
+        index: i,
+        chunk: j,
+        chunkCount: chunks.length,
+        laneSlot: split > 0 ? (slots - 1) / 2 - (j % slots) : 0
+      });
+    }
+  }
+  return out;
 }
 
 function nyanTownUpdateLyrics(dt) {
@@ -893,13 +1041,14 @@ function nyanTownUpdateLyrics(dt) {
     return true;
   }
   var items = nyanTownLyricItems();
-  var listKey = nyanTownLyricListKey(items);
+  var split = Math.round(nyanTownParam('lyricSplit'));
+  var listKey = nyanTownLyricListKey(items) + '|' + split;
   if (listKey !== nyanTownState.lyricListKey) {
     nyanTownState.lyricListKey = listKey;
     nyanTownState.lyricItems = items;
     var resetRows = nyanTownState.lyricRows;
     for (var r = 0; r < resetRows.length; r++) {
-      resetRows[r].itemIndex = -1;
+      resetRows[r].plateKey = '';
       resetRows[r].drawKey = '';
       resetRows[r].mesh.visible = false;
       resetRows[r].depthMesh.visible = false;
@@ -917,124 +1066,140 @@ function nyanTownUpdateLyrics(dt) {
   if (!isFinite(t)) t = clock;
   var sung = nyanTownLyricSungIndex(items, t);
   nyanTownState.lyricSung = sung;
-  var lo = Math.max(0, (sung < 0 ? 0 : sung) - 2);
-  var hi = Math.min(items.length - 1, (sung < 0 ? 0 : sung) + 3);
+  var lead = Math.max(0, nyanTownParam('lyricLead'));
+  var speed = Math.max(0.2, nyanTownParam('lyricSpeed'));
+  var near = Math.max(1, nyanTownParam('lyricDepthNear'));
+  var far = Math.max(near + 1, nyanTownParam('lyricDepthFar'));
   var palette = nyanTownLyricPalette();
   var styleKey = nyanTownLyricStyleKey();
   if (styleKey !== nyanTownState.lyricStyleKey) {
     nyanTownState.lyricStyleKey = styleKey;
     for (var s = 0; s < rows.length; s++) rows[s].drawKey = '';
   }
-  // Free rows whose line left the window or whose flight is over.
-  var lead = Math.max(0, nyanTownParam('lyricLead'));
-  var speed = Math.max(0.2, nyanTownParam('lyricSpeed'));
-  var near = Math.max(1, nyanTownParam('lyricDepthNear'));
-  var far = Math.max(near + 1, nyanTownParam('lyricDepthFar'));
+  var plates = nyanTownLyricPlateList(items, sung, split);
+  var byKey = {};
+  for (var p = 0; p < plates.length; p++) byKey[plates[p].key] = plates[p];
   for (var f = 0; f < rows.length; f++) {
     var row = rows[f];
-    if (row.itemIndex < 0) continue;
-    var line = items[row.itemIndex];
-    if (!line || row.itemIndex < lo || row.itemIndex > hi) {
-      row.itemIndex = -1;
+    if (!row.plateKey) continue;
+    var plate = byKey[row.plateKey];
+    if (!plate) {
+      row.plateKey = '';
       row.drawKey = '';
       row.mesh.visible = false;
       row.depthMesh.visible = false;
       continue;
     }
-    var dur = nyanTownLyricDuration(line, speed);
-    var p = (t - (line.startAt - lead)) / dur;
-    if (p > 1.15) {
-      row.itemIndex = -1;
+    var plateDur = nyanTownLyricDuration(plate, speed);
+    var plateP = (t - (plate.startAt - lead)) / plateDur;
+    if (plateP > 1.15) {
+      row.plateKey = '';
       row.drawKey = '';
       row.mesh.visible = false;
       row.depthMesh.visible = false;
     }
   }
-  // Claim a row for every line that can be flying now.
-  for (var idx = lo; idx <= hi; idx++) {
+  for (var c = 0; c < plates.length; c++) {
+    var wanted = plates[c];
     var claimed = false;
-    for (var c = 0; c < rows.length; c++) if (rows[c].itemIndex === idx) { claimed = true; break; }
+    for (var q = 0; q < rows.length; q++) if (rows[q].plateKey === wanted.key) { claimed = true; break; }
     if (claimed) continue;
     var free = null;
-    for (var fr = 0; fr < rows.length; fr++) if (rows[fr].itemIndex < 0) { free = rows[fr]; break; }
+    for (var fr = 0; fr < rows.length; fr++) if (!rows[fr].plateKey) { free = rows[fr]; break; }
     if (!free) continue;
-    free.itemIndex = idx;
+    free.plateKey = wanted.key;
     free.drawKey = '';
-  }
-  // The current line gets the raster budget first; a future line that has not spawned must not
-  // consume it (that starved the one line actually on screen for a whole song in the first cut).
-  var sungRow = null;
-  for (var sr = 0; sr < rows.length; sr++) {
-    if (rows[sr].itemIndex === sung) { sungRow = rows[sr]; break; }
-  }
-  function plateKey(item, current) {
-    return [item.text, item.sub, styleKey, current ? 1 : 0].join('|');
-  }
-  if (sungRow) {
-    var sungItem = items[sungRow.itemIndex];
-    if (sungItem) {
-      var sungDur = nyanTownLyricDuration(sungItem, speed);
-      var sungP = (t - (sungItem.startAt - lead)) / sungDur;
-      var sungKey = plateKey(sungItem, true);
-      if (sungP >= 0 && sungP <= 1.15 && sungRow.drawKey !== sungKey) {
-        nyanTownDrawLyricRow(sungRow, sungItem, true, palette, styleKey);
-      }
-    }
   }
   var sizeKnob = nyanTownClamp(nyanTownParam('lyricSize'), 0.2, 2);
   var opacityKnob = nyanTownClamp(nyanTownParam('lyricOpacity'), 0, 1);
   var spread = nyanTownParam('lyricSpread');
   var roll = nyanTownParam('lyricRoll');
-  var aspect = (nyanTownState.lyricCam && nyanTownState.lyricCam.aspect) || 1.78;
-  var fov = (nyanTownState.lyricCam && nyanTownState.lyricCam.fov) || 45;
-  var rasterBudget = 1;
+  var skyElev = nyanTownClamp(nyanTownParam('lyricSkyElev'), 0, 65);
+  // The plates live in the town's own view: same eye, same bank, same field of view. The scene
+  // shader's clock is iTime * timeScale; iTime itself drives the intro fov ramp.
+  var pose = nyanTownScenePose(clock * Math.max(0, nyanTownParam('timeScale')), clock, {
+    camSpeed: nyanTownParam('camSpeed'),
+    aspect: (nyanTownState.lyricCam && nyanTownState.lyricCam.aspect) || 1.78,
+    fov: nyanTownParam('fov'),
+    fovPump: nyanTownParam('fovPump')
+  });
+  nyanTownState.scenePose = pose;
+  nyanTownApplyLyricCamera(pose);
+  if (!nyanTownState.cameraInvQuat) nyanTownState.cameraInvQuat = new THREE.Quaternion();
+  nyanTownState.cameraInvQuat.copy(nyanTownState.lyricCam.quaternion).invert();
+  function plateIsCurrent(plate) { return plate.itemIndex === sung; }
+  var rasterBudget = 2;
+  for (var cr = 0; cr < rows.length && rasterBudget > 0; cr++) {
+    var currentRow = rows[cr];
+    if (!currentRow.plateKey) continue;
+    var currentPlate = byKey[currentRow.plateKey];
+    if (!currentPlate || !plateIsCurrent(currentPlate)) continue;
+    var currentDur = nyanTownLyricDuration(currentPlate, speed);
+    var currentP = (t - (currentPlate.startAt - lead)) / currentDur;
+    if (currentP < 0 || currentP > 1.15) continue;
+    var currentKey = [currentRow.plateKey, currentPlate.text, currentPlate.sub, styleKey, 1].join('|');
+    if (currentRow.drawKey !== currentKey) {
+      nyanTownDrawLyricRow(currentRow, currentPlate, true, palette, styleKey);
+      rasterBudget -= 1;
+    }
+  }
   var live = 0;
-  for (var q = 0; q < rows.length; q++) {
-    var piece = rows[q];
-    if (piece.itemIndex < 0) continue;
-    var item = items[piece.itemIndex];
-    if (!item) continue;
-    var current = piece.itemIndex === sung;
-    var lineDur = nyanTownLyricDuration(item, speed);
-    var rawProgress = (t - (item.startAt - lead)) / lineDur;
+  for (var q2 = 0; q2 < rows.length; q2++) {
+    var piece = rows[q2];
+    if (!piece.plateKey) continue;
+    var flightPlate = byKey[piece.plateKey];
+    if (!flightPlate) continue;
+    var current = plateIsCurrent(flightPlate);
+    var lineDur = nyanTownLyricDuration(flightPlate, speed);
+    var rawProgress = (t - (flightPlate.startAt - lead)) / lineDur;
     if (rawProgress < 0) {
       piece.mesh.visible = false;
       piece.depthMesh.visible = false;
       continue;
     }
-    var drawKey = plateKey(item, current);
+    var drawKey = [piece.plateKey, flightPlate.text, flightPlate.sub, styleKey, current ? 1 : 0].join('|');
     if (piece.drawKey !== drawKey) {
-      piece.needsDraw = true;
-      if (rasterBudget > 0 && piece !== sungRow) {
-        nyanTownDrawLyricRow(piece, item, current, palette, styleKey);
+      if (rasterBudget > 0) {
+        nyanTownDrawLyricRow(piece, flightPlate, current, palette, styleKey);
         rasterBudget -= 1;
-      } else if (piece !== sungRow) {
+      } else {
         piece.mesh.visible = false;
         piece.depthMesh.visible = false;
         continue;
       }
     }
     var progress = nyanTownClamp(rawProgress, 0, 1);
-    var flight = nyanTownLyricFlight(item, progress, current, {
-      near: near, far: far, spread: spread, roll: roll, fov: fov, aspect: aspect
+    // Split chunks are a little smaller than a whole line so three sky lanes still fit. The base
+    // height stays modest: a single-line plate is already wide, and the sky band is a narrow gap.
+    var height = 1.25 * sizeKnob * nyanTownLyricConsoleScale() * (current ? 1.15 : 0.85) * (flightPlate.chunkCount > 1 ? 0.85 : 1);
+    // The distance knob pair bounds the sky band. Sit it towards the far end: a single-line plate
+    // is wide, and up close the camera's bank would swing one end out of the frame.
+    var distance = nyanTownClamp(near + (far - near) * (0.72 + 0.06 * ((flightPlate.index % 3) - 1)), near + 0.5, far - 0.5);
+    var flight = nyanTownLyricFlight({ index: flightPlate.index }, progress, current, {
+      elevation: skyElev,
+      laneShift: (flightPlate.laneSlot || 0) * 4,
+      distance: distance,
+      spread: spread,
+      roll: roll
     });
-    // The readable moment is around depth 10, so the plate has to be large in world units: at
-    // 1.15 it covers ~14% of the viewport there (about 45 px per text line on a 1080p window).
-    var height = 1.8 * sizeKnob * (current ? 1.2 : 0.9);
+    if (flight.alpha <= 0.001) {
+      piece.mesh.visible = false;
+      piece.depthMesh.visible = false;
+      continue;
+    }
     var width = height * piece.widthRatio;
-    piece.mesh.position.set(flight.x, flight.y, -flight.depth);
-    piece.mesh.rotation.set(0, 0, flight.roll);
+    var point = nyanTownSkyPoint(pose, flight.azimuth, flight.elevation, flight.distance);
+    piece.mesh.position.set(point[0], point[1], point[2]);
+    nyanTownFaceCamera(piece.mesh, nyanTownState.lyricCam, nyanTownState.cameraInvQuat);
+    piece.mesh.rotateZ(flight.roll);
     piece.mesh.scale.set(width, height, 1);
     piece.material.opacity = opacityKnob * flight.alpha;
     piece.mesh.visible = true;
     piece.depthMesh.position.copy(piece.mesh.position);
-    piece.depthMesh.rotation.copy(piece.mesh.rotation);
+    piece.depthMesh.quaternion.copy(piece.mesh.quaternion);
     piece.depthMesh.scale.copy(piece.mesh.scale);
-    piece.depthMat.uniforms.uDepth.value = nyanTownClamp(flight.depth / 25, 0, 0.98);
-    // Far plates first, near plates last, so the depth target ends up holding the nearest plate
-    // that also sits on top in the colour target. Without this a farther rectangle could own the
-    // depth at a pixel and hide the text the colour pass drew there.
-    piece.depthMesh.renderOrder = Math.round((1 - nyanTownClamp(flight.depth / far, 0, 1)) * 1000);
+    piece.depthMat.uniforms.uDepth.value = nyanTownClamp(flight.distance / 25, 0, 0.98);
+    piece.depthMesh.renderOrder = Math.round((1 - nyanTownClamp(flight.distance / far, 0, 1)) * 1000);
     piece.depthMesh.visible = true;
     live += 1;
   }
@@ -1045,8 +1210,6 @@ function nyanTownUpdateLyrics(dt) {
   return true;
 }
 
-
-
 var nyanTownState = {
   built: false, quadScene: null, quadCam: null, quad: null, mat: null,
   blitScene: null, blitCam: null, blitMat: null,
@@ -1056,6 +1219,7 @@ var nyanTownState = {
   lyricScene: null, lyricDepthScene: null, lyricCam: null,
   lyricRt: null, lyricDepthRt: null, lyricW: 0, lyricH: 0,
   lyricGeometry: null, lyricRows: [], lyricItems: [], lyricListKey: '', lyricStyleKey: '',
+  scenePose: null, cameraBasis: null, cameraX: null, cameraY: null, cameraZ: null,
   lyricSung: -2, lyricVisible: 0, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   size: null
@@ -1352,6 +1516,13 @@ function nyanTownDisposeScene() {
   nyanTownState.lyricVisible = 0;
   nyanTownState.lyricLayerChecked = false;
   nyanTownState.lyricLayerWasOff = false;
+  nyanTownState.scenePose = null;
+  nyanTownState.cameraBasis = null;
+  nyanTownState.cameraX = null;
+  nyanTownState.cameraY = null;
+  nyanTownState.cameraZ = null;
+  nyanTownState.cameraInvQuat = null;
+  nyanTownState.faceVec = null;
   if (nyanTownState.levelTex) nyanTownState.levelTex.dispose();
   if (nyanTownState.spriteTex) nyanTownState.spriteTex.dispose();
   if (nyanTownState.mat) nyanTownState.mat.dispose();

@@ -322,6 +322,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-nyanaudioDrive', '音频驱动强度', '彩虹猫 小镇 音频 驱动 太阳 电平'),
         fxConsoleItem('t-nyanlyricOn', '歌词弹幕', '彩虹猫 小镇 歌词 弹幕 开关'),
         fxConsoleItem('fx-nyanlyricRows', '歌词弹幕行数', '彩虹猫 小镇 歌词 弹幕 行数 池子 密度'),
+        fxConsoleItem('fx-nyanlyricSplit', '拆板字数', '彩虹猫 小镇 歌词 弹幕 拆板 字数 密度'),
+        fxConsoleItem('fx-nyanlyricSkyElev', '天空仰角', '彩虹猫 小镇 歌词 天空 仰角 抬头 高度'),
         fxConsoleItem('fx-nyanlyricSize', '歌词字号', '彩虹猫 小镇 歌词 字号 大小'),
         fxConsoleItem('fx-nyanlyricSpeed', '歌词飞行速度', '彩虹猫 小镇 歌词 弹幕 飞行 速度'),
         fxConsoleItem('fx-nyanlyricLead', '歌词提前入场', '彩虹猫 小镇 歌词 提前 入场 时间'),

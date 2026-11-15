@@ -2349,6 +2349,14 @@ function runNyanTownPresetCheck() {
     [/nyanTownUpdateLyrics\(step\)/, 'the loop has to step the lyric lane with the same song clock'],
     [/nyanTownRenderLyricPasses\(\)/, 'the frame has to render the lyric colour and depth targets'],
     [/function nyanTownLyricFlight\(/, 'the flight has to be one pure helper so its timing can be checked'],
+    [/function nyanTownScenePose\(/, 'the town camera needs a replicated pose, or the lyric plates cannot align with the view'],
+    [/function nyanTownSkyPoint\(/, 'the sky-band placement has to be one pure helper'],
+    [/nyanTownApplyLyricCamera\(pose\)/, 'the lyric camera has to take the town pose every frame'],
+    [/lyricFontCss\(/, 'the plates have to read the console font/weight, not a hard-coded face'],
+    [/lyricLetterSpacingPx\(/, 'the plates have to honour the console letter spacing'],
+    [/nyanTownLyricConsoleScale\(\)/, 'the console lyric scale has to reach the plate size'],
+    [/function nyanTownSplitLyricText\(/, 'the split knob needs its pure chunker'],
+    [/function nyanTownLyricPlateList\(/, 'lines and split chunks both have to go through one plate list'],
     [/function nyanTownEnableLyricLayer\(/, 'the lane has to respect the app lyric switch and enable it on entry'],
     [/uniforms\.uLyricOn\.value = live > 0 \? 1 : 0;/, 'the composite gate has to follow whether any plate is live'],
     [/uOcclusion\.value = nyanTownParam\('lyricOcclusion'\)/, 'the occlusion softening has to come from its knob'],
@@ -2370,7 +2378,7 @@ function runNyanTownPresetCheck() {
   while ((found = schemaRe.exec(text))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 28) fail(`the town knob schema must be complete (found ${schema.size})`);
+  if (schema.size < 34) fail(`the town knob schema must be complete (found ${schema.size})`);
   for (const [key, spec] of schema) {
     if (spec.kind === 'bool') {
       const id = 't-nyan' + key;
