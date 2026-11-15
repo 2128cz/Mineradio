@@ -206,6 +206,11 @@ const shaderFovDeg = 2 * Math.atan(0.9 / 1.78) * 180 / Math.PI;
 assert.ok(Math.abs(pose.fovDeg - shaderFovDeg) < 1e-6, 'the reference fov is a half-width tangent: convert through the aspect');
 const intro = sandbox.nyanTownScenePose(0, 0, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
 assert.ok(intro.fovDeg < pose.fovDeg, 'the reference zooms out: iTime drives the intro fov, not the song clock');
+// The rendered image pitches opposite to move()'s raw dir; a 0.5 s A/B against the scene image
+// showed the raw pitch sliding world-fixed plates at twice the camera rate. The pose has to use
+// the flipped pitch so the lyric camera and the town move together.
+const pitchPose = sandbox.nyanTownScenePose(1.5, 10, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
+assert.ok(pitchPose.forward[1] < -0.05, 'the lyric camera must pitch with the rendered image, not with move() raw dir');
 
 // Sky anchoring: the plate is fixed in the world at the height the camera will have when its line
 // is sung. The elevation is a real angle above the world horizon (not the view axis), and the

@@ -2350,6 +2350,7 @@ function runNyanTownPresetCheck() {
     [/nyanTownRenderLyricPasses\(\)/, 'the frame has to render the lyric colour and depth targets'],
     [/function nyanTownLyricFlight\(/, 'the flight has to be one pure helper so its timing can be checked'],
     [/function nyanTownScenePose\(/, 'the town camera needs a replicated pose, or the lyric plates cannot align with the view'],
+    [/var pitch = -advec\[1\] \* 1\.7;/, 'the lyric camera has to pitch with the rendered image, not move() raw dir'],
     [/function nyanTownSkyAnchor\(/, 'the sky band has to be anchored once in world space, not pinned to the screen'],
     [/anchorBase/, 'a plate has to keep its world anchor while the camera moves'],
     [/nyanTownApplyLyricCamera\(pose\)/, 'the lyric camera has to take the town pose every frame'],

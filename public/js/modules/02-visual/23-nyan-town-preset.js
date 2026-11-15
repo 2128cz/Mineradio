@@ -892,7 +892,10 @@ function nyanTownScenePose(t, iTime, opts) {
   var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
   var advec = [dx / len, dy / len, dz / len];
   var bank = dx * Math.min(1, Math.abs(dz)) * (dz >= 0 ? 1 : -1) * 0.7;
-  var pitch = advec[1] * 1.7;
+  // The rendered image pitches the other way from move()'s raw dir: measured against the scene
+  // image (the town moves up when the pose's forward.y goes down), so the lyric camera has to use
+  // the flipped pitch or every plate would slide at twice the camera's rate.
+  var pitch = -advec[1] * 1.7;
   var yaw = Math.atan2(advec[0], advec[2]);
   function rotYZ(v, a) { var c = Math.cos(a), s = Math.sin(a); return [v[0], c * v[1] - s * v[2], s * v[1] + c * v[2]]; }
   function rotXY(v, a) { var c = Math.cos(a), s = Math.sin(a); return [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]]; }
