@@ -17,23 +17,42 @@ var NEON_PRESET_INDEX = 16;
 // Every knob is declared here; the console store (07-fx/14-neon-tuning.js) keeps defaults in this
 // one place too, so a missing store simply means "everything at its declared default".
 var NEON_TUNING_SCHEMA = {
-  // ---- the sky and the road
-  horizon: { def: 0.18, min: 0.05, max: 0.5, kind: 'ratio', rebuild: 'live' },
-  gridSpeed: { def: 1.0, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
-  gridWidth: { def: 1.0, min: 0.2, max: 4, kind: 'ratio', rebuild: 'live' },
-  gridGlow: { def: 0.6, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
-  sunSize: { def: 0.42, min: 0.1, max: 0.9, kind: 'ratio', rebuild: 'live' },
-  sunStripes: { def: 24, min: 4, max: 80, kind: 'count', rebuild: 'live' },
-  fujiHeight: { def: 0.5, min: 0.05, max: 1.0, kind: 'ratio', rebuild: 'live' },
-  fog: { def: 0.55, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
-  // ---- the palette (the reference is magenta sun / cyan grid on deep blue)
-  skyColor: { def: 0.0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  sunColor: { def: 1.0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  roadColor: { def: 0.55, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  // ---- the camera: this preset sits still and looks down the road
+  // ---- extracted from the reference shader. Defaults equal its literals, so leaving every knob
+  // alone reproduces the original frame (the fidelity bench checks exactly that).
+  battery: { def: 1.0, min: 0.2, max: 1.2, kind: 'ratio', rebuild: 'live' },
+  horizon: { def: -0.2, min: -0.6, max: 0.1, kind: 'ratio', rebuild: 'live' },
+  roadDepth: { def: 3.0, min: 1, max: 10, kind: 'ratio', rebuild: 'live' },
+  roadSpread: { def: 1.0, min: 0.2, max: 3, kind: 'ratio', rebuild: 'live' },
+  gridScale: { def: 0.01, min: 0.002, max: 0.05, kind: 'ratio', rebuild: 'live' },
+  gridSpeed: { def: 4.0, min: 0, max: 12, kind: 'ratio', rebuild: 'live' },
+  gridDensity: { def: 5.0, min: 1, max: 12, kind: 'ratio', rebuild: 'live' },
+  gridBloom: { def: 0.4, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  sunX: { def: 0.75, min: -2, max: 2, kind: 'unit', rebuild: 'live' },
+  sunY: { def: 0.2, min: -2, max: 2, kind: 'unit', rebuild: 'live' },
+  sunRadius: { def: 0.3, min: 0.05, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  sunStripes: { def: 100, min: 10, max: 300, kind: 'count', rebuild: 'live' },
+  sunBloom: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  fujiX: { def: -0.75, min: -2, max: 2, kind: 'unit', rebuild: 'live' },
+  fujiY: { def: 0.5, min: -2, max: 2, kind: 'unit', rebuild: 'live' },
+  fujiWidth: { def: 1.75, min: 0.5, max: 4, kind: 'unit', rebuild: 'live' },
+  fujiBase: { def: 0.2, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  fujiHeight: { def: 0.5, min: 0.1, max: 2, kind: 'ratio', rebuild: 'live' },
+  snowFreq: { def: 20, min: 0, max: 60, kind: 'count', rebuild: 'live' },
+  snowSpeed: { def: 2, min: 0, max: 8, kind: 'ratio', rebuild: 'live' },
+  snowAmp: { def: 0.05, min: 0, max: 0.2, kind: 'ratio', rebuild: 'live' },
+  snowLevel: { def: 0.2, min: -0.5, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  cloudOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  cloudSpeed: { def: 0.1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  cloudWidth: { def: 0.075, min: 0.02, max: 0.2, kind: 'ratio', rebuild: 'live' },
+  fogGain: { def: 1.0, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  // ---- the palette: the reference's own colours, exposed so the look can be warmed or cooled
+  // without touching the composition. sat 0 keeps the reference, 1 doubles it.
+  paletteSat: { def: 0, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
+  paletteWarm: { def: 0, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
+  // ---- our camera (the reference has none; it sits still and looks down the road)
   camHeight: { def: 1.0, min: -2, max: 6, kind: 'unit', rebuild: 'live' },
   camFov: { def: 52, min: 25, max: 90, kind: 'deg', rebuild: 'live' },
-  // ---- the cars
+  // ---- our addition: the lyric cars
   carSize: { def: 1.0, min: 0.2, max: 3, kind: 'ratio', rebuild: 'live' },
   carRideHeight: { def: -0.12, min: -0.4, max: 0.4, kind: 'ratio', rebuild: 'live' },
   trailLength: { def: 1.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
@@ -42,6 +61,40 @@ var NEON_TUNING_SCHEMA = {
   carGlow: { def: 1.2, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   beatKick: { def: 0.5, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
 };
+
+// The reference's fixed palette, in the order the composition uses it.
+var NEON_PALETTE = {
+  sky: [0.0, 0.1, 0.2],
+  grid: [1.0, 0.5, 1.0],
+  sun: [1.0, 0.2, 1.0],
+  sunWarm: [1.0, 0.4, 0.1],
+  fujiDark: [0.0, 0.0, 0.25],
+  fujiBright: [1.0, 0.0, 0.5],
+  snow: [1.0, 0.5, 1.0],
+  horizonNear: [1.0, 0.12, 0.8],
+  horizonFar: [0.0, 0.0, 0.2],
+  cloud: [0.0, 0.0, 0.2]
+};
+
+// Keeps the reference's own colour unless the two colour knobs move: saturation is a mix toward
+// the grey of the same luminance, warmth is a shift along the red/blue axis.
+function neonPaletteColor(target, rgb) {
+  var sat = neonParam('paletteSat');
+  var warm = neonParam('paletteWarm');
+  if (!target) return;
+  var r = rgb[0], g = rgb[1], b = rgb[2];
+  if (sat) {
+    var grey = (r * 0.299 + g * 0.587 + b * 0.114);
+    r = grey + (r - grey) * (1 + sat);
+    g = grey + (g - grey) * (1 + sat);
+    b = grey + (b - grey) * (1 + sat);
+  }
+  if (warm) {
+    r += warm * 0.10;
+    b -= warm * 0.10;
+  }
+  target.setRGB(Math.min(1.5, Math.max(0, r)), Math.min(1.5, Math.max(0, g)), Math.min(1.5, Math.max(0, b)));
+}
 
 function neonParam(key) {
   var store = (typeof neonTuning !== 'undefined') ? neonTuning : null;
@@ -71,93 +124,150 @@ var NEON_SCENE_FS = [
   'uniform vec3 iResolution;',
   'uniform float iTime;',
   'uniform vec4 iMouse;',
+  'uniform float uBattery;',
   'uniform float uHorizon;',
+  'uniform float uRoadDepth;',
+  'uniform float uRoadSpread;',
+  'uniform float uGridScale;',
   'uniform float uGridSpeed;',
-  'uniform float uGridWidth;',
-  'uniform float uGridGlow;',
-  'uniform float uSunSize;',
+  'uniform float uGridDensity;',
+  'uniform float uGridBloom;',
+  'uniform vec3 uGridColor;',
+  'uniform vec3 uSkyColor;',
+  'uniform float uSunX;',
+  'uniform float uSunY;',
+  'uniform float uSunRadius;',
   'uniform float uSunStripes;',
+  'uniform float uSunBloom;',
+  'uniform vec3 uSunColor;',
+  'uniform vec3 uSunWarm;',
+  'uniform float uFujiX;',
+  'uniform float uFujiY;',
+  'uniform float uFujiWidth;',
+  'uniform float uFujiBase;',
   'uniform float uFujiHeight;',
-  'uniform float uFog;',
-  'uniform vec3 uSky;',
-  'uniform vec3 uSun;',
-  'uniform vec3 uRoad;',
-  'uniform float uBeat;',
+  'uniform vec3 uFujiDark;',
+  'uniform vec3 uFujiBright;',
+  'uniform vec3 uSnowColor;',
+  'uniform float uSnowFreq;',
+  'uniform float uSnowSpeed;',
+  'uniform float uSnowAmp;',
+  'uniform float uSnowLevel;',
+  'uniform vec3 uHorizonNear;',
+  'uniform vec3 uHorizonFar;',
+  'uniform float uCloudOn;',
+  'uniform float uCloudSpeed;',
+  'uniform float uCloudWidth;',
+  'uniform vec3 uCloudColor;',
+  'uniform float uFogGain;',
   '',
-  'float neonLine(float v, float w) {',
-  '  return smoothstep(w, 0.0, abs(fract(v) - 0.5));',
+  // ---- ported from the reference (see tests/fixtures/neon-fuji-reference.glsl).
+  // The expressions are the reference's; only its literals became uniforms, so a default-valued
+  // parameter set reproduces the original frame.
+  'float sun(vec2 uv, float battery) {',
+  '  float val = smoothstep(uSunRadius, uSunRadius - 0.01, length(uv));',
+  '  float bloom = smoothstep(uSunBloom, 0.0, length(uv));',
+  '  float cut = 3.0 * sin((uv.y + iTime * 0.2 * (battery + 0.02)) * uSunStripes)',
+  '    + clamp(uv.y * 14.0 + 1.0, -6.0, 6.0);',
+  '  cut = clamp(cut, 0.0, 1.0);',
+  '  return clamp(val * cut, 0.0, 1.0) + bloom * 0.6;',
   '}',
   '',
-  // The road: lines every 0.5 in both axes, so the densest band sits near the horizon; two
-  // frequencies keep it from looking like graph paper.
-  'float neonGrid(vec2 p, float speed) {',
-  '  vec2 size = vec2(0.006, 0.010) * uGridWidth;',
-  '  p.y += iTime * 1.4 * speed;',
-  '  float fine = neonLine(p.x * 2.0, size.x) + neonLine(p.y * 2.0, size.y);',
-  '  float wide = neonLine(p.x * 0.5, size.x * 3.0) + neonLine(p.y * 0.5, size.y * 3.0);',
-  '  return clamp(fine + wide * 0.5, 0.0, 2.0);',
+  'float grid(vec2 uv, float battery) {',
+  '  vec2 size = vec2(uv.y, uv.y * uv.y * 0.2) * uGridScale;',
+  '  uv += vec2(0.0, iTime * uGridSpeed * (battery + 0.05));',
+  '  uv = abs(fract(uv) - 0.5);',
+  '  vec2 lines = smoothstep(size, vec2(0.0), uv);',
+  '  lines += smoothstep(size * uGridDensity, vec2(0.0), uv) * uGridBloom * battery;',
+  '  return clamp(lines.x + lines.y, 0.0, 3.0);',
   '}',
   '',
-  // A disc cut by horizontal slits that drift upward. Only the lower half is striped, the way the
-  // reference draws it.
-  'float neonSun(vec2 p, float r) {',
-  '  float d = length(p);',
-  '  float disc = smoothstep(r, r * 0.96, d);',
-  '  float band = fract((p.y + iTime * 0.05) * uSunStripes * 0.5);',
-  '  float cut = smoothstep(0.40, 0.60, band);',
-  '  float stripes = mix(1.0, cut, step(p.y, 0.0));',
-  '  float halo = smoothstep(r * 2.4, r * 0.9, d) * 0.65;',
-  '  return clamp(disc * stripes + halo, 0.0, 2.0);',
+  'float dot2(in vec2 v) { return dot(v, v); }',
+  '',
+  'float sdTrapezoid(in vec2 p, in float r1, float r2, float he) {',
+  '  vec2 k1 = vec2(r2, he);',
+  '  vec2 k2 = vec2(r2 - r1, 2.0 * he);',
+  '  p.x = abs(p.x);',
+  '  vec2 ca = vec2(p.x - min(p.x, (p.y < 0.0) ? r1 : r2), abs(p.y) - he);',
+  '  vec2 cb = p - k1 + k2 * clamp(dot(k1 - p, k2) / dot2(k2), 0.0, 1.0);',
+  '  float s = (cb.x < 0.0 && ca.y < 0.0) ? -1.0 : 1.0;',
+  '  return s * sqrt(min(dot2(ca), dot2(cb)));',
   '}',
   '',
-  // A filled mountain: apex at the horizon, magenta body, wavy white cap, thin outline. Returns
-  // premultiplied colour so the caller can lay it over the sky.
-  'vec3 neonFuji(vec2 p, float h) {',
-  '  float halfW = h * 1.15;',
-  '  float k = clamp((h - p.y) / max(0.001, h), 0.0, 1.0);',
-  '  float insideX = 1.0 - smoothstep(halfW * k - 0.006, halfW * k + 0.006, abs(p.x));',
-  '  float insideY = step(0.0, p.y) * step(p.y, h);',
-  '  float m = insideX * insideY;',
-  '  vec3 body = mix(vec3(0.45, 0.0, 0.42), vec3(1.0, 0.18, 0.55), clamp(p.y / max(0.001, h), 0.0, 1.0));',
-  '  float snowEdge = h * 0.60 + sin(p.x * 18.0) * h * 0.055;',
-  '  float snow = smoothstep(snowEdge - 0.004, snowEdge + 0.004, p.y);',
-  '  vec3 col = mix(body, vec3(1.0, 0.96, 1.0), snow);',
-  '  float outline = smoothstep(0.004, 0.0, abs(abs(p.x) - halfW * k)) * insideY;',
-  '  col = mix(col, vec3(1.0), outline * 0.85);',
-  '  return col * m;',
+  'float sdLine(in vec2 p, in vec2 a, in vec2 b) {',
+  '  vec2 pa = p - a, ba = b - a;',
+  '  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);',
+  '  return length(pa - ba * h);',
   '}',
   '',
+  'float sdBox(in vec2 p, in vec2 b) {',
+  '  vec2 d = abs(p) - b;',
+  '  return length(max(d, vec2(0))) + min(max(d.x, d.y), 0.0);',
+  '}',
+  '',
+  'float opSmoothUnion(float d1, float d2, float k) {',
+  '  float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);',
+  '  return mix(d2, d1, h) - k * h * (1.0 - h);',
+  '}',
+  '',
+  'float sdCloud(in vec2 p, in vec2 a1, in vec2 b1, in vec2 a2, in vec2 b2, float w) {',
+  '  float lineVal1 = sdLine(p, a1, b1);',
+  '  float lineVal2 = sdLine(p, a2, b2);',
+  '  vec2 ww = vec2(w * 1.5, 0.0);',
+  '  vec2 left = max(a1 + ww, a2 + ww);',
+  '  vec2 right = min(b1 - ww, b2 - ww);',
+  '  vec2 boxCenter = (left + right) * 0.5;',
+  '  float boxH = abs(a2.y - a1.y) * 0.5;',
+  '  float boxVal = sdBox(p - boxCenter, vec2(0.04, boxH)) + w;',
+  '  float uniVal1 = opSmoothUnion(lineVal1, boxVal, 0.05);',
+  '  float uniVal2 = opSmoothUnion(lineVal2, boxVal, 0.05);',
+  '  return min(uniVal1, uniVal2);',
+  '}',
+  '',
+  // The composition order is the picture: grid before the sky branch, the sun under the mountain,
+  // the horizon tint added (not mixed), the clouds last, then the fog and the battery desaturation.
   'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
   '  vec2 uv = (2.0 * fragCoord.xy - iResolution.xy) / iResolution.y;',
-  '  float hy = mix(-0.55, 0.55, uHorizon);',
-  '  vec3 top = uSky;',
-  '  vec3 bottom = uSky * 0.35 + uSun * 0.20;',
-  '  vec3 col = mix(bottom, top, clamp((uv.y - hy) * 0.9 + 0.2, 0.0, 1.0));',
-  '  if (uv.y > hy) {',
-  // sky: sun on the left, mountain on the right, both sitting on the horizon
-  '    vec2 sunP = uv - vec2(-0.58, hy + 0.30);',
-  '    col += uSun * neonSun(sunP, 0.26 * (0.6 + uSunSize)) * 1.35;',
-  '    vec2 fujiP = uv - vec2(0.34, hy);',
-  '    col = mix(col, neonFuji(fujiP, uFujiHeight), 1.0);',
-  '    col += uSun * 0.30 * smoothstep(0.10, 0.0, abs(uv.y - hy));',
-  '    col += uRoad * 0.18 * smoothstep(0.02, 0.0, abs(uv.y - hy));',
+  '  float battery = uBattery;',
+  '  float fog = smoothstep(0.1, -0.02, abs(uv.y - uHorizon));',
+  '  vec3 col = uSkyColor;',
+  '  if (uv.y < uHorizon) {',
+  '    uv.y = uRoadDepth / (abs(uv.y - uHorizon) + 0.05);',
+  '    uv.x *= uv.y * uRoadSpread;',
+  '    float gridVal = grid(uv, battery);',
+  '    col = mix(col, uGridColor, gridVal);',
   '  } else {',
-  // road: perspective divide around the horizon, then the grid
-  '    vec2 p = vec2(uv.x, uv.y - hy);',
-  '    float depth = 1.0 / (abs(p.y) + 0.045);',
-  '    vec2 gp = vec2(p.x * depth * 0.55, depth * 0.55);',
-  '    float g = neonGrid(gp, uGridSpeed);',
-  '    float nearHorizon = smoothstep(0.55, 0.0, abs(uv.y - hy));',
-  '    vec3 line = mix(uRoad * 0.75, vec3(1.0, 0.85, 0.95), nearHorizon * 0.65);',
-  '    col = mix(col, line, clamp(g, 0.0, 1.0) * 0.85);',
-  '    col += line * g * uGridGlow * 0.45;',
-  '    col = mix(col, uSky * 0.25 + uSun * 0.10, smoothstep(0.0, 0.35, abs(uv.y - hy) - 0.05) * uFog * 0.5);',
+  '    float fujiD = min(uv.y * 4.5 - 0.5, 1.0);',
+  '    uv.y -= battery * 1.1 - 0.51;',
+  '    vec2 sunUV = uv + vec2(uSunX, uSunY);',
+  '    col = uSunColor;',
+  '    float sunVal = sun(sunUV, battery);',
+  '    col = mix(col, uSunWarm, sunUV.y * 2.0 + 0.2);',
+  '    col = mix(vec3(0.0, 0.0, 0.0), col, sunVal);',
+  '    float fujiVal = sdTrapezoid(uv + vec2(uFujiX, uFujiY), uFujiWidth + pow(uv.y * uv.y, 2.1), uFujiBase, uFujiHeight);',
+  '    float waveVal = uv.y + sin(uv.x * uSnowFreq + iTime * uSnowSpeed) * uSnowAmp + uSnowLevel;',
+  '    float wave_width = smoothstep(0.0, 0.01, waveVal);',
+  '    col = mix(col, mix(uFujiDark, uFujiBright, fujiD), step(fujiVal, 0.0));',
+  '    col = mix(col, uSnowColor, wave_width * step(fujiVal, 0.0));',
+  '    col = mix(col, uSnowColor, 1.0 - smoothstep(0.0, 0.01, abs(fujiVal)));',
+  '    col += mix(col, mix(uHorizonNear, uHorizonFar, clamp(uv.y * 3.5 + 3.0, 0.0, 1.0)), step(0.0, fujiVal));',
+  '    if (uCloudOn > 0.5) {',
+  '      vec2 cloudUV = uv;',
+  '      cloudUV.x = mod(cloudUV.x + iTime * uCloudSpeed, 4.0) - 2.0;',
+  '      float cloudTime = iTime * 0.5;',
+  '      float cloudY = -0.5;',
+  '      float cloudVal1 = sdCloud(cloudUV, vec2(0.1 + sin(cloudTime + 140.5) * 0.1, cloudY), vec2(1.05 + cos(cloudTime * 0.9 - 36.56) * 0.1, cloudY), vec2(0.2 + cos(cloudTime * 0.867 + 387.165) * 0.1, 0.25 + cloudY), vec2(0.5 + cos(cloudTime * 0.9675 - 15.162) * 0.09, 0.25 + cloudY), uCloudWidth);',
+  '      cloudY = -0.6;',
+  '      float cloudVal2 = sdCloud(cloudUV, vec2(-0.9 + cos(cloudTime * 1.02 + 541.75) * 0.1, cloudY), vec2(-0.5 + sin(cloudTime * 0.9 - 316.56) * 0.1, cloudY), vec2(-1.5 + cos(cloudTime * 0.867 + 37.165) * 0.1, 0.25 + cloudY), vec2(-0.6 + sin(cloudTime * 0.9675 + 665.162) * 0.09, 0.25 + cloudY), uCloudWidth);',
+  '      float cloudVal = min(cloudVal1, cloudVal2);',
+  '      col = mix(col, uCloudColor, 1.0 - smoothstep(uCloudWidth - 0.0001, uCloudWidth, cloudVal));',
+  '      col += vec3(1.0, 1.0, 1.0) * (1.0 - smoothstep(0.0, 0.01, abs(cloudVal - uCloudWidth)));',
+  '    }',
   '  }',
-  '  col += uBeat * 0.05 * vec3(1.0, 0.4, 0.9);',
-  '  col = pow(max(col, vec3(0.0)), vec3(0.82));',
+  '  col += fog * fog * fog * uFogGain;',
+  '  col = mix(vec3(col.r, col.r, col.r) * 0.5, col, battery * 0.7);',
   '  fragColor = vec4(col, 1.0);',
   '}',
-  // Shadertoy shape: the body defines mainImage, the wrapper calls it once.
   'void main() { vec4 c = vec4(0.0); mainImage(c, gl_FragCoord.xy); gl_FragColor = c; }'
 ].join('\n');
 
@@ -174,18 +284,43 @@ function neonBuildScene() {
         iResolution: shadertoyUvUniforms(1, 1),
         iTime: { value: 0 },
         iMouse: { value: [0, 0, 0, 0] },
-        uHorizon: { value: neonParam('horizon') },
-        uGridSpeed: { value: neonParam('gridSpeed') },
-        uGridWidth: { value: neonParam('gridWidth') },
-        uGridGlow: { value: neonParam('gridGlow') },
-        uSunSize: { value: neonParam('sunSize') },
-        uSunStripes: { value: neonParam('sunStripes') },
-        uFujiHeight: { value: neonParam('fujiHeight') },
-        uFog: { value: neonParam('fog') },
-        uSky: { value: new THREE.Color() },
-        uSun: { value: new THREE.Color() },
-        uRoad: { value: new THREE.Color() },
-        uBeat: { value: 0 }
+        uBattery: { value: 0 },
+        uHorizon: { value: 0 },
+        uRoadDepth: { value: 0 },
+        uRoadSpread: { value: 0 },
+        uGridScale: { value: 0 },
+        uGridSpeed: { value: 0 },
+        uGridDensity: { value: 0 },
+        uGridBloom: { value: 0 },
+        uGridColor: { value: new THREE.Color() },
+        uSkyColor: { value: new THREE.Color() },
+        uSunX: { value: 0 },
+        uSunY: { value: 0 },
+        uSunRadius: { value: 0 },
+        uSunStripes: { value: 0 },
+        uSunBloom: { value: 0 },
+        uSunColor: { value: new THREE.Color() },
+        uSunWarm: { value: new THREE.Color() },
+        uFujiX: { value: 0 },
+        uFujiY: { value: 0 },
+        uFujiWidth: { value: 0 },
+        uFujiBase: { value: 0 },
+        uFujiHeight: { value: 0 },
+        uFujiDark: { value: new THREE.Color() },
+        uFujiBright: { value: new THREE.Color() },
+        uSnowColor: { value: new THREE.Color() },
+        uSnowFreq: { value: 0 },
+        uSnowSpeed: { value: 0 },
+        uSnowAmp: { value: 0 },
+        uSnowLevel: { value: 0 },
+        uHorizonNear: { value: new THREE.Color() },
+        uHorizonFar: { value: new THREE.Color() },
+        uCloudOn: { value: 0 },
+        uCloudSpeed: { value: 0 },
+        uCloudWidth: { value: 0 },
+        uCloudColor: { value: new THREE.Color() },
+        uFogGain: { value: 0 },
+        uBeat: { value: 0 },
       },
       vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.999999, 1.0); }',
       fragmentShader: NEON_SCENE_FS,
@@ -351,6 +486,48 @@ function neonDisposeScene() {
 
 // ---------------------------------------------------------------- the frame
 
+// One place that maps every knob onto its uniform; a default set reproduces the reference frame.
+function neonFeedUniforms(u, nowSec) {
+  if (!u) return;
+  u.iTime.value = nowSec;
+  u.uBattery.value = neonParam('battery');
+  u.uHorizon.value = neonParam('horizon');
+  u.uRoadDepth.value = neonParam('roadDepth');
+  u.uRoadSpread.value = neonParam('roadSpread');
+  u.uGridScale.value = neonParam('gridScale');
+  u.uGridSpeed.value = neonParam('gridSpeed');
+  u.uGridDensity.value = neonParam('gridDensity');
+  u.uGridBloom.value = neonParam('gridBloom');
+  u.uSunX.value = neonParam('sunX');
+  u.uSunY.value = neonParam('sunY');
+  u.uSunRadius.value = neonParam('sunRadius');
+  u.uSunStripes.value = neonParam('sunStripes');
+  u.uSunBloom.value = neonParam('sunBloom');
+  u.uFujiX.value = neonParam('fujiX');
+  u.uFujiY.value = neonParam('fujiY');
+  u.uFujiWidth.value = neonParam('fujiWidth');
+  u.uFujiBase.value = neonParam('fujiBase');
+  u.uFujiHeight.value = neonParam('fujiHeight');
+  u.uSnowFreq.value = neonParam('snowFreq');
+  u.uSnowSpeed.value = neonParam('snowSpeed');
+  u.uSnowAmp.value = neonParam('snowAmp');
+  u.uSnowLevel.value = neonParam('snowLevel');
+  u.uCloudOn.value = neonParam('cloudOn');
+  u.uCloudSpeed.value = neonParam('cloudSpeed');
+  u.uCloudWidth.value = neonParam('cloudWidth');
+  u.uFogGain.value = neonParam('fogGain');
+  neonPaletteColor(u.uSkyColor.value, NEON_PALETTE.sky);
+  neonPaletteColor(u.uGridColor.value, NEON_PALETTE.grid);
+  neonPaletteColor(u.uSunColor.value, NEON_PALETTE.sun);
+  neonPaletteColor(u.uSunWarm.value, NEON_PALETTE.sunWarm);
+  neonPaletteColor(u.uFujiDark.value, NEON_PALETTE.fujiDark);
+  neonPaletteColor(u.uFujiBright.value, NEON_PALETTE.fujiBright);
+  neonPaletteColor(u.uSnowColor.value, NEON_PALETTE.snow);
+  neonPaletteColor(u.uHorizonNear.value, NEON_PALETTE.horizonNear);
+  neonPaletteColor(u.uHorizonFar.value, NEON_PALETTE.horizonFar);
+  neonPaletteColor(u.uCloudColor.value, NEON_PALETTE.cloud);
+}
+
 function neonUpdateCamera() {
   if (typeof camera === 'undefined' || !camera) return;
   if (typeof freeCamera !== 'undefined' && freeCamera && (freeCamera.active || freeCamera.resetTween)) return;
@@ -421,27 +598,12 @@ function updateNeonLayer(now, dt) {
   var step = Math.max(0, Math.min(0.1, Number(dt) || 0));
   var mat = neonState.quadMat;
   if (mat) {
-    var u = mat.uniforms;
-    u.iTime.value = (Number(now) || 0) / 1000;
-    u.uHorizon.value = neonParam('horizon');
-    u.uGridSpeed.value = neonParam('gridSpeed');
-    u.uGridWidth.value = neonParam('gridWidth');
-    u.uGridGlow.value = neonParam('gridGlow');
-    u.uSunSize.value = neonParam('sunSize');
-    u.uSunStripes.value = neonParam('sunStripes');
-    u.uFujiHeight.value = neonParam('fujiHeight');
-    u.uFog.value = neonParam('fog');
-    var sky = neonParam('skyColor');
-    var sun = neonParam('sunColor');
-    var road = neonParam('roadColor');
-    u.uSky.value.setRGB(0.04 + sky * 0.10, 0.03 + sky * 0.05, 0.14 + sky * 0.25);
-    u.uSun.value.setRGB(0.55 + sun * 0.45, 0.10 + sun * 0.30, 0.45 + sun * 0.50);
-    u.uRoad.value.setRGB(0.10 + road * 0.35, 0.20 + road * 0.55, 0.55 + road * 0.45);
+    neonFeedUniforms(mat.uniforms, (Number(now) || 0) / 1000);
     if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
-      // The drawing buffer is already in device pixels; r128's getDrawingBufferSize wants a Vector2
-      // and throws on a plain object, which is what an earlier version did once per frame.
+      // The drawing buffer is already in device pixels; r128's getDrawingBufferSize wants a
+      // Vector2 and throws on a plain object, which is what an earlier version did every frame.
       var el = renderer.domElement;
-      u.iResolution.value = shadertoyUvUniforms(Math.max(1, el.width), Math.max(1, el.height)).value;
+      mat.uniforms.iResolution.value = shadertoyUvUniforms(Math.max(1, el.width), Math.max(1, el.height)).value;
     }
   }
   var boost = neonStepCars((Number(now) || 0) / 1000, step);
