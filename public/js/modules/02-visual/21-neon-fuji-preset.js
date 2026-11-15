@@ -53,8 +53,11 @@ var NEON_TUNING_SCHEMA = {
   camHeight: { def: 1.0, min: -2, max: 6, kind: 'unit', rebuild: 'live' },
   camFov: { def: 52, min: 25, max: 90, kind: 'deg', rebuild: 'live' },
   // ---- our addition: the lyric cars
-  carSize: { def: 1.0, min: 0.2, max: 3, kind: 'ratio', rebuild: 'live' },
-  carRideHeight: { def: -0.12, min: -0.4, max: 0.4, kind: 'ratio', rebuild: 'live' },
+  carSize: { def: 0.10, min: 0.02, max: 0.4, kind: 'ratio', rebuild: 'live' },
+  carDepthNear: { def: 6, min: 1, max: 40, kind: 'unit', rebuild: 'live' },
+  carDrop: { def: 0.34, min: 0.05, max: 0.8, kind: 'ratio', rebuild: 'live' },
+  trailCount: { def: 5, min: 0, max: 12, kind: 'count', rebuild: 'live' },
+  trailGap: { def: 0.055, min: 0.01, max: 0.2, kind: 'ratio', rebuild: 'live' },
   trailLength: { def: 1.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
   trailOpacity: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lightBand: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
@@ -395,6 +398,142 @@ function neonLyricPalette() {
   return palette;
 }
 
+var NEON_TRAIL_MAX = 12;
+
+function neonMakeCar() {
+  var group = new THREE.Group();
+  var canvas = document.createElement('canvas');
+  canvas.width = 8; canvas.height = 8;
+  var tex = new THREE.CanvasTexture(canvas);
+  if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
+  var bodyMat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false, toneMapped: false,
+    blending: THREE.AdditiveBlending
+  });
+  var body = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bodyMat);
+  body.frustumCulled = false;
+  // The afterimage is the same text drawn a few steps behind, smaller and fainter: on a flat
+  // road every copy already sits on the same straight line, so no shader work is involved.
+  var trails = [];
+  for (var i = 0; i < NEON_TRAIL_MAX; i++) {
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0, depthWrite: false, toneMapped: false,
+      blending: THREE.AdditiveBlending
+    });
+    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    group.add(mesh);
+    trails.push({ mesh: mesh, mat: mat });
+  }
+  var bandMat = new THREE.MeshBasicMaterial({
+    color: 0xff4fd8, transparent: true, opacity: 0, depthWrite: false, toneMapped: false,
+    blending: THREE.AdditiveBlending
+  });
+  var band = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bandMat);
+  band.frustumCulled = false;
+  group.add(band);
+  group.add(body);
+  neonState.group.add(group);
+  return {
+    group: group, canvas: canvas, texture: tex, body: body, bodyMat: bodyMat,
+    trails: trails, band: band, bandMat: bandMat, text: '', aspect: 4
+  };
+}
+
+function neonRasterCar(car, text) {
+  if (!car || car.text === text) return;
+  car.text = text;
+  var pal = neonLyricPalette();
+  var px = 72;
+  var canvas = car.canvas;
+  var ctx = canvas.getContext('2d');
+  var font = '600 ' + px + 'px "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif';
+  ctx.font = font;
+  var width = Math.max(64, Math.ceil(ctx.measureText(text || ' ').width + px * 0.6));
+  var height = Math.ceil(px * 1.5);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+    ctx = canvas.getContext('2d');
+  }
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = pal.glow;
+  ctx.shadowBlur = px * 0.55;
+  ctx.fillStyle = pal.glow;
+  ctx.fillText(text || '', width / 2, height / 2);
+  ctx.shadowBlur = px * 0.18;
+  ctx.fillStyle = pal.main;
+  ctx.fillText(text || '', width / 2, height / 2);
+  car.texture.needsUpdate = true;
+  car.aspect = width / height;
+}
+
+// One point of the road, in screen terms: t = 0 sits on the horizon at zero size, t = 1 is the
+// standard size carDrop below it. Both the distance travelled and the scale are 1/depth, so a
+// single t drives position and size together - that is what makes the motion read as perspective
+// rather than as a sprite being tweened.
+function neonPlaceCar(car, t, opacityScale) {
+  var fov = Math.min(100, Math.max(20, neonParam('camFov')));
+  var tanHalf = Math.tan(fov * Math.PI / 360);
+  var near = Math.max(0.5, neonParam('carDepthNear'));
+  var tt = Math.min(1, Math.max(0.0005, t));
+  var d = Math.min(400, near / tt);
+  var horizon = neonParam('horizon');
+  var yNdc = horizon - neonParam('carDrop') * tt;
+  var worldH = Math.max(0.0001, neonParam('carSize') * tt * 2 * d * tanHalf);
+  var worldW = worldH * Math.max(1, car.aspect);
+  var yWorld = yNdc * d * tanHalf;
+  car.body.visible = true;
+  car.body.position.set(0, yWorld, -d);
+  car.body.scale.set(worldW, worldH, 1);
+  car.bodyMat.opacity = Math.min(1, 0.35 + 0.65 * opacityScale);
+  return { d: d, y: yWorld, w: worldW, h: worldH };
+}
+
+function neonStepCars(nowSec, dt) {
+  var lines = neonActiveLines();
+  while (neonState.cars.length < lines.length) neonState.cars.push(neonMakeCar());
+  while (neonState.cars.length > lines.length) {
+    var extra = neonState.cars.pop();
+    if (extra.texture) extra.texture.dispose();
+    neonState.group.remove(extra.group);
+  }
+  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
+  var kick = (typeof smoothBass !== 'undefined' && isFinite(smoothBass)) ? Number(smoothBass) : 0;
+  var boost = 1 + neonParam('beatKick') * (beat * 0.6 + kick * 0.4);
+  var trailCount = Math.min(NEON_TRAIL_MAX, Math.max(0, Math.round(neonParam('trailCount'))));
+  var trailGap = Math.max(0, neonParam('trailGap'));
+  var trailOpacity = Math.max(0, neonParam('trailOpacity'));
+  for (var i = 0; i < lines.length; i++) {
+    var car = neonState.cars[i];
+    var line = lines[i];
+    neonRasterCar(car, line.text);
+    var span = Math.max(0.2, line.end - line.start);
+    var t = neonClamp01((nowSec - line.start) / span);
+    var placed = neonPlaceCar(car, t, line.current ? 1 : 0.7);
+    // Band under the car: the light it drags over the road. Flashes with the beat.
+    car.band.position.set(0, placed.y - placed.h * 0.62, -placed.d);
+    car.band.scale.set(placed.w * 1.25, Math.max(0.001, placed.h * 0.10), 1);
+    car.bandMat.opacity = neonClamp01(neonParam('lightBand') * (0.25 + 0.75 * beat) * boost * 0.8);
+    car.bandMat.color.setRGB(1.0, 0.35, 0.85);
+    // The afterimages: same text, same line, earlier t. Their opacity falls off linearly.
+    for (var k = 0; k < NEON_TRAIL_MAX; k++) {
+      var slot = car.trails[k];
+      var tk = t - (k + 1) * trailGap;
+      if (k >= trailCount || tk <= 0.0005) { slot.mesh.visible = false; slot.mat.opacity = 0; continue; }
+      var tp = neonPlaceCar({ body: slot.mesh, bodyMat: slot.mat, aspect: car.aspect }, tk, 1);
+      slot.mesh.visible = true;
+      slot.mat.opacity = neonClamp01(trailOpacity * (1 - (k + 1) / (trailCount + 1)) * (0.6 + 0.4 * beat));
+      void tp;
+    }
+  }
+  return boost;
+}
+
 function neonMakeCar() {
   var group = new THREE.Group();
   var canvas = document.createElement('canvas');
@@ -537,8 +676,8 @@ function neonUpdateCamera() {
     camera.updateProjectionMatrix();
   }
   // The road's vanishing point is the origin; the eye sits a little above it and looks slightly down.
-  camera.position.set(0, neonParam('camHeight'), 6);
-  if (camera.lookAt) camera.lookAt(0, -0.15, -10);
+  camera.position.set(0, 0, 0);
+  if (camera.lookAt) camera.lookAt(0, 0, -10);
 }
 
 function neonStepCars(nowSec, dt) {
