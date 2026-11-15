@@ -1986,7 +1986,7 @@ function runRhythmMarketPresetCheck() {
   // chart that draws the playhead directly would have nothing to slow down.
   for (const [pattern, why] of [
     [/function marketStepClock\(dt, nowSec\)/, 'the display clock has to be its own step'],
-    [/marketState\.slowUntil = nowSec \+ marketParam\('hitHold'\)/, 'a beat point has to hold the display back for hitHold'],
+    [/marketState\.hold = gap \* marketClamp\(marketParam\('holdFrac'\)/, 'the pause has to be measured in beats: a fixed duration is the same number for every tempo'],
     [/var target = marketPlayheadCandles\(\)/, 'the data position must come from the playhead, never from the stretched clock'],
     [/1 - Math\.exp\(-step \/ Math\.max\(0\.005, tau\)\)/, 'the rate has to be eased exponentially in real dt, not stepped per frame'],
   ]) {
@@ -2009,8 +2009,11 @@ function runRhythmMarketPresetCheck() {
   if (/freeCamera\.locked/.test(guardLine)) {
     fail('the market must not yield to a pinned free camera: the ring and the black hole do not, and a pin is not an input');
   }
-  if (!/wallParallax/.test(presetText) || !/wallOverscan/.test(presetText)) {
-    fail('the backdrop has to be sized from the camera frustum, or it scrolls off the edge of the view');
+  if (!/wallOverscan/.test(presetText) || !/2 \* Math\.tan\(fov \* Math\.PI \/ 360\) \* depth/.test(presetText)) {
+    fail('the backdrop has to be sized from the nominal lens at its own depth, not from the camera ray: a ray-placed wall slides its texture whenever the view turns');
+  }
+  if (/camera\.getWorldDirection/.test(presetText.slice(presetText.indexOf('function marketPlaceWall'), presetText.indexOf('function updateStockMarket')))) {
+    fail('the wall must not be re-placed by the camera ray: that is what made the backdrop scroll when the view moved');
   }
   // r128 applies vColor only under USE_COLOR: instanceColor alone renders every candle white.
   if (!/vertexColors: true/.test(presetText) || !/marketWhiteVertexColors\(/.test(presetText)) {

@@ -118,6 +118,7 @@ function fakeCurve(count) {
 function fakeGroup() {
   return {
     children: [],
+    position: { x: 0, y: 0, z: 0 },
     add(o) { this.children.push(o); },
     remove(o) { const i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); }
   };
@@ -180,59 +181,83 @@ test('lag left by a hiccup is chased, never snapped to the latest candle', () =>
   assert.ok(state.rate > 1, 'the rate has to climb to repay the backlog');
 });
 
+test('the pause is measured in beats, and its speed follows the tempo too', () => {
+  reset({ shown: 98, lastPlayhead: 9.984 });
+  S.audio.currentTime = 10;
+  // Two grid points 0.7s apart: the gap is what the stall is measured against.
+  state.hitList = [{ time: 9.5, strength: 1 }, { time: 10.2, strength: 1 }];
+  state.hitIdx = 0;
+  state.hitSource = 'map';
+  S.marketStepClock(0.016, 1);
+  assert.equal(state.hits, 1, 'the beat point was not consumed');
+  assert.ok(Math.abs(state.lastHitGap - 0.7) < 1e-9, `the gap has to come from the beat list, got ${state.lastHitGap}`);
+  const hold = 0.7 * S.marketParam('holdFrac');
+  assert.ok(Math.abs(state.hold - hold) < 1e-9, `the hold must be holdFrac of the beat: ${state.hold} vs ${hold}`);
+  const slow = S.marketParam('pauseCandles') / (hold * state.series.candlesPerSec);
+  assert.ok(Math.abs(state.slowRate - slow) < 1e-9, `the creep speed must come from pauseCandles: ${state.slowRate} vs ${slow}`);
+
+  // A faster song: a shorter gap must give a shorter hold AND a faster creep for the same budget
+  // of candles - that is what "the speed is not fixed" means.
+  reset({ shown: 98, lastPlayhead: 9.984 });
+  S.audio.currentTime = 10;
+  state.hitList = [{ time: 9.5, strength: 1 }, { time: 9.85, strength: 1 }];
+  state.hitIdx = 0;
+  state.hitSource = 'map';
+  S.marketStepClock(0.016, 1);
+  assert.ok(state.hold < hold, `the faster song must hold for less time: ${state.hold} vs ${hold}`);
+  assert.ok(state.slowRate > slow, `the faster song must creep faster to spend the same candles: ${state.slowRate} vs ${slow}`);
+});
+
 test('a beat eases the rate down and back: the speed is continuous through the beat', () => {
   reset({ shown: 98, lastPlayhead: 9.984 });
   S.audio.currentTime = 10;
-  state.hitList = [{ time: 9.5, strength: 1 }];
+  state.hitList = [{ time: 9.5, strength: 1 }, { time: 10.2, strength: 1 }];
   state.hitIdx = 0;
   state.hitSource = 'map';
-  const hitSlow = S.marketParam('hitSlow');
   const maxRate = S.marketParam('maxRate');
-  assert.equal(hitSlow, 0.14, 'the default hitSlow moved; this test pinned 0.14');
-
   const rates = [];
-  S.marketStepClock(0.05, 1.00);
-  assert.equal(state.hits, 1, 'the beat point was not consumed');
+  S.marketStepClock(0.016, 1.00);
+  const slow = state.slowRate;
   rates.push(state.rate);
   assert.ok(state.rate < 1, `the rate did not start dropping: ${state.rate}`);
-  assert.ok(state.rate > hitSlow, `the rate dropped to hitSlow in one frame - that is the stutter, not an ease: ${state.rate}`);
+  assert.ok(state.rate > slow, `the rate dropped to the stall speed in one frame - that is the stutter, not an ease: ${state.rate}`);
   assert.ok(state.shown < 98.5, `the first slowed frame still moved ${state.shown - 98} candles`);
 
-  for (const now of [1.03, 1.06, 1.09]) {
-    S.marketStepClock(0.05, now);       // inside hitHold (0.10s from 1.00)
+  for (const now of [1.08, 1.16, 1.24]) {
+    S.marketStepClock(0.05, now);       // still inside the hold (1.00 + 0.525)
     rates.push(state.rate);
   }
-  assert.ok(state.rate < hitSlow + 0.12, `the rate never reached the stall: ${state.rate}`);
-  assert.ok(state.backlog > 0.5, `the backlog has to grow while the head is held: ${state.backlog}`);
+  assert.ok(state.rate < slow + 0.12, `the rate never reached the stall: ${state.rate} vs ${slow}`);
+  assert.ok(state.backlog > 0.3, `the backlog has to grow while the head is held: ${state.backlog}`);
 
-  for (const now of [1.14, 1.2, 1.3]) {
+  for (const now of [1.6, 1.8, 2.0]) {
     S.marketStepClock(0.05, now);
     rates.push(state.rate);
   }
-  assert.ok(state.rate > hitSlow, `the rate did not rebound: ${state.rate}`);
+  assert.ok(state.rate > slow, `the rate did not rebound: ${state.rate}`);
   assert.ok(state.rate <= maxRate + 1e-9, `the rate overshot maxRate: ${state.rate}`);
 
   for (let i = 1; i < rates.length; i++) {
     assert.ok(Math.abs(rates[i] - rates[i - 1]) < 0.6,
       `the rate jumped ${Math.abs(rates[i] - rates[i - 1]).toFixed(2)} in one frame: ${rates.map((r) => r.toFixed(2)).join(' ')}`);
   }
-  for (let i = 0; i < 400; i++) S.marketStepClock(0.05, 1.4 + i * 0.05);
+  for (let i = 0; i < 400; i++) S.marketStepClock(0.05, 2.2 + i * 0.05);
   assert.ok(Math.abs(state.shown - 100) < 1e-6, `the stall was never repaid: shown ${state.shown}, target 100`);
 });
 
-test('the rate stays inside [hitSlow, maxRate] on every step of a full catch-up', () => {
+test('the rate never leaves [0, maxRate] and never stalls the clock for good', () => {
   reset({ shown: 90, lastPlayhead: 9.984 });
   S.audio.currentTime = 10;
-  state.hitList = [{ time: 9, strength: 1 }, { time: 9.5, strength: 1 }];
+  state.hitList = [{ time: 9, strength: 1 }, { time: 9.4, strength: 1 }, { time: 9.8, strength: 1 }];
   state.hitIdx = 0;
   state.hitSource = 'map';
-  const lo = S.marketParam('hitSlow');
   const hi = S.marketParam('maxRate');
   for (let i = 0; i < 400; i++) {
     S.marketStepClock(0.05, 1 + i * 0.05);
-    assert.ok(state.rate >= lo - 1e-9, `rate ${state.rate} fell below hitSlow ${lo} at step ${i}`);
+    assert.ok(state.rate >= -1e-9, `rate went negative at step ${i}: ${state.rate}`);
     assert.ok(state.rate <= hi + 1e-9, `rate ${state.rate} passed maxRate ${hi} at step ${i}`);
   }
+  assert.ok(Math.abs(state.shown - 100) < 1e-6, `the head never caught up: ${state.shown}`);
 });
 
 test('seeking backwards makes the head land on the new playhead instead of running to it', () => {
@@ -560,21 +585,84 @@ test('the camera stands on +Z so the chart grows left to right on screen', () =>
   // A camera looking along -Z has world +X on its screen-right; from -Z (looking along +Z) the
   // same world axis lands on the left and the chart grows backwards.
   assert.ok(S.camera.position.z > 0, `the camera must be on the +Z side, got z=${S.camera.position.z}`);
-  assert.ok(S.camera.position.x > S.marketCandleX(12), 'camLead must put the lens past the head, toward the un-drawn future');
+  // Anchored, the chart slides under the lens: the head is pinned at world 0 and the group carries
+  // the negative offset, so the view never travels along the chart.
+  assert.ok(Math.abs(state.group.position.x + S.marketCandleX(12)) < 1e-6,
+    `the group must slide so the head sits at world 0, got ${state.group.position.x}`);
+  assert.ok(Math.abs(S.camera.position.x - S.marketParam('camLead')) < 1e-6,
+    `anchored, the lens sits camLead ahead of the head, got ${S.camera.position.x}`);
+  // Travelling mode puts the chart back and moves the lens. Unprimed, the pose lands whole.
+  S.marketTuning = { anchorView: 0 };
+  try {
+    S.marketCam.primed = false;
+    S.applyStockCameraPose(0.016);
+    assert.equal(state.group.position.x, 0, 'travelling must leave the chart where it is');
+    assert.ok(S.camera.position.x > S.marketCandleX(12), 'travelling must put the lens past the head');
+  } finally {
+    S.marketTuning = undefined;
+  }
   S.camera = undefined;
 });
 
-test('the wall sits behind the chart, on the far side from the camera', () => {
+test('the orbit cannot swing past the chart ends, and pitch does not invert with yaw', () => {
   reset({ shown: 0 });
-  state.wall = { position: new THREE.Vector3(), scale: new THREE.Vector3(1, 1, 1), visible: true };
-  state.wallTex = null;
+  S.camera = stubCamera();
+  S.freeCamera = undefined;
+  S.marketCam.blend = 1;
+  S.marketCam.primed = false;
+  S.marketCam.zoom = 1;
+  assert.equal(S.marketCameraScratch(), true);
+  const pos = new THREE.Vector3(), look = new THREE.Vector3();
+  const heightAt = (yaw, pitch) => {
+    S.marketCam.yaw = yaw;
+    S.marketCam.pitch = pitch;
+    S.marketCameraGoal(pos, look);
+    return pos.y;
+  };
+  const yawLimit = 0.62;
+  for (const pitch of [-0.6, 0.6]) {
+    const left = heightAt(-yawLimit, pitch);
+    const right = heightAt(yawLimit, pitch);
+    assert.ok(Math.abs(left - right) < 1e-9,
+      `the same pitch must put the eye at the same height on both sides: ${left} vs ${right}`);
+    assert.ok((pitch > 0) === (left > look.y), 'positive pitch must always lift the eye, not only on one side');
+  }
+  // And dragging past the limit does not spin: the pose stops changing.
+  const atLimit = heightAt(-yawLimit, 0);
+  const beyond = heightAt(-3.1, 0);
+  assert.ok(Math.abs(atLimit - beyond) < 1e-9, 'yaw past the limit must clamp, not wrap round');
+  S.camera = undefined;
+});
+
+test('the wall sits behind the chart and does not read the camera ray', () => {
+  reset({ shown: 30 });
+  state.wall = {
+    position: new THREE.Vector3(),
+    scale: new THREE.Vector3(1, 1, 1),
+    visible: true,
+    material: { color: { setRGB() {} }, opacity: 1 }
+  };
+  state.wallTex = { offset: { x: 0, y: 0, set(x, y) { this.x = x; this.y = y; } } };
+  S.marketCam.lookY = 1.5;
   S.camera = stubCamera({ x: 4, y: 1.6, z: 9 }, { x: 0, y: 0, z: 0 });
   S.marketPlaceWall();
   assert.equal(state.wall.position.z, -S.marketParam('wallDepth'),
     `the wall must be at -wallDepth, got ${state.wall.position.z}`);
-  assert.ok(state.wall.position.z < 0, 'the wall must be behind the chart from a +Z camera');
+  assert.ok(Math.abs(state.wall.position.x - S.marketCandleX(30)) < 1e-6,
+    `the wall belongs on the chart's axis, got x=${state.wall.position.x}`);
+  assert.ok(Math.abs(state.wall.position.y - 1.5) < 1e-6, 'the wall must ride with the look height');
+  assert.deepEqual([state.wallTex.offset.x, state.wallTex.offset.y], [0, 0],
+    'the texture must be nailed to the wall: a moving offset is the scrolling backdrop');
   assert.ok(state.wall.scale.x > 0 && state.wall.scale.y > 0, 'the wall must cover the frustum');
+  // Turning the view must not move the wall: it is placed from the chart, not from the lens.
+  const before = [state.wall.position.x, state.wall.position.y, state.wall.position.z, state.wall.scale.x];
+  S.camera.position.x = 40;
+  S.camera.position.y = 12;
+  S.marketPlaceWall();
+  assert.deepEqual([state.wall.position.x, state.wall.position.y, state.wall.position.z, state.wall.scale.x], before,
+    'moving the camera must not drag the backdrop along');
   state.wall = null;
+  state.wallTex = null;
   S.camera = undefined;
 });
 

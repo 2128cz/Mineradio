@@ -1248,8 +1248,8 @@
         <div class="fx-slider"><label>收盘曲线亮度</label><input id="fx-mkcurveOpacity" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('curveOpacity', this.value)"><output></output></div>
         <div class="fx-toggle" id="t-mkcolorFlip" onclick="toggleMarketTuning('colorFlip')"><span>绿涨红跌（海外习惯，关=红涨绿跌）</span><span class="dot"></span></div>
         <div class="fx-toggle" id="t-mkbeatSync" onclick="toggleMarketTuning('beatSync')"><span>按鼓点停盘</span><span class="dot"></span></div>
-        <div class="fx-slider"><label>停盘速度</label><input id="fx-mkhitSlow" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitSlow', this.value)"><output></output></div>
-        <div class="fx-slider"><label>停盘时长</label><input id="fx-mkhitHold" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('hitHold', this.value)"><output></output></div>
+        <div class="fx-slider"><label>停盘占比</label><input id="fx-mkholdFrac" type="range" min="0.1" max="1.2" step="0.01" oninput="setMarketTuning('holdFrac', this.value)"><output></output></div>
+        <div class="fx-slider"><label>停盘期间行走</label><input id="fx-mkpauseCandles" type="range" min="0.02" max="2" step="0.01" oninput="setMarketTuning('pauseCandles', this.value)"><output></output></div>
         <div class="fx-slider"><label>鼓点强度门槛</label><input id="fx-mkhitStrength" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('hitStrength', this.value)"><output></output></div>
         <div class="fx-slider"><label>回弹时间常数</label><input id="fx-mkreboundTau" type="range" min="0.02" max="2" step="0.01" oninput="setMarketTuning('reboundTau', this.value)"><output></output></div>
         <div class="fx-slider"><label>压速时间常数</label><input id="fx-mkhitAttack" type="range" min="0.01" max="0.4" step="0.01" oninput="setMarketTuning('hitAttack', this.value)"><output></output></div>
@@ -1259,6 +1259,7 @@
         <div class="fx-slider"><label>鼓点余震时长</label><input id="fx-mkhitDecay" type="range" min="0.04" max="0.6" step="0.01" oninput="setMarketTuning('hitDecay', this.value)"><output></output></div>
         <div class="fx-slider"><label>镜头抖动</label><input id="fx-mkcamShake" type="range" min="0" max="0.6" step="0.01" oninput="setMarketTuning('camShake', this.value)"><output></output></div>
         <div class="fx-slider"><label>背景闪光</label><input id="fx-mkwallFlash" type="range" min="0" max="2" step="0.05" oninput="setMarketTuning('wallFlash', this.value)"><output></output></div>
+        <div class="fx-toggle" id="t-mkanchorView" onclick="toggleMarketTuning('anchorView')"><span>固定镜头（图表从镜头下滑过，视角只上下移）</span><span class="dot"></span></div>
         <div class="fx-toggle" id="t-mkautoZoom" onclick="toggleMarketTuning('autoZoom')"><span>自动缩放（按 45% 可见高度取景）</span><span class="dot"></span></div>
         <div class="fx-slider"><label>取景占比</label><input id="fx-mkzoomFill" type="range" min="0.15" max="0.9" step="0.01" oninput="setMarketTuning('zoomFill', this.value)"><output></output></div>
         <div class="fx-toggle" id="t-mkcrashSpark" onclick="toggleMarketTuning('crashSpark')"><span>暴跌触地火花</span><span class="dot"></span></div>
@@ -1270,7 +1271,6 @@
         <div class="fx-slider"><label>棋盘格列数</label><input id="fx-mkwallCols" type="range" min="4" max="48" step="1" oninput="setMarketTuning('wallCols', this.value)"><output></output></div>
         <div class="fx-slider"><label>棋盘格行数</label><input id="fx-mkwallRows" type="range" min="2" max="32" step="1" oninput="setMarketTuning('wallRows', this.value)"><output></output></div>
         <div class="fx-slider"><label>墙面距离</label><input id="fx-mkwallDepth" type="range" min="6" max="120" step="1" oninput="setMarketTuning('wallDepth', this.value)"><output></output></div>
-        <div class="fx-slider"><label>墙面视差</label><input id="fx-mkwallParallax" type="range" min="0" max="3" step="0.05" oninput="setMarketTuning('wallParallax', this.value)"><output></output></div>
         <div class="fx-slider"><label>墙面过扫描</label><input id="fx-mkwallOverscan" type="range" min="1" max="2" step="0.01" oninput="setMarketTuning('wallOverscan', this.value)"><output></output></div>
         <div class="fx-slider"><label>墙面底色</label><input id="fx-mkwallBase" type="range" min="0" max="0.5" step="0.01" oninput="setMarketTuning('wallBase', this.value)"><output></output></div>
         <div class="fx-slider"><label>墙面对比</label><input id="fx-mkwallContrast" type="range" min="0" max="1" step="0.01" oninput="setMarketTuning('wallContrast', this.value)"><output></output></div>

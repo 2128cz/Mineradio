@@ -60,10 +60,13 @@ var MARKET_TUNING_SCHEMA = {
   energyGain: { def: 0.6, min: 0, max: 2, kind: 'ratio', rebuild: 'chart' },
   curveOpacity: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   colorFlip: { def: 0, min: 0, max: 1, kind: 'bool', rebuild: 'chart' },
-  // ---- the beat stretch. Only the display clock reads these.
+  // ---- the beat stretch. Only the display clock reads these. The pause is measured in BEATS,
+  // not seconds: holdFrac says how much of the gap to the next beat it lasts, pauseCandles says
+  // how far the head may creep in that time. A fixed duration and a fixed speed were the same
+  // number for every tempo, which is why the stall never sat on the music.
   beatSync: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  hitSlow: { def: 0.14, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  hitHold: { def: 0.10, min: 0, max: 0.6, kind: 'sec', rebuild: 'live' },
+  holdFrac: { def: 0.75, min: 0.1, max: 1.2, kind: 'ratio', rebuild: 'live' },
+  pauseCandles: { def: 0.35, min: 0.02, max: 2, kind: 'unit', rebuild: 'live' },
   hitStrength: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   reboundTau: { def: 0.22, min: 0.02, max: 2, kind: 'sec', rebuild: 'live' },
   // Pulling the rate down has to read as a stop inside hitHold; letting it go is reboundTau. Two
@@ -80,6 +83,9 @@ var MARKET_TUNING_SCHEMA = {
   wallFlash: { def: 0.5, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   // ---- the camera. camDamp is a time constant against REAL dt, never the stretched clock.
   camDamp: { def: 0.42, min: 0.02, max: 3, kind: 'sec', rebuild: 'live' },
+  // The chart slides under a fixed lens, so the view only moves vertically and the shelf beside
+  // it stays in frame. Off, the lens travels along the chart instead.
+  anchorView: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   // Auto zoom frames the recent swing to zoomFill of the visible height, so a quiet passage is
   // not a flat line at the far end of the lens. The wheel still scales on top of it.
   autoZoom: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
@@ -94,7 +100,6 @@ var MARKET_TUNING_SCHEMA = {
   wallCols: { def: 20, min: 4, max: 48, kind: 'count', rebuild: 'wall' },
   wallRows: { def: 10, min: 2, max: 32, kind: 'count', rebuild: 'wall' },
   wallDepth: { def: 26, min: 6, max: 120, kind: 'unit', rebuild: 'live' },
-  wallParallax: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   wallOverscan: { def: 1.25, min: 1, max: 2, kind: 'ratio', rebuild: 'live' },
   wallBase: { def: 0.10, min: 0, max: 0.5, kind: 'ratio', rebuild: 'wall' },
   wallContrast: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'wall' },
@@ -121,6 +126,7 @@ var marketState = {
   energyRef: 0.05, group: null, bodies: null, wicks: null, curve: null,
   wall: null, wallTex: null, wallCanvas: null, icons: [], iconSource: '',
   hitList: [], hitIdx: 0, hitSource: '', hits: 0, snaps: 0, backlog: 0,
+  lastHitGap: 0, hold: 0, slowRate: 0.14,
   lastCostMs: 0, frames: 0, error: '', errorToast: '', failedKey: '', failedSignature: '', coverKey: '',
   wallFlash: 0, zoomDist: 0, zoomRange: 0, sparks: null, lastStep: 0.016
 };
@@ -477,8 +483,6 @@ function marketBuildScene() {
   wall.renderOrder = -10;
   marketState.wall = wall;
   group.add(wall);
-  marketState.wallDrift = 0;
-  marketState.wallLastX = null;
   marketBuildChart();
   marketBuildSparks();
   marketState.built = true;
@@ -712,7 +716,6 @@ function marketUpdateZoom() {
   if (!(marketState.zoomDist > 0)) marketState.zoomDist = want;
   var k = 1 - Math.exp(-marketState.lastStep / Math.max(0.05, marketParam('camDamp')));
   marketState.zoomDist += (want - marketState.zoomDist) * k;
-  marketCam.dist = marketState.zoomDist;
 }
 
 // ---------------------------------------------------------------- the crash sparks
@@ -875,7 +878,9 @@ function marketConsumeHit(nowSec) {
   if (marketState.hitSource === 'live') {
     var flag = typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag;
     if (flag && nowSec - (marketState.lastLiveHit || -10) >= 0.18) {
+      var gapNow = nowSec - (marketState.lastLiveHit || nowSec - 0.5);
       marketState.lastLiveHit = nowSec;
+      if (gapNow > 0.08) marketState.lastHitGap = gapNow;
       return Math.max(marketParam('hitStrength'), 0.6);
     }
     return 0;
@@ -884,7 +889,11 @@ function marketConsumeHit(nowSec) {
   var t = marketPlayheadSeconds();
   var best = 0;
   while (marketState.hitIdx < list.length && list[marketState.hitIdx].time <= t) {
-    var e = list[marketState.hitIdx++];
+    var e = list[marketState.hitIdx];
+    // The pause is measured against the music's own clock: how long it is until the next beat.
+    var next = list[marketState.hitIdx + 1];
+    if (next && next.time > e.time) marketState.lastHitGap = next.time - e.time;
+    marketState.hitIdx++;
     if (e.strength >= marketParam('hitStrength')) best = Math.max(best, e.strength);
   }
   return best;
@@ -929,7 +938,14 @@ function marketStepClock(dt, nowSec) {
   if (marketParam('beatSync') > 0.5) {
     var hit = marketConsumeHit(nowSec);
     if (hit > 0) {
-      marketState.slowUntil = nowSec + marketParam('hitHold');
+      // Hold for a fraction of the gap to the next beat, and let the head creep a fixed number of
+      // candles in that time - so the stall's length AND its speed both come from the tempo
+      // instead of being one constant for every song.
+      var gap = marketClamp(marketState.lastHitGap > 0 ? marketState.lastHitGap : 0.5, 0.12, 2.5);
+      marketState.hold = gap * marketClamp(marketParam('holdFrac'), 0.05, 1.2);
+      var creep = marketParam('pauseCandles') / Math.max(0.03, marketState.hold * s.candlesPerSec);
+      marketState.slowRate = marketClamp(creep, 0.02, 1);
+      marketState.slowUntil = nowSec + marketState.hold;
       marketState.hits++;
       // The same hit kicks the camera and lights the wall: one event, three surfaces.
       marketCam.shake = Math.min(1, marketParam('camShake')) * marketClamp(hit, 0.2, 1);
@@ -940,7 +956,7 @@ function marketStepClock(dt, nowSec) {
   marketState.backlog = backlog;
   var holding = nowSec < marketState.slowUntil;
   var goal = holding
-    ? marketParam('hitSlow')
+    ? marketState.slowRate
     : Math.min(marketParam('maxRate'), 1 + marketParam('catchGain') * backlog);
   // Two time constants, not one: pulling the rate down has to read as a stop within hitHold, and
   // letting it go has to read as a catch-up. Easing both keeps the speed continuous.
@@ -953,39 +969,28 @@ function marketStepClock(dt, nowSec) {
 
 // ---------------------------------------------------------------- the backdrop placement
 
+// The wall is a backdrop, not a quad glued to the lens. It stands on the chart's own axis (at the
+// head, at -wallDepth) and is sized from the nominal lens at that depth, so nothing here reads the
+// camera's ray: turning the view slides no pattern, it just shows the wall in perspective. The
+// margin covers the orbit's swing without letting the plane's edge come into frame.
 function marketPlaceWall() {
   var wall = marketState.wall;
   if (!wall || typeof camera === 'undefined' || !camera) return;
-  // The wall sits behind the chart from the camera's side, so its plane is at -wallDepth: the
-  // camera is on +Z looking toward -Z, the chart is at z=0 and the wall is further behind it.
-  var depth = -Math.max(1, marketParam('wallDepth'));
-  if (!marketCandleScratch()) return;
-  var dir = marketScratchPos;
-  camera.getWorldDirection(dir);
-  var t = Math.abs(dir.z) > 1e-4 ? (depth - camera.position.z) / dir.z : -depth;
-  if (!(t > 0.5)) t = -depth;
-  var cx = camera.position.x + dir.x * t;
-  var cy = camera.position.y + dir.y * t;
-  var over = marketParam('wallOverscan');
-  var h = 2 * Math.tan(camera.fov * Math.PI / 360) * t * over;
+  var depth = Math.max(1, marketParam('wallDepth'));
+  var over = marketParam('wallOverscan') * 1.7;
+  var fov = marketClamp(marketParam('fovDeg'), 20, 100);
+  var h = 2 * Math.tan(fov * Math.PI / 360) * depth * over;
   var aspect = camera.aspect || ((typeof renderer !== 'undefined' && renderer && renderer.domElement)
     ? renderer.domElement.clientWidth / Math.max(1, renderer.domElement.clientHeight) : 1.777);
   var w = Math.max(0.001, h * aspect);
-  wall.position.set(cx, cy, depth);
+  // A child of the chart group, positioned at the head in world terms: the group's own slide is
+  // cancelled here, so the wall rides with the chart and never with the lens.
+  wall.position.set(marketCandleX(marketState.shown), marketCam.lookY, -depth);
   wall.scale.set(w, h, 1);
   var tex = marketState.wallTex;
   if (!tex) return;
-  // The plane spans w world units, so a texture offset of cx/w nails the pattern to world X.
-  // The drift term cancels part of that anchoring: parallax 1 is a wall fixed in the world,
-  // 0 is a wall glued to the lens, and the cell size stays wallCols across the view either way.
-  var parallax = marketParam('wallParallax');
-  if (marketState.wallLastX === null || marketState.wallLastX === undefined) {
-    marketState.wallDrift = 0;
-  } else {
-    marketState.wallDrift -= (1 - parallax) * (cx - marketState.wallLastX) / w;
-  }
-  marketState.wallLastX = cx;
-  tex.offset.set(cx / w + (marketState.wallDrift || 0), cy / h);
+  // One fixed anchor: the pattern belongs to the wall, not to the view.
+  tex.offset.set(0, 0);
 }
 
 // ---------------------------------------------------------------- the frame entry
@@ -1032,28 +1037,43 @@ function marketCameraScratch() {
   return true;
 }
 
-// The follow pose before damping. The growing head is the look target; camLead slides it ahead
-// of the lens so the un-drawn future is on screen, camHeight lifts the eye off the price axis,
-// and camDist puts the camera on the +Z side of the chart. The side matters: a camera looking
-// along +Z has its screen-right along world -X, which would make the chart grow right to left.
-// From +Z the chart's +X is screen-right, so the candles march left to right like a price series.
+// How far the view may swing sideways. A stock chart reads left to right from one side; letting
+// the orbit go past the chart's ends turns it into a spinning line and inverts the vertical drag,
+// which is exactly what it used to do at the far side. The backdrop is sized for this swing.
+var MARKET_ORBIT_YAW = 0.62;
+
+// The follow pose before damping. Two placements, one pose:
+//
+//  - anchored (default): the chart slides under a fixed lens. The head is pinned at x = 0, the
+//    group carries -candleX(shown), so the camera only ever moves vertically and the song shelf
+//    beside it stays in frame.
+//  - travelling: the lens moves along a chart that stays put.
+//
+// The camera sits on a plain spherical orbit around the head: yaw turns it left/right around
+// world +Y, pitch lifts it, and neither depends on the other, so dragging down raises the eye by
+// the same amount on both sides. camLead is applied to the look target, which frames the head left
+// of centre so the un-drawn future is on screen.
 function marketCameraGoal(pos, look) {
   var at = marketState.shown;
-  look.set(marketCandleX(at), marketCurveY(at), 0);
-  var yaw = marketCam.yaw;
-  var pitch = marketClamp(marketCam.pitch, -1.35, 1.35);
+  var anchor = marketParam('anchorView') > 0.5;
+  if (marketState.group) marketState.group.position.x = anchor ? -marketCandleX(at) : 0;
+  var headX = anchor ? 0 : marketCandleX(at);
+  look.set(headX, marketCurveY(at), 0);
+  var yaw = marketClamp(marketCam.yaw, -MARKET_ORBIT_YAW, MARKET_ORBIT_YAW);
+  var pitch = marketClamp(marketCam.pitch, -1.2, 1.2);
   var zoom = marketClamp(marketCam.zoom, 0.25, 4);
   var dist = marketParam('camDist') * zoom;
   // Auto zoom puts the recent swing at zoomFill of the visible height; the wheel still scales on
   // top of it, so the framing can be nudged without turning the auto framing off.
   if (marketParam('autoZoom') > 0.5 && marketState.zoomDist > 0) dist = marketState.zoomDist * zoom;
-  var lead = marketParam('camLead');
+  var pivotX = headX + marketParam('camLead');
   var height = marketParam('camHeight') * zoom;
-  var cy = Math.cos(yaw), sy = Math.sin(yaw);
-  var ox = lead * cy + dist * sy;
-  var oz = -lead * sy + dist * cy;
   var cp = Math.cos(pitch), sp = Math.sin(pitch);
-  pos.set(look.x + ox, look.y + height * cp - oz * sp, look.z + height * sp + oz * cp);
+  pos.set(
+    pivotX + dist * cp * Math.sin(yaw),
+    look.y + height + dist * sp,
+    dist * cp * Math.cos(yaw)
+  );
 }
 
 function applyStockCameraPose(dt) {
@@ -1152,8 +1172,8 @@ function marketOnPointerMove(ev) {
   var dy = ev.clientY - marketCam.lastY;
   marketCam.lastX = ev.clientX;
   marketCam.lastY = ev.clientY;
-  marketCam.yaw = marketClamp(marketCam.yaw - dx * 0.005, -Math.PI, Math.PI);
-  marketCam.pitch = marketClamp(marketCam.pitch + dy * 0.004, -1.35, 1.35);
+  marketCam.yaw = marketClamp(marketCam.yaw - dx * 0.005, -MARKET_ORBIT_YAW, MARKET_ORBIT_YAW);
+  marketCam.pitch = marketClamp(marketCam.pitch + dy * 0.004, -1.2, 1.2);
   if (typeof markRenderInteraction === 'function') markRenderInteraction('market-drag', 900);
 }
 
@@ -1230,7 +1250,7 @@ function marketStatus() {
       cells: marketState.wallCells || 0,
       iconPx: marketState.iconPx || 0,
       iconSource: marketState.iconSource,
-      drift: Math.round((marketState.wallDrift || 0) * 1000) / 1000,
+      z: marketState.wall ? Math.round(marketState.wall.position.z * 100) / 100 : null,
       size: marketState.wall ? [Math.round(marketState.wall.scale.x * 100) / 100, Math.round(marketState.wall.scale.y * 100) / 100] : null
     },
     series: (typeof marketSeriesStatus === 'function') ? marketSeriesStatus() : null
