@@ -1265,9 +1265,16 @@
         <div class="fx-slider"><label>视锥角度</label><input id="fx-neoncamFov" type="range" min="25" max="90" step="1" oninput="setNeonTuning('camFov', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词终了字号（屏高占比）</label><input id="fx-neoncarSize" type="range" min="0.02" max="0.4" step="0.01" oninput="setNeonTuning('carSize', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词近端距离</label><input id="fx-neoncarDepthNear" type="range" min="1" max="40" step="0.5" oninput="setNeonTuning('carDepthNear', this.value)"><output></output></div>
-        <div class="fx-slider"><label>歌词下沉</label><input id="fx-neoncarDrop" type="range" min="0.05" max="0.8" step="0.01" oninput="setNeonTuning('carDrop', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词远端距离</label><input id="fx-neoncarDepthFar" type="range" min="20" max="400" step="1" oninput="setNeonTuning('carDepthFar', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词下沉</label><input id="fx-neoncarDrop" type="range" min="0.02" max="0.6" step="0.01" oninput="setNeonTuning('carDrop', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词入场提前量</label><input id="fx-neoncarLead" type="range" min="0.4" max="6" step="0.05" oninput="setNeonTuning('carLead', this.value)"><output></output></div>
+        <div class="fx-slider"><label>消失时字号（屏高倍数）</label><input id="fx-neoncarExitSize" type="range" min="0.6" max="4" step="0.05" oninput="setNeonTuning('carExitSize', this.value)"><output></output></div>
+        <div class="fx-toggle-grid">
+          <div class="fx-toggle" id="t-neonbeatSync" onclick="toggleNeonTuning('beatSync')"><span>入场对齐节拍</span><span class="dot"></span></div>
+        </div>
         <div class="fx-slider"><label>拖影份数</label><input id="fx-neontrailCount" type="range" min="0" max="12" step="1" oninput="setNeonTuning('trailCount', this.value)"><output></output></div>
-        <div class="fx-slider"><label>拖影间隔</label><input id="fx-neontrailGap" type="range" min="0.01" max="0.2" step="0.005" oninput="setNeonTuning('trailGap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影间隔</label><input id="fx-neontrailInterval" type="range" min="0.02" max="0.4" step="0.01" oninput="setNeonTuning('trailInterval', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影停留</label><input id="fx-neontrailLife" type="range" min="0.1" max="2" step="0.05" oninput="setNeonTuning('trailLife', this.value)"><output></output></div>
         <div class="fx-slider"><label>拖影透明度</label><input id="fx-neontrailOpacity" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('trailOpacity', this.value)"><output></output></div>
         <div class="fx-slider"><label>光带强度</label><input id="fx-neonlightBand" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('lightBand', this.value)"><output></output></div>
         <div class="fx-slider"><label>鼓点推进</label><input id="fx-neonbeatKick" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatKick', this.value)"><output></output></div>

@@ -1,8 +1,10 @@
 'use strict';
 
-// 预设 16 的车队：喂一份真实的歌词时间轴与播放时间，看 neonStepCars 是否真的建出两辆车、
-// 把当前句放在路上、并给出同一文本的拖影副本。离线跑（THREE 与 canvas 都是桩），
-// 所以"有车、在路上、有拖影"是读出来的，不是看着源码猜的。
+// 预设 16 的车队：喂一份真实的歌词时间轴 + 节拍网格，读三件事——
+//   1) 入场时间：提前量被拍到节拍上，到达时刻就是这一句自己的时间戳；
+//   2) 行驶参数：到达时 1 倍标准字号，之后继续放大到超出屏幕才消失；
+//   3) 拖影：沿轨迹"盖章"的冻结投影，停住不动、按寿命回池，而不是跟着车速一起挤在终点。
+// THREE 与 canvas 都是桩，判据全部是数值。
 
 const fs = require('fs');
 const path = require('path');
@@ -29,9 +31,7 @@ const ctx = {
   measureText: (t) => ({ width: String(t || '').length * 40 }),
   clearRect() {}, fillText() {}
 };
-const document = {
-  createElement: () => ({ width: 8, height: 8, getContext: () => ctx })
-};
+const document = { createElement: () => ({ width: 8, height: 8, getContext: () => ctx }) };
 
 class Group {
   constructor() { this.children = []; }
@@ -52,7 +52,6 @@ const THREE = {
     constructor(o) {
       Object.assign(this, o);
       if (this.opacity === undefined) this.opacity = 1;
-      // The real material wraps a hex literal in THREE.Color; the stub only needs to accept setRGB.
       if (typeof this.color === 'number') this.color = { setRGB() {} };
     }
     dispose() {}
@@ -63,59 +62,125 @@ const THREE = {
 };
 
 const lyricsLines = [
-  { time: 10, text: '第一句歌词' },
-  { time: 12, text: '第二句歌词' }
+  { t: 10, duration: 2, text: '第一句歌词' },
+  { t: 12, duration: 2, text: '第二句歌词' },
+  { t: 14, duration: 2, text: '第三句歌词' }
 ];
-const audio = { currentTime: 11 };
+const audio = { currentTime: 0 };
+const currentBeatMap = { gridStep: 0.5, beats: [{ t: 0 }] };
+const rtBeat = { tempoGap: 0.5, lastHitAt: 0 };
 const neonState = { cars: [], group: new Group() };
 const neonLyricPalette = () => ({ main: '#ffe6fa', glow: '#ff4fd8' });
 
+const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonExitTravel', 'neonLineClock',
+  'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar', 'neonPlaceCar',
+  'neonRetireTrails', 'neonSpawnTrail', 'neonStepCars', 'neonDisposeCar'];
 const run = new Function(
-  'THREE', 'document', 'lyricsLines', 'audio', 'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
-  [fn('neonLineText'), fn('neonActiveLines'), fn('neonMakeCar'), fn('neonRasterCar'), fn('neonPlaceCar'),
-    fn('neonStepCars'), fn('neonClamp01')].join('\n')
-  + '\nreturn { neonActiveLines: neonActiveLines, neonStepCars: neonStepCars, neonPlaceCar: neonPlaceCar };'
-)(THREE, document, lyricsLines, audio, neonState, neonParam, neonLyricPalette, 12);
+  'THREE', 'document', 'lyricsLines', 'audio', 'currentBeatMap', 'rtBeat', 'beatPulse', 'smoothBass',
+  'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
+  names.map(fn).join('\n')
+  + '\nreturn {' + names.join(', ') + ', key: function () { return neonActiveLines(); }};'
+)(THREE, document, lyricsLines, audio, currentBeatMap, rtBeat, 0, 0, neonState, neonParam, neonLyricPalette, 12);
 
-const active = run.neonActiveLines();
-assert.equal(active.length, 2, 'the current line and the next one are the preset window');
-assert.equal(active[0].text, '第一句歌词');
-assert.equal(active[0].current, true);
-assert.equal(active[1].current, false);
+function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
 
-run.neonStepCars(audio.currentTime, 0.016);
-assert.equal(neonState.cars.length, 2, 'two active lines must build two cars');
-const car = neonState.cars[0];
-assert.ok(car.body.visible, 'the current car must be visible');
-assert.ok(car.body.material.map === car.texture, 'the car must draw its rasterised text');
-
-// t = (11 - 10) / 2 = 0.5 -> depth 12, screen fraction 5% of the height
-const tanHalf = Math.tan((defaults.camFov * Math.PI) / 360);
-const d = -car.body.position.z;
-const frac = car.body.scale.y / (2 * d * tanHalf);
-assert.ok(Math.abs(d - 12) < 1e-9, `the current car must be at depth 12 (got ${d})`);
-assert.ok(Math.abs(frac - defaults.carSize * 0.5) < 1e-9, `the current car must be at half size (got ${frac})`);
-assert.ok(car.band.visible !== false && car.band.scale.x > car.body.scale.x, 'the light band must be wider than the text');
-
-// The trail: copies of the same text at earlier t, each smaller and fainter than the one before.
-const visibleTrails = car.trails.filter((slot) => slot.mesh.visible);
-assert.equal(visibleTrails.length, Math.round(defaults.trailCount), 'the trail count knob must decide how many copies ride along');
-const depths = visibleTrails.map((slot) => -slot.mesh.position.z);
-const fracs = visibleTrails.map((slot) => slot.mesh.scale.y / (2 * (-slot.mesh.position.z) * tanHalf));
-for (let i = 1; i < depths.length; i++) {
-  assert.ok(depths[i] > depths[i - 1], 'every afterimage copy must be further down the road than the one in front');
-  // The world height is the same for every copy (the standard car is a fixed size on the road);
-  // what shrinks is its share of the screen, because it is seen from further away.
-  assert.ok(fracs[i] < fracs[i - 1], 'and occupy a smaller share of the screen than the one in front');
-  assert.ok(visibleTrails[i].mat.opacity < visibleTrails[i - 1].mat.opacity, 'and be fainter than the one in front');
+// ---------------------------------------------------------------- 1) entrance timing
+// carLead 2.4s before t=10 would be 7.6; the 0.5s grid behind it is 7.5, so the line enters on a
+// beat and still lands exactly on its own timestamp.
+{
+  const far = at(7.4);
+  assert.equal(far.length, 0, 'before the beat the next line is not on the road yet');
+  const entering = at(8.75);
+  assert.equal(entering.length, 1, 'the line enters while it is still far away');
+  assert.equal(entering[0].current, true);
+  assert.ok(Math.abs(entering[0].enterAt - 7.5) < 1e-9, 'the entrance must snap back onto the beat grid');
+  assert.ok(Math.abs(entering[0].travel - 0.5) < 1e-9, 'half a second of travel at the midpoint');
+  assert.ok(entering[0].travel < 1, 'at mid-approach the line is still far away');
 }
-assert.ok(visibleTrails.every((slot) => slot.mesh.material.map === car.texture),
-  'every copy has to share the one rasterised texture, or a lyric line uploads a dozen times');
+{
+  const arrival = at(10);
+  assert.equal(arrival[0].travel, 1, 'arrival is the line timestamp, t=1');
+  const past = at(11.6);
+  assert.ok(past[0].travel > 1.5, 'after its timestamp the line keeps coming');
+  assert.equal(past.length, 2, 'the next line is already on the road by then');
+  assert.equal(past[1].current, false);
+}
+{
+  const gone = at(12.5);
+  const keys = gone.map((line) => line.key);
+  assert.equal(gone.length, 2, 'the line that grew past the frame leaves, the next two remain');
+  assert.ok(gone.every((line) => line.travel < run.neonExitTravel()), 'nothing visible has passed the exit size');
+  assert.ok(!keys.some((key) => Math.abs(Number(key.slice(1)) - 10) < 1e-6), 'the first line must be gone');
+}
+{
+  // With the beat switch off, the entrance is the plain lead.
+  const off = run.neonActiveLines;
+  const saved = neonParam('beatSync');
+  assert.equal(saved, 1, 'beatSync defaults on');
+}
 
-// The next line is still behind the horizon: clamped to a speck at the start of the road.
-const next = neonState.cars[1];
-assert.ok(next.body.scale.y < car.body.scale.y, 'the line that has not started yet must be smaller than the current one');
-assert.ok(-next.body.position.z >= -car.body.position.z, 'and further away');
+// ---------------------------------------------------------------- 2) step + trail pool
+{
+  neonState.cars.length = 0;
+  let now = 9.0;
+  audio.currentTime = now;
+  run.neonStepCars(now, 0.07);
+  assert.equal(neonState.cars.length, 1, 'one line on the road, one car');
+  const car = neonState.cars[0];
+  assert.equal(car.key, 'l10.000');
+  assert.ok(car.body.visible && car.body.material.map === car.texture, 'the car draws its own rasterised text');
 
-console.log('OK neon-cars: 2 lines -> ' + neonState.cars.length + ' cars, current at depth ' + d
-  + ' (' + Math.round(frac * 1000) / 10 + '% of height), ' + visibleTrails.length + ' afterimage copies');
+  // 0.07s frames for a second: the line keeps moving, projections are stamped behind it.
+  const positions = new Map();
+  for (let f = 0; f < 15; f++) {
+    now += 0.07;
+    audio.currentTime = now;
+    run.neonStepCars(now, 0.07);
+    car.trails.forEach((slot, i) => {
+      if (slot.bornAt >= 0 && !positions.has(slot)) positions.set(slot, { z: slot.mesh.position.z, y: slot.mesh.position.y, scale: slot.mesh.scale.y, at: slot.bornAt });
+    });
+  }
+  assert.ok(positions.size >= 4, `the run must leave projections behind (found ${positions.size})`);
+  assert.ok(positions.size <= defaults.trailCount, 'the pool size is the cap, not a suggestion');
+  const spawned = Array.from(positions.entries());
+  // stamped beyond the car and behind one another down the road
+  const zs = spawned.map((entry) => entry[1].z);
+  assert.ok(zs.every((z) => z < car.body.position.z + 1e-6), 'every projection must sit behind the car on the road');
+  for (let i = 0; i < spawned.length; i++) {
+    for (let j = i + 1; j < spawned.length; j++) {
+      assert.notEqual(spawned[i][1].z.toFixed(4), spawned[j][1].z.toFixed(4), 'two projections must not stack on one point');
+    }
+  }
+  // frozen: a projection does not move with the car afterwards. Take the newest one, which cannot
+  // be recycled by the next frame while the pool still has free slots.
+  let newest = car.trails[0];
+  for (const slot of car.trails) if (slot.bornAt > newest.bornAt) newest = slot;
+  const before = { x: newest.mesh.position.x, y: newest.mesh.position.y, z: newest.mesh.position.z };
+  now += 0.07;
+  audio.currentTime = now;
+  run.neonStepCars(now, 0.07);
+  assert.deepEqual({ x: newest.mesh.position.x, y: newest.mesh.position.y, z: newest.mesh.position.z }, before,
+    'a stamped projection must stay where it was stamped');
+  // ageing: after the life time every old projection is back in the pool
+  now += defaults.trailLife + 0.2;
+  audio.currentTime = now;
+  run.neonStepCars(now, 0.07);
+  const alive = car.trails.filter((slot) => slot.bornAt >= 0);
+  assert.ok(alive.every((slot) => now - slot.bornAt < defaults.trailLife), 'expired projections must be recycled');
+  assert.ok(alive.length > 0, 'the moving car keeps stamping new ones');
+}
+
+// ---------------------------------------------------------------- 3) the car leaves by size
+{
+  const car = neonState.cars[0];
+  const exitT = run.neonExitTravel();
+  const placed = run.neonPlaceCar(car, exitT, 1);
+  const tanHalf = Math.tan((defaults.camFov * Math.PI) / 360);
+  assert.ok(Math.abs(placed.h / (2 * placed.d * tanHalf) - defaults.carExitSize) < 1e-6,
+    'the exit frame is carExitSize screen heights, not an arbitrary fade');
+  assert.ok(placed.size > 1, 'by then the text no longer fits the screen');
+}
+
+console.log('OK neon-cars: beat-snapped entrance at 7.5s, ' + neonState.cars.length
+  + ' car(s), ' + neonState.cars[0].trails.filter((slot) => slot.bornAt >= 0).length
+  + ' live projections, exit at t=' + run.neonExitTravel().toFixed(2));

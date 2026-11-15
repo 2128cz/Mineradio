@@ -1980,23 +1980,32 @@ function runNeonFujiPresetCheck() {
     [/sunStripes: \{ def: 100,/, 'the stripe count must default to the reference 100'],
     [/fujiWidth: \{ def: 1\.75,/, 'the mountain width must default to the reference 1.75'],
     [/cloudWidth: \{ def: 0\.075,/, 'the cloud width must default to the reference 0.075'],
+    [/carLead: \{ def: 2\.4,/, 'the car lead has to exist and default to a visible approach'],
+    [/beatSync: \{ def: 1,/, 'the beat-synced entrance has to default on'],
   ]) {
     if (!literal.test(text)) fail(why);
   }
-  // The lyrics ride the road: one t drives both the distance and the screen size, so the motion
-  // reads as perspective; and the afterimage is copies of the same text, not a shader smear.
+  // The lyrics ride the road: one t drives the distance and the screen size, the entrance is
+  // snapped onto the beat, and the afterimage is a pool of frozen projections rather than copies
+  // that keep following the car (those collapsed into a pile at the end of the road).
   for (const [pattern, why] of [
-    [/var d = Math\.min\(400, near \/ tt\);/, 'the car distance has to be 1/t'],
-    [/neonParam\('carSize'\) \* tt \* 2 \* d \* tanHalf/, 'the car size has to be 1/depth, so it grows from zero at the horizon'],
-    [/car\.body\.position\.set\(0, yWorld, -d\);/, 'the car has to be placed on the road by that depth'],
-    [/var tk = t - \(k \+ 1\) \* trailGap;/, 'the afterimage has to be earlier points on the same road'],
-    [/\(car\.trails \|\| \[\]\)\.forEach\(/, 'leaving the preset has to dispose the afterimage copies'],
+    [/function neonBeatGrid\(/, 'the entrance has to read the song tempo, not a fixed offset'],
+    [/function neonEntranceAt\(startAt, lead, grid\)/, 'the entrance time has to be its own function, so a beat snap is testable'],
+    [/Math\.floor\(\(enterAt - grid\.origin\) \/ grid\.step\) \* grid\.step/, 'the entrance has to snap back onto the beat grid'],
+    [/var t = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the line timestamp'],
+    [/var d = Math\.max\(near \* 0\.02, near \* Math\.pow\(ratio, 1 - tt\)\);/, 'the run has to be exponential in t so it keeps coming past the near plane'],
+    [/var size = neonParam\('carSize'\) \* \(near \/ d\);/, 'the screen size has to stay 1/depth'],
+    [/neonParam\('carExitSize'\)/, 'the exit has to be decided by size, not by sliding off the bottom'],
+    [/slot\.bornAt = nowSec;/, 'each afterimage has to be stamped at the moment it is spawned'],
+    [/slot\.mesh\.position\.set\(car\.body\.position\.x, car\.body\.position\.y, car\.body\.position\.z\);/, 'a stamped afterimage has to keep its position'],
+    [/age >= trailLife/, 'an afterimage has to go back to the pool when its life is over'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
   // One declaration each. The linear-depth set once shadowed the perspective one, so the shipped
   // function was not the one the bench and the probes were reading; a duplicate must fail here.
-  for (const name of ['neonMakeCar', 'neonRasterCar', 'neonStepCars', 'neonPlaceCar', 'neonDisposeScene']) {
+  for (const name of ['neonMakeCar', 'neonRasterCar', 'neonStepCars', 'neonPlaceCar', 'neonDisposeScene',
+    'neonDisposeCar', 'neonActiveLines', 'neonBeatGrid', 'neonEntranceAt', 'neonSpawnTrail']) {
     const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
     if (count !== 1) fail(`${name} must be declared exactly once (found ${count}): the later declaration wins and the earlier one is dead`);
   }
@@ -2008,8 +2017,8 @@ function runNeonFujiPresetCheck() {
   for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
     if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the neon layer must take ${layer} over: only one render stream may output`);
   }
-  if (!/cars: neonState\.cars\.length/.test(text) || !/frames: neonState\.frames/.test(text)) {
-    fail('neonStatus() must report the cars and frames, or the preset cannot be read back live');
+  if (!/cars: neonState\.cars\.length/.test(text) || !/frames: neonState\.frames/.test(text) || !/trails: trails/.test(text)) {
+    fail('neonStatus() must report the cars, the live projections and the frames, or the preset cannot be read back live');
   }
   // Knobs: one row per schema entry, each in a .fx-slider row (which carries the per-field reset),
   // and a console group listing them all. The bool is one of the console's switches.

@@ -40,6 +40,7 @@ function neonTuningFormat(key) {
   if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(value));
   if (spec.kind === 'deg') return Math.round(value) + '°';
+  if (spec.kind === 'sec') return (Math.round(value * 100) / 100) + 's';
   if (spec.kind === 'unit') return (Math.round(value * 100) / 100) + 'u';
   return Math.round(value * 100) + '%';
 }
