@@ -1920,6 +1920,25 @@ function runBlackHolePresetCheck() {
   console.log(`[OK] Galactic black hole wired: preset ${index}, scene->target->quad lens, ${schema.size} knobs, lyric flight from the sides.`);
 }
 
+function runFeatureIndexCheck() {
+  logStep('Feature index (preset and console registries still match the code)');
+  const script = path.join(appRoot, 'scripts', 'dev-feature-index.js');
+  if (!fs.existsSync(script)) {
+    fail('scripts/dev-feature-index.js is missing; the roadmap index would only be checked by eye');
+    return;
+  }
+  // The checker reads the shipped sources and never loads the page, so it is safe here. It is the
+  // one place that catches "console item registered, control never exists" and "preset cards /
+  // icons / display order disagree", which are the drifts that cost time before.
+  const result = spawnSync(process.execPath, [script, '--check'], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`the feature index disagrees with the code: node ${rel(script)} --check`);
+  }
+  process.stdout.write(result.stdout || '');
+}
+
 function runVisualTakeoverMaskCheck() {
   logStep('Visual takeover mask equivalence regression');
   const testFile = path.join(appRoot, 'tests', 'visual-takeover-mask.test.js');
@@ -7614,6 +7633,7 @@ async function main() {
   runFxConsoleRegistrationCheck();
   runWindowVisibilityTraceCheck();
   runVisualTakeoverMaskCheck();
+  runFeatureIndexCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();
   runWallpaperEngineWin10YellowBorderRegressionCheck();
