@@ -95,6 +95,7 @@ uniform float uTreble;
 uniform float uBeat;
 uniform float uAudioGlitch;
 uniform float uAudioTear;
+uniform float uAudioStyle;
 
 vec2 gResolution;
 vec2 gFragCoord;
