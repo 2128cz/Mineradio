@@ -74,7 +74,7 @@ const neonLyricPalette = () => ({ main: '#ffe6fa', glow: '#ff4fd8' });
 
 const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonSizeTravel', 'neonFadeTravel',
   'neonExitTravel', 'neonLineClock', 'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar',
-  'neonPlaceCar', 'neonBeatPush', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
+  'neonPlaceCar', 'neonCarPulse', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
 const run = new Function(
   'THREE', 'document', 'lyricsLines', 'audio', 'currentBeatMap', 'rtBeat', 'beatPulse', 'smoothBass',
   'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
@@ -213,21 +213,25 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
     'once the last stamp expires the ghost car is disposed');
 }
 
-// ---------------------------------------------------------------- 5) the beat pushes and lifts
+// ---------------------------------------------------------------- 5) the beat is an in-place pulse
 {
-  const pushed = { lastBeat: 0, beatPush: 0 };
-  const first = run.neonBeatPush(pushed, 0.6, 2);
-  assert.ok(Math.abs(first - 0.6 * 2 * 0.06) < 1e-9, 'one beat has to add the kick-scaled travel');
-  const falling = run.neonBeatPush(pushed, 0.2, 2);
-  assert.strictEqual(falling, first, 'the decay of the pulse must not drag the line backwards');
-  const again = run.neonBeatPush(pushed, 0.9, 2);
-  assert.ok(again > falling, 'the next rise pushes further');
+  // One beat does not move the line: it swells the glyphs and lifts their neon, then eases back.
+  const state = {};
+  const rising = [];
+  for (let f = 0; f < 6; f++) rising.push(run.neonCarPulse(state, 0.6, 2, 0.016));
+  assert.ok(rising[0] > 0, 'the pulse has to start on the beat');
+  assert.ok(rising[5] > rising[0], 'and keep rising while the beat holds');
+  assert.ok(rising[5] < 1.2, 'but never run away past the gain');
+  let released = rising[5];
+  for (let f = 0; f < 20; f++) released = run.neonCarPulse(state, 0, 2, 0.05);
+  assert.ok(released < rising[5] * 0.2, 'with no beat it has to ease back down');
 
   const base = { body: { visible: true, position: { set() {} }, scale: { set() {} } },
     bodyMat: { opacity: 1, color: { rgb: [1, 1, 1], setRGB(r, g, b) { this.rgb = [r, g, b]; } } }, aspect: 4 };
   const calm = run.neonPlaceCar(base, 1, 1, 0);
   const hit = run.neonPlaceCar(base, 1, 1, 0.8);
-  assert.ok(hit.h > calm.h, 'a beat has to scale the glyphs up a little');
+  assert.ok(hit.h > calm.h, 'a beat has to scale the glyphs up a little, in place');
+  assert.ok(hit.d === calm.d, 'and it must not move the line closer - the travel belongs to the clock');
   assert.ok(base.bodyMat.color.rgb[0] > 1, 'a beat has to lift the brightness above the steady state');
 }
 

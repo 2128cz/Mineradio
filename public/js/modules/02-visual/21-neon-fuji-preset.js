@@ -172,6 +172,9 @@ var NEON_SCENE_FS = [
   'uniform float uCloudWidth;',
   'uniform vec3 uCloudColor;',
   'uniform float uFogGain;',
+  // The beat reaches the scene itself: the neon lines, the sun's bloom, the horizon haze and the
+  // cloud outlines all lift on it. Zero is the untouched reference frame (the bench renders it so).
+  'uniform float uBeat;',
   '',
   // ---- ported from the reference (see tests/fixtures/neon-fuji-reference.glsl).
   // The expressions are the reference's; only its literals became uniforms, so a default-valued
@@ -182,7 +185,7 @@ var NEON_SCENE_FS = [
   '  float cut = 3.0 * sin((uv.y + iTime * 0.2 * (battery + 0.02)) * uSunStripes)',
   '    + clamp(uv.y * 14.0 + 1.0, -6.0, 6.0);',
   '  cut = clamp(cut, 0.0, 1.0);',
-  '  return clamp(val * cut, 0.0, 1.0) + bloom * 0.6;',
+  '  return clamp(val * cut, 0.0, 1.0) + bloom * 0.6 * (1.0 + uBeat * 0.5);',
   '}',
   '',
   'float grid(vec2 uv, float battery) {',
@@ -191,7 +194,7 @@ var NEON_SCENE_FS = [
   '  uv = abs(fract(uv) - 0.5);',
   '  vec2 lines = smoothstep(size, vec2(0.0), uv);',
   '  lines += smoothstep(size * uGridDensity, vec2(0.0), uv) * uGridBloom * battery;',
-  '  return clamp(lines.x + lines.y, 0.0, 3.0);',
+  '  return clamp(lines.x + lines.y, 0.0, 3.0) * (1.0 + uBeat * 0.45);',
   '}',
   '',
   'float dot2(in vec2 v) { return dot(v, v); }',
@@ -259,10 +262,10 @@ var NEON_SCENE_FS = [
   '    float fujiVal = sdTrapezoid(uv + vec2(uFujiX, uFujiY), uFujiWidth + pow(uv.y * uv.y, 2.1), uFujiBase, uFujiHeight);',
   '    float waveVal = uv.y + sin(uv.x * uSnowFreq + iTime * uSnowSpeed) * uSnowAmp + uSnowLevel;',
   '    float wave_width = smoothstep(0.0, 0.01, waveVal);',
-  '    col = mix(col, mix(uFujiDark, uFujiBright, fujiD), step(fujiVal, 0.0));',
-  '    col = mix(col, uSnowColor, wave_width * step(fujiVal, 0.0));',
-  '    col = mix(col, uSnowColor, 1.0 - smoothstep(0.0, 0.01, abs(fujiVal)));',
-  '    col += mix(col, mix(uHorizonNear, uHorizonFar, clamp(uv.y * 3.5 + 3.0, 0.0, 1.0)), step(0.0, fujiVal));',
+  '    col = mix(col, mix(uFujiDark * (1.0 + uBeat * 0.3), uFujiBright * (1.0 + uBeat * 0.25), fujiD), step(fujiVal, 0.0));',
+  '    col = mix(col, uSnowColor * (1.0 + uBeat * 0.4), wave_width * step(fujiVal, 0.0));',
+  '    col = mix(col, uSnowColor * (1.0 + uBeat * 0.4), 1.0 - smoothstep(0.0, 0.01, abs(fujiVal)));',
+  '    col += mix(col, mix(uHorizonNear, uHorizonFar, clamp(uv.y * 3.5 + 3.0, 0.0, 1.0)), step(0.0, fujiVal)) * (1.0 + uBeat * 0.25);',
   '    if (uCloudOn > 0.5) {',
   '      vec2 cloudUV = uv;',
   '      cloudUV.x = mod(cloudUV.x + iTime * uCloudSpeed, 4.0) - 2.0;',
@@ -273,10 +276,10 @@ var NEON_SCENE_FS = [
   '      float cloudVal2 = sdCloud(cloudUV, vec2(-0.9 + cos(cloudTime * 1.02 + 541.75) * 0.1, cloudY), vec2(-0.5 + sin(cloudTime * 0.9 - 316.56) * 0.1, cloudY), vec2(-1.5 + cos(cloudTime * 0.867 + 37.165) * 0.1, 0.25 + cloudY), vec2(-0.6 + sin(cloudTime * 0.9675 + 665.162) * 0.09, 0.25 + cloudY), uCloudWidth);',
   '      float cloudVal = min(cloudVal1, cloudVal2);',
   '      col = mix(col, uCloudColor, 1.0 - smoothstep(uCloudWidth - 0.0001, uCloudWidth, cloudVal));',
-  '      col += vec3(1.0, 1.0, 1.0) * (1.0 - smoothstep(0.0, 0.01, abs(cloudVal - uCloudWidth)));',
+  '      col += vec3(1.0, 1.0, 1.0) * (1.0 - smoothstep(0.0, 0.01, abs(cloudVal - uCloudWidth))) * (1.0 + uBeat * 0.6);',
   '    }',
   '  }',
-  '  col += fog * fog * fog * uFogGain;',
+  '  col += fog * fog * fog * uFogGain * (1.0 + uBeat * 0.3);',
   '  col = mix(vec3(col.r, col.r, col.r) * 0.5, col, battery * 0.7);',
   '  fragColor = vec4(col, 1.0);',
   '}',
@@ -600,7 +603,7 @@ function neonRasterCar(car, text) {
 // carSize * near/depth, which is what makes it grow past the frame. The height on screen only
 // drops carDrop, and only until arrival - the text flies past the eye, it does not slide off the
 // bottom of the frame.
-function neonPlaceCar(car, t, opacityScale, beat) {
+function neonPlaceCar(car, t, opacityScale, pulse) {
   var fov = Math.min(100, Math.max(20, neonParam('camFov')));
   var tanHalf = Math.tan(fov * Math.PI / 360);
   var near = Math.max(0.5, neonParam('carDepthNear'));
@@ -614,20 +617,19 @@ function neonPlaceCar(car, t, opacityScale, beat) {
   // rather than sliding off the bottom of the frame.
   var after = Math.max(0, tt - 1);
   var yNdc = horizon - neonParam('carDrop') * Math.min(1, tt) + neonParam('carRise') * after * after;
-  // On a beat the line steps forward: the glyphs grow a little for the length of the pulse, which
-  // is the same push the travel offset adds in neonStepCars.
-  var pulse = 1 + Math.max(0, Number(beat) || 0) * Math.max(0, neonParam('beatKick')) * 0.12;
-  var worldH = Math.max(0.0001, size * 2 * d * tanHalf) * pulse;
+  // The beat's punch: the line does not move, the glyphs swell in place and their neon brightens
+  // for the length of the pulse.
+  var pv = Math.max(0, Number(pulse) || 0);
+  var worldH = Math.max(0.0001, size * 2 * d * tanHalf) * (1 + pv * 0.12);
   var worldW = worldH * Math.max(1, car.aspect);
   var yWorld = yNdc * d * tanHalf;
   // Fades: in over the first tenth of the run, out from carExitSize over carFadeTravel. The fade
-  // dims the glyphs as well as dissolving them - a huge white plane would read as a flash. The beat
-  // lifts the brightness back up while the pulse lasts, so the line flashes with the music.
+  // dims the glyphs as well as dissolving them - a huge white plane would read as a flash.
   var fadeIn = Math.min(1, tt / 0.10);
   var fadeStart = neonFadeTravel();
   var fadeSpan = Math.max(0.05, neonExitTravel() - fadeStart);
   var fade = 1 - neonClamp01((tt - fadeStart) / fadeSpan);
-  var bright = fade <= 0 ? 0 : Math.min(1.6, fade * (1 + Math.max(0, Number(beat) || 0) * Math.max(0, neonParam('beatKick')) * 0.45));
+  var bright = fade <= 0 ? 0 : Math.min(1.6, fade * (1 + pv * 0.45));
   car.body.visible = true;
   car.body.position.set(0, yWorld, -d);
   car.body.scale.set(worldW, worldH, 1);
@@ -693,16 +695,16 @@ function neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, capacity) {
   return alive;
 }
 
-// The beat pushes the line forward and never drags it back: only the rising edge of the pulse
-// counts, and what it adds stays. One beat = beatKick * 0.06 of travel, so a 2/sec beat with the
-// default 2.0 moves the text about a tenth of a screen per second on top of its own clock.
-function neonBeatPush(car, beat, kick) {
-  var now = Math.max(0, Number(beat) || 0);
-  var last = Math.max(0, Number(car.lastBeat) || 0);
-  var gain = Math.max(0, Number(kick) || 0);
-  if (now > last && gain > 0) car.beatPush = (car.beatPush || 0) + (now - last) * gain * 0.06;
-  car.lastBeat = now;
-  return car.beatPush || 0;
+// The beat is an animation, not a second clock: the line does not travel further, its glyphs
+// punch in place. A fast attack and a slower release make one beat read as a pop rather than as
+// a wobble; beatKick is the amount of that pop and 0 turns it off.
+function neonCarPulse(car, beat, kick, dt) {
+  var target = Math.min(1.5, Math.max(0, Number(beat) || 0) * Math.max(0, Number(kick) || 0));
+  var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
+  var rate = target > (car.pulse || 0) ? 22 : 7;
+  var k = 1 - Math.exp(-rate * step);
+  car.pulse = (car.pulse || 0) + (target - (car.pulse || 0)) * k;
+  return car.pulse;
 }
 
 function neonStepCars(nowSec, dt) {
@@ -740,8 +742,7 @@ function neonStepCars(nowSec, dt) {
       car.band.visible = false;
       car.lastTravel = -1;
       car.trailClock = 0;
-      car.beatPush = 0;
-      car.lastBeat = 0;
+      car.pulse = 0;
       if (neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount) === 0) {
         neonDisposeCar(car);
         neonState.cars.splice(i, 1);
@@ -755,11 +756,10 @@ function neonStepCars(nowSec, dt) {
       neonRetireTrails(car);
       continue;
     }
-    // The song clock plus everything the beats have added; capped so a beat cannot carry the line
-    // past its own end-of-life in one step.
-    var push = neonBeatPush(car, beat, neonParam('beatKick'));
-    var travel = Math.min(neonExitTravel() - 0.001, line.travel + push);
-    var placed = neonPlaceCar(car, travel, line.current ? 1 : 0.7, beat);
+    // The song clock only; the beat animates the glyphs in place (neonCarPulse) instead of moving
+    // the line forward, so the readable moment is not shifted by the music.
+    var pulse = neonCarPulse(car, beat, neonParam('beatKick'), step);
+    var placed = neonPlaceCar(car, line.travel, line.current ? 1 : 0.7, pulse);
     // Band under the car: the light it drags over the road. Flashes with the beat, dims with the text.
     car.band.visible = placed.fade > 0.05;
     car.band.position.set(0, placed.y - placed.h * 0.62, -placed.d);
@@ -768,7 +768,7 @@ function neonStepCars(nowSec, dt) {
     car.bandMat.color.setRGB(1.0, 0.35, 0.85);
     // Spawn the next stamp only while the line is actually travelling, and only once the previous
     // frame had a position to leave behind.
-    var moved = car.lastTravel >= 0 && Math.abs(travel - car.lastTravel) > 1e-5;
+    var moved = car.lastTravel >= 0 && Math.abs(line.travel - car.lastTravel) > 1e-5;
     if (moved && trailCount > 0) {
       car.trailClock += step;
       if (car.trailClock >= trailInterval) {
@@ -778,7 +778,7 @@ function neonStepCars(nowSec, dt) {
     } else if (!moved) {
       car.trailClock = 0;
     }
-    car.lastTravel = travel;
+    car.lastTravel = line.travel;
     neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount);
   }
   return boost;

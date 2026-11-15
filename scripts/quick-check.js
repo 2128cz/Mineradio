@@ -1965,7 +1965,7 @@ function runNeonFujiPresetCheck() {
     [/pow\(uv\.y \* uv\.y, 2\.1\)/, 'the mountain width has to keep the reference power'],
     [/float opSmoothUnion\(float d1, float d2, float k\)/, 'the cloud union has to be the reference SDF helper'],
     [/float sdCloud\(in vec2 p, in vec2 a1, in vec2 b1, in vec2 a2, in vec2 b2, float w\)/, 'the cloud has to be the reference SDF'],
-    [/col \+= fog \* fog \* fog \* uFogGain;/, 'the fog has to be added after the composition, with its reference cube'],
+    [/col \+= fog \* fog \* fog \* uFogGain \* \(1\.0 \+ uBeat \* 0\.3\);/, 'the fog has to be added after the composition, with its reference cube and the beat on top'],
     [/col = mix\(vec3\(col\.r, col\.r, col\.r\) \* 0\.5, col, battery \* 0\.7\);/, 'the battery desaturation has to stay the last step'],
     [/mainImage\(c, gl_FragCoord\.xy\)/, 'the fragment needs its Shadertoy entry point'],
   ]) {
@@ -2012,10 +2012,19 @@ function runNeonFujiPresetCheck() {
     [/age >= trailLife/, 'an afterimage has to go back to the pool when its life is over'],
     [/if \(neonAgeTrails\(car, nowSec, trailLife, trailOpacity, beat, trailCount\) === 0\) \{/, 'a departed line has to survive until its last stamp expires'],
     [/for \(var back = 0; back < 9; back\+\+\)/, 'the window has to reach back past the previous line: fast songs advance several lines while one is still flying'],
-    [/function neonBeatPush\(/, 'the beat has to push the line forward, and it needs one place to accumulate that'],
-    [/car\.beatPush = \(car\.beatPush \|\| 0\) \+ \(now - last\) \* gain \* 0\.06/, 'the push has to integrate the rising edge of the beat and never run backwards'],
-    [/var pulse = 1 \+ Math\.max\(0, Number\(beat\) \|\| 0\) \* Math\.max\(0, neonParam\('beatKick'\)\) \* 0\.12;/, 'a beat has to scale the glyphs up a little'],
-    [/var bright = fade <= 0 \? 0 : Math\.min\(1\.6, fade \* \(1 \+ /, 'a beat has to raise the brightness for the length of the pulse'],
+    [/function neonCarPulse\(/, 'the beat has to be an in-place animation with one owner'],
+    [/var rate = target > \(car\.pulse \|\| 0\) \? 22 : 7;/, 'the pulse needs a fast attack and a slower release'],
+    [/var pulse = neonCarPulse\(car, beat, neonParam\('beatKick'\), step\);/, 'each car has to animate on its own pulse instead of advancing its travel'],
+    [/\* \(1 \+ pv \* 0\.12\);/, 'a beat has to scale the glyphs in place'],
+    [/var bright = fade <= 0 \? 0 : Math\.min\(1\.6, fade \* \(1 \+ pv \* 0\.45\)\);/, 'a beat has to raise the brightness for the length of the pulse'],
+    [/uniform float uBeat;/, 'the scene needs the beat too, or only the text flashes'],
+    [/\(1\.0 \+ uBeat \* 0\.45\)/, 'the grid lines have to flash with the beat'],
+    [/\(1\.0 \+ uBeat \* 0\.5\)/, 'the sun bloom has to flash with the beat'],
+    [/\(1\.0 \+ uBeat \* 0\.3\)/, 'the horizon haze has to flash with the beat'],
+    [/\(1\.0 \+ uBeat \* 0\.6\)/, 'the cloud outlines have to flash with the beat'],
+    [/uFujiBright \* \(1\.0 \+ uBeat \* 0\.25\)/, 'the mountain has to flash with the beat'],
+    [/uSnowColor \* \(1\.0 \+ uBeat \* 0\.4\)/, 'the snow line has to flash with the beat'],
+    [/step\(0\.0, fujiVal\)\) \* \(1\.0 \+ uBeat \* 0\.25\)/, 'the horizon tint has to flash with the beat'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
