@@ -1276,12 +1276,12 @@
         <div class="fx-toggle-grid">
           <div class="fx-toggle" id="t-neonbeatSync" onclick="toggleNeonTuning('beatSync')"><span>入场对齐节拍</span><span class="dot"></span></div>
         </div>
-        <div class="fx-slider"><label>拖影份数</label><input id="fx-neontrailCount" type="range" min="0" max="24" step="1" oninput="setNeonTuning('trailCount', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影份数</label><input id="fx-neontrailCount" type="range" min="0" max="48" step="1" oninput="setNeonTuning('trailCount', this.value)"><output></output></div>
         <div class="fx-slider"><label>拖影间隔</label><input id="fx-neontrailInterval" type="range" min="0.02" max="0.4" step="0.01" oninput="setNeonTuning('trailInterval', this.value)"><output></output></div>
         <div class="fx-slider"><label>拖影停留</label><input id="fx-neontrailLife" type="range" min="0.1" max="2" step="0.05" oninput="setNeonTuning('trailLife', this.value)"><output></output></div>
         <div class="fx-slider"><label>拖影透明度</label><input id="fx-neontrailOpacity" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('trailOpacity', this.value)"><output></output></div>
         <div class="fx-slider"><label>光带强度</label><input id="fx-neonlightBand" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('lightBand', this.value)"><output></output></div>
-        <div class="fx-slider"><label>鼓点推进</label><input id="fx-neonbeatKick" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatKick', this.value)"><output></output></div>
+        <div class="fx-slider"><label>节奏推进（放大/高亮）</label><input id="fx-neonbeatKick" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatKick', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNeonTuning()">恢复日本霓虹默认</button></div>
       </div>
     </div>

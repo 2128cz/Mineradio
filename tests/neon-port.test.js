@@ -1,8 +1,8 @@
 'use strict';
 
 // 预设 16 的移植判据：它是参考 shader 的移植，不是"照着画面重画"。
-// 这条臂盯三件事：参考的特征表达式还在、默认值等于参考常量、组合顺序的关键步骤没被换掉。
-// 像素级对齐由 scripts/neon-fidelity-bench.js 负责（需要 GPU，不进静态门）。
+// 这条臂盯三件事：参考的特征表达式还在、参考旋钮都还在（默认值允许是用户调校值）、
+// 组合顺序的关键步骤没被换掉；参考常量由 bench 显式传入，像素对齐由 bench 负责。
 
 const fs = require('fs');
 const path = require('path');
@@ -33,16 +33,21 @@ for (const expr of [
   assert.ok(src.includes(expr), 'the port lost a reference expression: ' + expr);
 }
 
-// 2) defaults must equal the reference literals, or the fidelity bench can never be zero
+// 2) every reference knob still exists with a number behind it. The shipped defaults are the
+// user's tuned values now, so the "defaults equal the reference literals" claim lives in the
+// fidelity bench, which passes the reference constants explicitly - check that it still does.
 const schema = {};
 for (const m of src.matchAll(/([A-Za-z_]\w*):\s*\{\s*def:\s*(-?[\d.]+)/g)) schema[m[1]] = Number(m[2]);
-for (const [key, want] of Object.entries({
-  battery: 1.0, horizon: -0.2, roadDepth: 3.0, roadSpread: 1.0, gridScale: 0.01, gridSpeed: 4.0,
-  gridDensity: 5.0, gridBloom: 0.4, sunX: 0.75, sunY: 0.2, sunRadius: 0.3, sunStripes: 100,
-  sunBloom: 0.7, fujiX: -0.75, fujiY: 0.5, fujiWidth: 1.75, fujiBase: 0.2, fujiHeight: 0.5,
-  snowFreq: 20, snowSpeed: 2, snowAmp: 0.05, snowLevel: 0.2, cloudSpeed: 0.1, cloudWidth: 0.075
-})) {
-  assert.equal(schema[key], want, 'the default for ' + key + ' must be the reference literal ' + want);
+for (const key of ['battery', 'horizon', 'roadDepth', 'roadSpread', 'gridScale', 'gridSpeed',
+  'gridDensity', 'gridBloom', 'sunX', 'sunY', 'sunRadius', 'sunStripes', 'sunBloom', 'fujiX',
+  'fujiY', 'fujiWidth', 'fujiBase', 'fujiHeight', 'snowFreq', 'snowSpeed', 'snowAmp',
+  'snowLevel', 'cloudSpeed', 'cloudWidth']) {
+  assert.ok(Number.isFinite(schema[key]), 'the reference knob ' + key + ' must still exist with a numeric default');
+}
+const bench = fs.readFileSync(path.join(root, 'scripts', 'neon-fidelity-bench.js'), 'utf8');
+for (const literal of ['uRoadDepth: 3.0', 'uRoadSpread: 1.0', 'uGridScale: 0.01', 'uSunRadius: 0.3',
+  'uSunStripes: 100', 'uFujiWidth: 1.75', 'uCloudWidth: 0.075']) {
+  assert.ok(bench.includes(literal), 'the fidelity bench must keep rendering with the reference constant ' + literal);
 }
 
 // 3) the composition order: grid branch first, then the sun under the mountain, clouds last
@@ -55,4 +60,4 @@ for (const step of order) {
   assert.ok(next > at, 'the composition order changed at: ' + step);
   at = next;
 }
-console.log('OK neon-port: 13 reference expressions, 24 defaults, 7 ordered steps');
+console.log('OK neon-port: 13 reference expressions, 24 knob keys, 7 ordered steps, reference constants in the bench');

@@ -274,7 +274,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-neontrailLife', '拖影停留', '日本霓虹 歌词 拖影 停留 寿命 回收'),
         fxConsoleItem('fx-neontrailOpacity', '拖影透明度', '日本霓虹 歌词 拖影 透明度 淡'),
         fxConsoleItem('fx-neonlightBand', '光带强度', '日本霓虹 歌词 光带 车道 辉光'),
-        fxConsoleItem('fx-neonbeatKick', '鼓点推进', '日本霓虹 歌词 鼓点 节拍 推进 光带'),
+        fxConsoleItem('fx-neonbeatKick', '节奏推进', '日本霓虹 歌词 鼓点 节拍 推进 放大 高亮 光带'),
         fxConsoleItem({ selector: '.fx-neon-tuning .fx-actions' }, '恢复日本霓虹默认', '日本霓虹 重置 还原 默认')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

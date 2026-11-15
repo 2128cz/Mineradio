@@ -23,9 +23,9 @@ var NEON_TUNING_SCHEMA = {
   // alone reproduces the original frame (the fidelity bench checks exactly that).
   battery: { def: 1.0, min: 0.2, max: 1.2, kind: 'ratio', rebuild: 'live' },
   horizon: { def: -0.2, min: -0.6, max: 0.1, kind: 'ratio', rebuild: 'live' },
-  roadDepth: { def: 3.0, min: 1, max: 10, kind: 'ratio', rebuild: 'live' },
-  roadSpread: { def: 1.0, min: 0.2, max: 3, kind: 'ratio', rebuild: 'live' },
-  gridScale: { def: 0.01, min: 0.002, max: 0.05, kind: 'ratio', rebuild: 'live' },
+  roadDepth: { def: 1, min: 1, max: 10, kind: 'ratio', rebuild: 'live' },
+  roadSpread: { def: 0.86, min: 0.2, max: 3, kind: 'ratio', rebuild: 'live' },
+  gridScale: { def: 0.006, min: 0.002, max: 0.05, kind: 'ratio', rebuild: 'live' },
   gridSpeed: { def: 4.0, min: 0, max: 12, kind: 'ratio', rebuild: 'live' },
   gridDensity: { def: 5.0, min: 1, max: 12, kind: 'ratio', rebuild: 'live' },
   gridBloom: { def: 0.4, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
@@ -57,24 +57,24 @@ var NEON_TUNING_SCHEMA = {
   // the lens, and leaves the frame only once it is too big to read - it never slides off the
   // bottom. carSize is the size at the line's own timestamp.
   carSize: { def: 0.10, min: 0.02, max: 0.4, kind: 'ratio', rebuild: 'live' },
-  carDepthNear: { def: 6, min: 1, max: 40, kind: 'unit', rebuild: 'live' },
+  carDepthNear: { def: 18, min: 1, max: 40, kind: 'unit', rebuild: 'live' },
   carDepthFar: { def: 90, min: 20, max: 400, kind: 'unit', rebuild: 'live' },
   // Negative = the readable pass sits that many seconds after the line starts, so a line sung for
   // a while is already in the middle of the screen half way through; positive = before its line.
   carLead: { def: -1.0, min: -3, max: 6, kind: 'sec', rebuild: 'live' },
   carApproach: { def: 2.4, min: 0.4, max: 6, kind: 'sec', rebuild: 'live' },
-  carDrop: { def: -0.15, min: -0.6, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  carDrop: { def: 0.13, min: -0.6, max: 0.6, kind: 'ratio', rebuild: 'live' },
   carAccel: { def: 0.9, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   carRise: { def: 0.9, min: 0, max: 3, kind: 'unit', rebuild: 'live' },
   carExitSize: { def: 0.9, min: 0.4, max: 3, kind: 'ratio', rebuild: 'live' },
   carFadeTravel: { def: 0.55, min: 0.1, max: 2, kind: 'unit', rebuild: 'live' },
   beatSync: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  trailCount: { def: 12, min: 0, max: 24, kind: 'count', rebuild: 'live' },
-  trailInterval: { def: 0.07, min: 0.02, max: 0.4, kind: 'sec', rebuild: 'live' },
-  trailLife: { def: 0.6, min: 0.1, max: 2, kind: 'sec', rebuild: 'live' },
-  trailOpacity: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  lightBand: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
-  beatKick: { def: 0.5, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
+  trailCount: { def: 24, min: 0, max: 48, kind: 'count', rebuild: 'live' },
+  trailInterval: { def: 0.03, min: 0.02, max: 0.4, kind: 'sec', rebuild: 'live' },
+  trailLife: { def: 0.95, min: 0.1, max: 2, kind: 'sec', rebuild: 'live' },
+  trailOpacity: { def: 0.13, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  lightBand: { def: 1.23, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  beatKick: { def: 2, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
 };
 
 // The reference's fixed palette, in the order the composition uses it.
@@ -441,12 +441,25 @@ function neonActiveLines() {
     if (isFinite(at) && at <= now + 0.02) idx = i; else break;
   }
   var out = [];
-  for (var k = -1; k <= 1; k++) {
-    var line = lines[idx + k];
+  // A fast song advances several lines while one line is still flying at the camera, so the window
+  // cannot be "previous, current, next" by index: anything still inside its own travel window gets
+  // a car, and the oldest are dropped only past the live cap.
+  var candidates = [];
+  for (var back = 0; back < 9; back++) {
+    if (idx - back < 0) break;
+    candidates.push(idx - back);
+  }
+  for (var fwd = 1; fwd <= 2; fwd++) {
+    if (idx + fwd >= lines.length) break;
+    candidates.push(idx + fwd);
+  }
+  for (var ci = 0; ci < candidates.length; ci++) {
+    var k = candidates[ci] - idx;
+    var line = lines[candidates[ci]];
     if (!line) continue;
     var start = neonLineClock(line);
     if (!isFinite(start)) continue;
-    var next = lines[idx + k + 1];
+    var next = lines[candidates[ci] + 1];
     var nextStart = next ? neonLineClock(next) : NaN;
     // The sung span is the line's own duration when the parser gave one; otherwise it runs until
     // the next line. This is the "line is over" moment the run is aimed at.
@@ -455,8 +468,9 @@ function neonActiveLines() {
     var end = start + Math.max(0.6, span);
     // The readable pass: t=1 when the text is carLead seconds before the line start; a negative
     // lead puts it that many seconds AFTER the start, so the usual setting lands the middle of a
-    // sung line in the middle of the screen.
-    var arrivalAt = start - arrivalOffset;
+    // sung line in the middle of the screen. A short line gets its pass at its own end at the
+    // latest - otherwise an offset longer than the line would put the face moment before arrival.
+    var arrivalAt = Math.min(start - arrivalOffset, end - 0.15);
     var enterAt = neonEntranceAt(arrivalAt, approach, grid);
     var dur = Math.max(0.35, arrivalAt - enterAt);
     var p = (now - enterAt) / dur;
@@ -477,6 +491,10 @@ function neonActiveLines() {
       enterAt: enterAt, arrivalAt: arrivalAt, travel: t, current: k === 0
     });
   }
+  // Oldest first, so the cars are created and aged in a stable order; keep the newest ones when a
+  // very dense passage would otherwise open more than the cap.
+  out.sort(function (a, b) { return a.start - b.start; });
+  if (out.length > 8) out = out.slice(out.length - 8);
   return out;
 }
 
@@ -498,7 +516,7 @@ function neonLyricPalette() {
   return palette;
 }
 
-var NEON_TRAIL_MAX = 24;
+var NEON_TRAIL_MAX = 48;
 
 function neonMakeCar() {
   var group = new THREE.Group();
@@ -582,7 +600,7 @@ function neonRasterCar(car, text) {
 // carSize * near/depth, which is what makes it grow past the frame. The height on screen only
 // drops carDrop, and only until arrival - the text flies past the eye, it does not slide off the
 // bottom of the frame.
-function neonPlaceCar(car, t, opacityScale) {
+function neonPlaceCar(car, t, opacityScale, beat) {
   var fov = Math.min(100, Math.max(20, neonParam('camFov')));
   var tanHalf = Math.tan(fov * Math.PI / 360);
   var near = Math.max(0.5, neonParam('carDepthNear'));
@@ -596,20 +614,25 @@ function neonPlaceCar(car, t, opacityScale) {
   // rather than sliding off the bottom of the frame.
   var after = Math.max(0, tt - 1);
   var yNdc = horizon - neonParam('carDrop') * Math.min(1, tt) + neonParam('carRise') * after * after;
-  var worldH = Math.max(0.0001, size * 2 * d * tanHalf);
+  // On a beat the line steps forward: the glyphs grow a little for the length of the pulse, which
+  // is the same push the travel offset adds in neonStepCars.
+  var pulse = 1 + Math.max(0, Number(beat) || 0) * Math.max(0, neonParam('beatKick')) * 0.12;
+  var worldH = Math.max(0.0001, size * 2 * d * tanHalf) * pulse;
   var worldW = worldH * Math.max(1, car.aspect);
   var yWorld = yNdc * d * tanHalf;
   // Fades: in over the first tenth of the run, out from carExitSize over carFadeTravel. The fade
-  // dims the glyphs as well as dissolving them - a huge white plane would read as a flash.
+  // dims the glyphs as well as dissolving them - a huge white plane would read as a flash. The beat
+  // lifts the brightness back up while the pulse lasts, so the line flashes with the music.
   var fadeIn = Math.min(1, tt / 0.10);
   var fadeStart = neonFadeTravel();
   var fadeSpan = Math.max(0.05, neonExitTravel() - fadeStart);
   var fade = 1 - neonClamp01((tt - fadeStart) / fadeSpan);
+  var bright = fade <= 0 ? 0 : Math.min(1.6, fade * (1 + Math.max(0, Number(beat) || 0) * Math.max(0, neonParam('beatKick')) * 0.45));
   car.body.visible = true;
   car.body.position.set(0, yWorld, -d);
   car.body.scale.set(worldW, worldH, 1);
   car.bodyMat.opacity = neonClamp01((0.35 + 0.65 * opacityScale) * fadeIn * fade);
-  if (car.bodyMat.color && car.bodyMat.color.setRGB) car.bodyMat.color.setRGB(fade, fade, fade);
+  if (car.bodyMat.color && car.bodyMat.color.setRGB) car.bodyMat.color.setRGB(bright, bright, bright);
   return { d: d, y: yWorld, w: worldW, h: worldH, size: size, fade: fade };
 }
 
@@ -670,6 +693,18 @@ function neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, capacity) {
   return alive;
 }
 
+// The beat pushes the line forward and never drags it back: only the rising edge of the pulse
+// counts, and what it adds stays. One beat = beatKick * 0.06 of travel, so a 2/sec beat with the
+// default 2.0 moves the text about a tenth of a screen per second on top of its own clock.
+function neonBeatPush(car, beat, kick) {
+  var now = Math.max(0, Number(beat) || 0);
+  var last = Math.max(0, Number(car.lastBeat) || 0);
+  var gain = Math.max(0, Number(kick) || 0);
+  if (now > last && gain > 0) car.beatPush = (car.beatPush || 0) + (now - last) * gain * 0.06;
+  car.lastBeat = now;
+  return car.beatPush || 0;
+}
+
 function neonStepCars(nowSec, dt) {
   var lines = neonActiveLines();
   var wanted = {};
@@ -705,6 +740,8 @@ function neonStepCars(nowSec, dt) {
       car.band.visible = false;
       car.lastTravel = -1;
       car.trailClock = 0;
+      car.beatPush = 0;
+      car.lastBeat = 0;
       if (neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount) === 0) {
         neonDisposeCar(car);
         neonState.cars.splice(i, 1);
@@ -718,7 +755,11 @@ function neonStepCars(nowSec, dt) {
       neonRetireTrails(car);
       continue;
     }
-    var placed = neonPlaceCar(car, line.travel, line.current ? 1 : 0.7);
+    // The song clock plus everything the beats have added; capped so a beat cannot carry the line
+    // past its own end-of-life in one step.
+    var push = neonBeatPush(car, beat, neonParam('beatKick'));
+    var travel = Math.min(neonExitTravel() - 0.001, line.travel + push);
+    var placed = neonPlaceCar(car, travel, line.current ? 1 : 0.7, beat);
     // Band under the car: the light it drags over the road. Flashes with the beat, dims with the text.
     car.band.visible = placed.fade > 0.05;
     car.band.position.set(0, placed.y - placed.h * 0.62, -placed.d);
@@ -727,7 +768,7 @@ function neonStepCars(nowSec, dt) {
     car.bandMat.color.setRGB(1.0, 0.35, 0.85);
     // Spawn the next stamp only while the line is actually travelling, and only once the previous
     // frame had a position to leave behind.
-    var moved = car.lastTravel >= 0 && Math.abs(line.travel - car.lastTravel) > 1e-5;
+    var moved = car.lastTravel >= 0 && Math.abs(travel - car.lastTravel) > 1e-5;
     if (moved && trailCount > 0) {
       car.trailClock += step;
       if (car.trailClock >= trailInterval) {
@@ -737,7 +778,7 @@ function neonStepCars(nowSec, dt) {
     } else if (!moved) {
       car.trailClock = 0;
     }
-    car.lastTravel = line.travel;
+    car.lastTravel = travel;
     neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount);
   }
   return boost;

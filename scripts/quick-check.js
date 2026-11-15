@@ -1984,8 +1984,8 @@ function runNeonFujiPresetCheck() {
     [/carApproach: \{ def: 2\.4,/, 'the approach time has to be its own knob'],
     [/carAccel: \{ def: 0\.9,/, 'the accelerating run has to exist and default on'],
     [/beatSync: \{ def: 1,/, 'the beat-synced entrance has to default on'],
-    [/trailCount: \{ def: 12, min: 0, max: 24,/, 'the afterimage pool has to be deep enough that a large count does not expire early'],
-    [/var NEON_TRAIL_MAX = 24;/, 'the pool ceiling has to match the knob ceiling'],
+    [/trailCount: \{ def: 24, min: 0, max: 48,/, 'the afterimage pool has to default to the tuned depth and allow a large count'],
+    [/var NEON_TRAIL_MAX = 48;/, 'the pool ceiling has to match the knob ceiling'],
   ]) {
     if (!literal.test(text)) fail(why);
   }
@@ -1997,7 +1997,7 @@ function runNeonFujiPresetCheck() {
     [/function neonEntranceAt\(startAt, lead, grid\)/, 'the entrance time has to be its own function, so a beat snap is testable'],
     [/Math\.floor\(\(enterAt - grid\.origin\) \/ grid\.step\) \* grid\.step/, 'the entrance has to snap back onto the beat grid'],
     [/var p = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the readable pass'],
-    [/var arrivalAt = start - arrivalOffset;/, 'the arrival offset must be signed, so a negative lead lands the pass after the line starts'],
+    [/var arrivalAt = Math\.min\(start - arrivalOffset, end - 0\.15\);/, 'the arrival offset must be signed, and clamped to the line end, so a short line still arrives'],
     [/Math\.pow\(p, accel\)/, 'the approach has to accelerate instead of advancing linearly'],
     [/t = 1 \+ \(faceT - 1\) \* Math\.pow\(q, accel\);/, 'after the pass the run has to be aimed at the end of the line - the face at line end'],
     [/Math\.max\(0, tt - 1\)/, 'the path has to keep going after arrival'],
@@ -2005,12 +2005,17 @@ function runNeonFujiPresetCheck() {
     [/var d = Math\.max\(near \* 0\.02, near \* Math\.pow\(ratio, 1 - tt\)\);/, 'the run has to be exponential in t so it keeps coming past the near plane'],
     [/var size = neonParam\('carSize'\) \* \(near \/ d\);/, 'the screen size has to stay 1/depth'],
     [/var fade = 1 - neonClamp01\(\(tt - fadeStart\) \/ fadeSpan\);/, 'the text has to keep dimming as it passes'],
-    [/car\.bodyMat\.color\.setRGB\(fade, fade, fade\)/, 'brightness has to fade with the opacity'],
+    [/car\.bodyMat\.color\.setRGB\(bright, bright, bright\)/, 'brightness has to fade with the opacity (and lift with the beat)'],
     [/slot\.bornAt = nowSec;/, 'each afterimage has to be stamped at the moment it is spawned'],
     [/slot\.mesh\.position\.set\(car\.body\.position\.x, car\.body\.position\.y, car\.body\.position\.z\);/, 'a stamped afterimage has to keep its position'],
     [/function neonAgeTrails\(/, 'the stamps need one ageing path, shared by live and departed lines'],
     [/age >= trailLife/, 'an afterimage has to go back to the pool when its life is over'],
     [/if \(neonAgeTrails\(car, nowSec, trailLife, trailOpacity, beat, trailCount\) === 0\) \{/, 'a departed line has to survive until its last stamp expires'],
+    [/for \(var back = 0; back < 9; back\+\+\)/, 'the window has to reach back past the previous line: fast songs advance several lines while one is still flying'],
+    [/function neonBeatPush\(/, 'the beat has to push the line forward, and it needs one place to accumulate that'],
+    [/car\.beatPush = \(car\.beatPush \|\| 0\) \+ \(now - last\) \* gain \* 0\.06/, 'the push has to integrate the rising edge of the beat and never run backwards'],
+    [/var pulse = 1 \+ Math\.max\(0, Number\(beat\) \|\| 0\) \* Math\.max\(0, neonParam\('beatKick'\)\) \* 0\.12;/, 'a beat has to scale the glyphs up a little'],
+    [/var bright = fade <= 0 \? 0 : Math\.min\(1\.6, fade \* \(1 \+ /, 'a beat has to raise the brightness for the length of the pulse'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }

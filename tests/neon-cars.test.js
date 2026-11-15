@@ -74,7 +74,7 @@ const neonLyricPalette = () => ({ main: '#ffe6fa', glow: '#ff4fd8' });
 
 const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonSizeTravel', 'neonFadeTravel',
   'neonExitTravel', 'neonLineClock', 'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar',
-  'neonPlaceCar', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
+  'neonPlaceCar', 'neonBeatPush', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
 const run = new Function(
   'THREE', 'document', 'lyricsLines', 'audio', 'currentBeatMap', 'rtBeat', 'beatPulse', 'smoothBass',
   'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
@@ -211,6 +211,38 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   }
   assert.ok(!neonState.cars.some((car) => car.key === 'l10.000'),
     'once the last stamp expires the ghost car is disposed');
+}
+
+// ---------------------------------------------------------------- 5) the beat pushes and lifts
+{
+  const pushed = { lastBeat: 0, beatPush: 0 };
+  const first = run.neonBeatPush(pushed, 0.6, 2);
+  assert.ok(Math.abs(first - 0.6 * 2 * 0.06) < 1e-9, 'one beat has to add the kick-scaled travel');
+  const falling = run.neonBeatPush(pushed, 0.2, 2);
+  assert.strictEqual(falling, first, 'the decay of the pulse must not drag the line backwards');
+  const again = run.neonBeatPush(pushed, 0.9, 2);
+  assert.ok(again > falling, 'the next rise pushes further');
+
+  const base = { body: { visible: true, position: { set() {} }, scale: { set() {} } },
+    bodyMat: { opacity: 1, color: { rgb: [1, 1, 1], setRGB(r, g, b) { this.rgb = [r, g, b]; } } }, aspect: 4 };
+  const calm = run.neonPlaceCar(base, 1, 1, 0);
+  const hit = run.neonPlaceCar(base, 1, 1, 0.8);
+  assert.ok(hit.h > calm.h, 'a beat has to scale the glyphs up a little');
+  assert.ok(base.bodyMat.color.rgb[0] > 1, 'a beat has to lift the brightness above the steady state');
+}
+
+// ---------------------------------------------------------------- 6) a fast song must not eat lines
+{
+  // Four-second lines a second apart: while a line is flying at the camera the clock has moved
+  // several rows past it. The old previous/current/next window dropped it - that is the
+  // "text just disappears" case on fast songs; the time window has to keep it.
+  lyricsLines.length = 0;
+  for (let i = 0; i < 6; i++) lyricsLines.push({ t: 10 + i, duration: 4, text: '长' + i });
+  const fast = at(13.0);
+  const keys = fast.map((line) => line.key);
+  assert.ok(keys.some((key) => Math.abs(Number(key.slice(1)) - 10) < 1e-6), 'a line three rows back is still on the road');
+  assert.ok(keys.some((key) => Math.abs(Number(key.slice(1)) - 13) < 1e-6), 'and the sung line is there too');
+  assert.ok(fast.length <= 8, 'the live cap holds even in a dense passage');
 }
 
 console.log('OK neon-cars: readable pass at the middle of the line (arrival t=1 at 11s), accel '
