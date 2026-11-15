@@ -39,7 +39,8 @@ const coreText = read('public', 'js', 'modules', '00-state', '00-core-stores.js'
 const archiveText = read('public', 'js', 'modules', '07-fx', '00-preset-archive-data.js');
 const consoleText = read('public', 'js', 'modules', '07-fx', '09-console-workspace.js');
 const htmlText = read('public', 'index.html');
-const searchText = read('public', 'js', 'modules', '05-playback', '07-search.js');
+// server.js is large; it is read once here so the provider routes can be checked against it.
+const serverText = read('server.js');
 
 function parsePresets() {
   const meta = between(archiveText, 'var presetMeta = [', '\n];');
@@ -159,11 +160,19 @@ function parseTuningStores(schemaCounts, schemaEntries) {
 }
 
 function parseProviders() {
-  const order = (searchText.match(/MUSIC_SEARCH_PROVIDER_ORDER = \[([^\]]*)\]/) || [])[1] || '';
-  const searchOrder = [...order.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const table = parseSearchProviders();
+  const searchOrder = table.map((p) => p.key);
   const loginUi = [...htmlText.matchAll(/id="login-provider-([a-z0-9]+)"/g)].map((m) => m[1]);
   const userUi = [...htmlText.matchAll(/id="user-provider-([a-z0-9]+)"/g)].map((m) => m[1]);
-  return { searchOrder, loginUi: [...new Set(loginUi)], userUi: [...new Set(userUi)] };
+  return { table, searchOrder, loginUi: [...new Set(loginUi)], userUi: [...new Set(userUi)] };
+}
+
+// The one table the search derives its order, mode test and routes from. Keeping it in the index
+// means a provider added there without a server route is visible immediately.
+function parseSearchProviders() {
+  const text = read('public', 'js', 'modules', '05-playback', '07-search.js');
+  const block = between(text, 'var SEARCH_PROVIDERS = [', '\n];');
+  return [...block.matchAll(/key:\s*'([^']+)',\s*url:\s*'([^']+)'/g)].map((m) => ({ key: m[1], url: m[2] }));
 }
 
 function parseHotkeys() {
@@ -241,6 +250,17 @@ function runChecks(model) {
   }
 
   checkControlShapes(model, problems);
+
+  // A provider in the search table without a route in server.js is the "searches nowhere" failure:
+  // the mode appears in the UI and every request 404s.
+  for (const p of model.providers.table) {
+    if (serverText.indexOf("'" + p.url + "'") < 0) {
+      problems.push(`search provider '${p.key}' posts to ${p.url}, which server.js does not handle`);
+    }
+  }
+  if (!model.providers.table.length) {
+    problems.push('the search provider table is empty or could not be read');
+  }
 
   for (const group of model.console.groups) {
     for (const refName of group.owns) {
@@ -358,6 +378,12 @@ function render(model) {
   out.push('## 5. 播放源');
   out.push('');
   out.push(`搜索顺序：${model.providers.searchOrder.join(', ')}`);
+  out.push('');
+  out.push('| 播放源 | 搜索路由 | 登录 UI | 账号面板 |');
+  out.push('| --- | --- | --- | --- |');
+  for (const p of model.providers.table) {
+    out.push(`| ${p.key} | ${p.url} | ${model.providers.loginUi.indexOf(p.key) >= 0 ? '有' : '—'} | ${model.providers.userUi.indexOf(p.key) >= 0 ? '有' : '—'} |`);
+  }
   out.push('');
   out.push(`登录 UI：${model.providers.loginUi.join(', ') || '—'}　账号面板：${model.providers.userUi.join(', ') || '—'}`);
   out.push('');

@@ -5,7 +5,16 @@ var searchLastResultQuery = '';
 var searchProviderNotice = '';
 var SEARCH_HISTORY_STORE_KEY = 'mineradio-search-history';
 var SEARCH_HISTORY_STORE_VERSION = 3;
-var SEARCH_HISTORY_MODES = ['song', 'netease', 'qq', 'kugou', 'qishui', 'podcast'];
+// Every music provider the search can talk to, in merge order. The history buckets, the per-mode
+// test and the request route are all derived from this one table; before it, adding a provider
+// meant editing four separate lists and forgetting one left the provider half-wired.
+var SEARCH_PROVIDERS = [
+  { key: 'netease', url: '/api/search' },
+  { key: 'qq', url: '/api/qq/search' },
+  { key: 'kugou', url: '/api/kugou/search' },
+  { key: 'qishui', url: '/api/qishui/search' }
+];
+var SEARCH_HISTORY_MODES = ['song'].concat(SEARCH_PROVIDERS.map(function (p) { return p.key; })).concat(['podcast']);
 var MUSIC_SEARCH_INITIAL_VISIBLE = 18;
 var MUSIC_SEARCH_APPEND_BATCH = 14;
 var MUSIC_SEARCH_MAX_RESULTS = 180;
@@ -745,7 +754,7 @@ function searchIntentPrefersQQ(q) {
   q = String(q || '').toLowerCase();
   return /(^|\s)qq($|\s)|qq音乐|qq音樂/.test(q);
 }
-var MUSIC_SEARCH_PROVIDER_ORDER = ['netease', 'qq', 'kugou', 'qishui'];
+var MUSIC_SEARCH_PROVIDER_ORDER = SEARCH_PROVIDERS.map(function (p) { return p.key; });
 function searchProviderStatus(provider) {
   if (typeof platformStatus === 'function') return platformStatus(provider);
   if (provider === 'spotify') return spotifyLoginStatus;
@@ -768,7 +777,8 @@ function searchProviderCanSearch(provider) {
   return provider === 'netease' || provider === 'qq' || provider === 'kugou' || provider === 'qishui';
 }
 function searchModeProvider(mode) {
-  return mode === 'netease' || mode === 'qq' || mode === 'kugou' || mode === 'qishui' ? mode : '';
+  for (var i = 0; i < SEARCH_PROVIDERS.length; i++) if (SEARCH_PROVIDERS[i].key === mode) return mode;
+  return '';
 }
 function activeSearchProvidersForMode(mode) {
   var specific = searchModeProvider(mode);
@@ -785,11 +795,14 @@ function searchProviderLoginNotice(mode) {
 }
 function searchProviderUrl(provider, q, limit, offset) {
   var suffix = '&limit=' + limit + '&offset=' + Math.max(0, Number(offset) || 0);
-  if (provider === 'qq') return '/api/qq/search?keywords=' + encodeURIComponent(q) + suffix;
-  if (provider === 'kugou') return '/api/kugou/search?keywords=' + encodeURIComponent(q) + suffix;
-  if (provider === 'qishui') return '/api/qishui/search?keywords=' + encodeURIComponent(q) + suffix;
+  // Spotify keeps a route even though its UI is gone: the removal guard requires the 404 to exist.
   if (provider === 'spotify') return '/api/spotify/search?keywords=' + encodeURIComponent(q) + suffix;
-  return '/api/search?keywords=' + encodeURIComponent(q) + suffix;
+  // An unknown provider falls back to the netease route, the same way it always has.
+  var route = SEARCH_PROVIDERS[0].url;
+  for (var i = 0; i < SEARCH_PROVIDERS.length; i++) {
+    if (SEARCH_PROVIDERS[i].key === provider) { route = SEARCH_PROVIDERS[i].url; break; }
+  }
+  return route + '?keywords=' + encodeURIComponent(q) + suffix;
 }
 function simpleSearchNorm(text) {
   return String(text || '').toLowerCase()

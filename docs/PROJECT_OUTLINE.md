@@ -348,7 +348,7 @@ graph LR
 | 视觉控制台 | `#fx-panel`、`#fx-fab`、`#fx-console-search`、`#fx-panel-tabs` | 布局写在代码里（`FX_CONSOLE_LAYOUT`）；卡片状态随 fx 存档 | `07-fx/09-console-workspace.js`、`07-fx/07-bindings-shelf-immersive.js` | `FX_CONSOLE_LAYOUT` |
 | 视觉预设（16 张） | `#preset-grid` | `fx.preset` + 存档 | `07-fx/04-preset-grid-uniforms.js` | `presetMeta` + `setPreset` 钩子 |
 | 用户存档 / 短码 | `#user-archive-grid` | MR2 存档与分享短码 | `07-fx/00-preset-archive-data.js` | `normalizeFxArchiveSnapshot`、`USER_FX_SHARE_KEYS`（**只能末尾追加**） |
-| 搜索 | `#search-input`、`#search-mode-tabs`、`#search-results` | 搜索历史 | `05-playback/07-search.js` + `server.js` 的 `/api/*/search` | `MUSIC_SEARCH_PROVIDER_ORDER` |
+| 搜索 | `#search-input`、`#search-mode-tabs`、`#search-results` | 搜索历史 | `05-playback/07-search.js` + `server.js` 的 `/api/*/search` | `SEARCH_PROVIDERS`（一张表派生顺序/分桶/模式/路由） |
 | 搜索分页 | `#search-results` 底部哨兵 | — | 同上（IntersectionObserver，首批 18，每批 +14，上限 180） | `loadNextMusicSearchPage` |
 | DIY 模式 | `#diy-mode-btn`、`#fullscreen-diy-btn` | `mineradio-diy-player-mode-v1` | `00-state/02-preferences-ui-modes.js` | `applyDiyMode` |
 | 标题栏 | `#desktop-titlebar`（引导 / 更新 / DIY / 最小化 / 最大化 / 关闭） | — | `index.html` + `10-shell/04-desktop-overlay-fullscreen.js` | 新按钮要同时接窗口动作 |
@@ -447,7 +447,7 @@ graph LR
 |---|---|---|---|
 | 控制台可见性两套 | 新：`data-fx-presets` + `fxConsoleSyncGroupVisibility`（组级）；旧：`SONIC_ORIGINAL_FX_CONTROL_IDS` / `SONIC_WORKSHOP_FX_CONTROL_IDS` + `setFxPanelControlsHidden`（控件级） | 旧的一套是因为声波区块标题没登记成控制台项、落在「其他设置」里，组级过滤够不着 | 新代码统一用 `presets`；旧的保留（两者互不冲突，已实机证明各自独立生效） |
 | 容器选择器两份 | `fxConsoleResolveBlock` 认 17 类容器；`fxPanelControlBlockById` 认 6 类 | 同一个控件"搬进分组"与"按 id 隐藏"可能认到不同宿主（尤其 `.fx-toggle-grid` / `.fx-section-label`） | 待修：合并成一份公共选择器，先要确认那两类容器的搬运结果不会换宿主 |
-| 播放源知识散在四处 | `MUSIC_SEARCH_PROVIDER_ORDER`、`SEARCH_HISTORY_MODES`、`searchModeProvider`、`searchProviderUrl`；再加 `platformMeta` / `platformStatus` / `hasPlatformLogin` / `/api/platform/capabilities` | 加一家要改 5–7 处，漏一处就"搜得到但不出现"或反之 | 待修：抽一个 provider registry（名称/能力/搜索顺序/登录态一处定义） |
+| 播放源知识散在四处 | ~~`MUSIC_SEARCH_PROVIDER_ORDER`、`SEARCH_HISTORY_MODES`、`searchModeProvider`、`searchProviderUrl`~~ | 加一家要改 4 处，漏一处就"搜得到但不出现"或反之 | **已合并**：`05-playback/07-search.js` 的 `SEARCH_PROVIDERS` 一张表（key + 搜索路由），历史分桶、合并顺序、模式判定、请求路由全部由它派生；`dev-feature-index.js --check` 另查每个路由在 `server.js` 里真有处理分支。改前后实机读数逐字相同。`platformMeta` / `platformStatus` / `/api/platform/capabilities` 仍是三处（跨主进程与 server），未合并 |
 | 首页遗留轨道仍在渲染 | `#home-tile-row` 标了 `aria-hidden`，但 `renderHomeTiles()` 仍被 `loadHomeDiscover` 调用，`handleHomeTileClick` 只被它自己用 | 每轮首页刷新白算一次 DOM；代码读起来像活功能 | 待定：删掉，或改造成正式区块——需要先定首页要不要这一排 |
 | 运行期创建的控件 | `ensureFxRangeControl` 建了 `fx-lyrictranslationscale` / `fx-lyrictranslationopacity`，`index.html` 里查不到 | 加控件前 grep 不到会以为漏了；也是第二条注册路径 | 已在 §13 记录；`dev-feature-index.js` 已把这类 id 当合法（通过解析创建者调用点，而不是白名单） |
 | 三份 per-preset clamp | `pvTuningClamp` / `haloTuningClamp` / `bhTuningClamp` 形状相同，各绑自己的 schema | 复制粘贴一处改三处 | 收益小、要动三个稳定文件，暂不动；要抽就抽 `makeTuningClamp(schema)` |
@@ -475,5 +475,6 @@ graph LR
 | 2026-11-12 | 新增 `scripts/dev-feature-index.js`（只读生成器）并接进总门 | 变异对照：把 `index.html` 的 `id="fx-halocenterX"` 改名 → `--check` rc=1 且点名「console item '圆环水平位置' (motion/halo) points at #fx-halocenterX」；还原后 rc=0 |
 | 2026-11-12 | 控制台动效页按当前预设过滤：分组声明 `presets`，`setPreset` 后同步 | 实机（CDP，一次脚本依次切 13/14/15）：只有对应预设那一组 `dropped:false`；变异（去掉 `data-fx-presets` 的读取）后 pv/halo/blackhole 三组同时常显，还原后恢复 |
 | 2026-11-12 | 控件形状检查（bool⇔`.fx-toggle`，数值⇔range+`<output>`）接进 `--check`；补 §11.1 / §11.2 / §13.1 | `--check` 覆盖 PV 7 + 环 31 + 黑洞 47 = 85 个键，rc=0；变异（把某个数值控件的 `type="range"` 改掉）后判红 |
+| 2026-11-12 | 播放源搜索配置合并为 `SEARCH_PROVIDERS` 一张表，另加"路由必须在 server.js 里存在"的检查 | 改前后实机读数逐字相同（`tmp/search-tables-before.json` vs `after.json`：history/order/mode/六个 URL 全同）；变异（把 kugou 路由改成 `/api/kugou/search-v2`）→ `--check` rc=1 并点名 |
 
 
