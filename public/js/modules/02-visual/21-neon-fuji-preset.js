@@ -91,7 +91,7 @@ var NEON_SCENE_FS = [
   // The road: perspective divide around the horizon, two line frequencies, scrolling forward.
   'float neonGrid(vec2 p, float speed) {',
   '  vec2 size = vec2(p.y, p.y * p.y * 0.22) * 0.01 * uGridWidth;',
-  '  p.y += uTime * 2.2 * speed;',
+  '  p.y += iTime * 2.2 * speed;',
   '  float fine = neonLine(p.x, size.x) + neonLine(p.y, size.y);',
   '  float wide = neonLine(p.x * 0.25, size.x * 5.0) + neonLine(p.y * 0.25, size.y * 5.0);',
   '  return clamp(fine + wide * 0.55 * uGridGlow, 0.0, 2.0);',
@@ -146,7 +146,9 @@ var NEON_SCENE_FS = [
   '  col += uBeat * 0.06 * vec3(1.0, 0.4, 0.9);',
   '  col = pow(max(col, vec3(0.0)), vec3(0.85));',
   '  fragColor = vec4(col, 1.0);',
-  '}'
+  '}',
+  // Shadertoy shape: the body defines mainImage, the wrapper calls it once.
+  'void main() { vec4 c = vec4(0.0); mainImage(c, gl_FragCoord.xy); gl_FragColor = c; }'
 ].join('\n');
 
 function neonBuildScene() {
