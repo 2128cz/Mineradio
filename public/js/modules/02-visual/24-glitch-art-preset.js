@@ -43,6 +43,8 @@ var GLITCH_SCHEMA = {
   vignetteExponent: { def: 3, min: 1, max: 8, kind: 'ratio', rebuild: 'live' },
   // ---- centre logo + glitched lyrics
   lyricOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  lyricWarp: { def: 0.05, min: 0, max: 0.25, kind: 'ratio', rebuild: 'live' },
+  lyricFill: { def: 0.8, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lyricGlitch: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lyricSize: { def: 1, min: 0.5, max: 1.6, kind: 'ratio', rebuild: 'live' },
   styleCycle: { def: 6, min: 2, max: 20, kind: 'sec', rebuild: 'live' },
@@ -51,7 +53,10 @@ var GLITCH_SCHEMA = {
   audioGlitch: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   audioTear: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   audioBloom: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  beatPulse: { def: 0.4, min: 0, max: 1, kind: 'ratio', rebuild: 'live' }
+  beatPulse: { def: 0.4, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  audioSpeed: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  audioStyle: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  audioRipple: { def: 0.4, min: 0, max: 1, kind: 'ratio', rebuild: 'live' }
 };
 
 var GLITCH_SOURCE_FS = `precision highp float;
@@ -596,7 +601,7 @@ vec3 Render(vec2 uvScreen, int idx, int maxSamples, bool isDisplaced, float jpeg
     //xi.x = OrderedDither();
     xi.x = xi.y;
     float time = 1. * max(0.0, iTime - kCaptureTimeDelay);
-    time = (time * uCaptureSpeed + xi.y * kMBlurGain / 60.0 + uBeat * 0.08 * uDrive * uAudioGlitch) * uSpeed; 
+    time = (time * uCaptureSpeed + xi.y * kMBlurGain / 60.0 + uBeat * 0.08 * uDrive * uAudioStyle) * uSpeed; 
     //time = time - 0.2 * sqrt(uvScreen.y / iResolution.y);
     
     float phase = fract(time);
@@ -900,6 +905,7 @@ uniform vec3 iResolution;
 uniform float iTime;
 uniform sampler2D iChannel0;
 uniform sampler2D iChannel1;
+uniform float uAudioStyle;
 uniform vec2 uLowRes;
 uniform float uDs;
 uniform float uBloomOn;
@@ -915,6 +921,8 @@ uniform vec4 uMainRect;
 uniform vec4 uSubRect;
 uniform float uLyricOn;
 uniform float uLyricGlitch;
+uniform float uLyricWarp;
+uniform float uLyricFill;
 uniform float uHasSub;
 uniform float uStyleHue;
 uniform float uAspect;
@@ -945,27 +953,27 @@ float Vignette(vec2 fragCoord) {
   return mix(1.0, max(0.0, 1.0 - pow(dist * uVigScale, uVigExponent)), uVigStrength);
 }
 
-// Glitched lyric plate: the canvas text is sampled through a screen-space block shift, a moving
-// tear band and a chromatic split whose fringes take the logo's style hue.
+// Lyric plate: the glyphs are filled with the reference field and warped by it, so the text tears
+// with the picture instead of carrying an unrelated random collage. The canvas text becomes the
+// rim/glow; the field supplies the interior and the displacement.
 vec4 lyricPlate(vec2 uv, sampler2D tex, vec4 rect, float seed) {
-  vec2 cell = floor(uv * vec2(150.0, 90.0) / max(1.0, uLyricGlitch * 1.5 + 0.5));
-  float h = glitchHash2(cell, seed);
-  float pick = glitchHash2(cell + 13.7, seed);
-  float bandY = fract(iTime * 0.19 + seed * 0.13);
-  float band = smoothstep(0.03, 0.0, abs(uv.y - bandY)) * (0.5 + uBass);
-  vec2 shift = vec2((h - 0.5) * 0.05 * uLyricGlitch + (pick - 0.5) * 0.10 * band, 0.0);
-  vec2 tuv = (uv + shift - rect.xy) / rect.zw;
+  vec2 cell = min(floor(gl_FragCoord.xy / max(1.0, uDs)), uLowRes - 1.0);
+  vec3 field = texture2D(iChannel1, (cell + 0.5) / uLowRes).xyz;
+  float lum = dot(field, vec3(0.17691, 0.8124, 0.01063));
+  vec2 warp = vec2((field.r - field.b) * uLyricWarp, (lum - 0.5) * uLyricWarp * 0.5);
+  vec2 tuv = (uv + warp - rect.xy) / rect.zw;
   float inside = step(0.0, tuv.x) * step(tuv.x, 1.0) * step(0.0, tuv.y) * step(tuv.y, 1.0);
   tuv = clamp(tuv, 0.0, 1.0);
-  vec2 off = vec2(0.0035 * (0.5 + uLyricGlitch), 0.0);
   vec4 c0 = texture2D(tex, tuv);
+  vec2 off = vec2((field.g - 0.5) * 0.012 * uLyricGlitch + 0.0015, 0.0);
   float aR = texture2D(tex, clamp(tuv + off, 0.0, 1.0)).a;
   float aB = texture2D(tex, clamp(tuv - off, 0.0, 1.0)).a;
-  vec3 fringe = glitchHsv(fract(uStyleHue + 0.5), 0.9, 1.0);
-  vec3 col = c0.rgb;
-  col += fringe * max(0.0, aR - aB) * uLyricGlitch * 1.4;
-  col += vec3(1.0, 0.25, 0.55) * max(0.0, aB - aR) * uLyricGlitch * 0.9;
-  float scan = 1.0 - 0.14 * (0.5 + 0.5 * sin(uv.y * 950.0 + iTime * 5.0));
+  float a = max(c0.a, max(aR, aB) * 0.7);
+  vec3 fillCol = field * 1.6 + c0.rgb * 0.5;
+  vec3 col = mix(c0.rgb, fillCol, uLyricFill);
+  col += vec3(1.0, 0.25, 0.55) * max(0.0, aB - aR) * uLyricGlitch * 0.6;
+  col += glitchHsv(fract(uStyleHue + 0.5), 0.9, 1.0) * max(0.0, aR - aB) * uLyricGlitch * 0.6;
+  float scan = 1.0 - 0.10 * (0.5 + 0.5 * sin(uv.y * 950.0));
   return vec4(col * scan, max(c0.a, max(aR, aB) * 0.7) * inside);
 }
 
@@ -1218,6 +1226,9 @@ function glitchFeedAudio(frame) {
     u.uBass.value = bands[1];
     u.uTreble.value = bands[6];
     u.uBeat.value = glitchClamp(beat, 0, 1) * glitchParam('beatPulse');
+    u.uAudioStyle.value = glitchParam('audioStyle');
+    u.uCaptureSpeed.value = glitchParam('timeSpeed') * (1 + glitchParam('audioSpeed') * bands[1] * drive);
+    u.uRipples.value = Math.max(1, Math.min(8, Math.round(glitchParam('ripples') + glitchParam('audioRipple') * glitchClamp(beat, 0, 1) * 3)));
   }
   var cu = glitchState.compositeMat && glitchState.compositeMat.uniforms;
   if (cu) {
@@ -1298,7 +1309,8 @@ function glitchBuildScene() {
         uTreble: { value: 0 },
         uBeat: { value: 0 },
         uAudioGlitch: { value: 0.6 },
-        uAudioTear: { value: 0.5 }
+        uAudioTear: { value: 0.5 },
+        uAudioStyle: { value: 0.5 }
       },
       glslVersion: THREE.GLSL3,
       vertexShader: GLITCH_QUAD_VS_GLSL3,
@@ -1339,12 +1351,15 @@ function glitchBuildScene() {
         uSubRect: { value: new THREE.Vector4(0, 0.14, 0.62, 0.12) },
         uLyricOn: { value: 1 },
         uLyricGlitch: { value: 0.6 },
+        uLyricWarp: { value: 0.05 },
+        uLyricFill: { value: 0.8 },
         uHasSub: { value: 0 },
         uStyleHue: { value: 0.85 },
         uStyleSeed: { value: 0 },
         uBeat: { value: 0 },
         uBass: { value: 0 },
-        uAspect: { value: 1.78 }
+        uAspect: { value: 1.78 },
+        uAudioStyle: { value: 0.5 }
       },
       vertexShader: GLITCH_QUAD_VS,
       fragmentShader: GLITCH_COMPOSITE_FS,
@@ -1435,6 +1450,7 @@ function glitchApplyKnobs() {
     s.uHDisplaceFreq.value = glitchParam('hDisplace');
     s.uQuantisation.value = Math.round(glitchParam('quantisation'));
     s.uGradeHue.value = glitchParam('gradeHue');
+    s.uAudioStyle.value = glitchParam('audioStyle');
     s.uDrive.value = glitchParam('audioDrive');
     s.uAudioGlitch.value = glitchParam('audioGlitch');
     s.uAudioTear.value = glitchParam('audioTear');
@@ -1450,6 +1466,8 @@ function glitchApplyKnobs() {
     c.uVigStrength.value = glitchParam('vignetteStrength');
     c.uVigScale.value = glitchParam('vignetteScale');
     c.uVigExponent.value = glitchParam('vignetteExponent');
+    c.uLyricWarp.value = glitchParam('lyricWarp');
+    c.uLyricFill.value = glitchParam('lyricFill');
   }
   var b = glitchState.blurMat && glitchState.blurMat.uniforms;
   if (b) b.uRadius.value = Math.max(1, glitchParam('bloomRadius') * 130);

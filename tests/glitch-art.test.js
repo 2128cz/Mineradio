@@ -20,7 +20,7 @@ assert.strictEqual(sandbox.GLITCH_PRESET_INDEX, 19, 'the preset index is 19 and 
 
 const schema = sandbox.GLITCH_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 31, 'all Buffer A / presentation / logo / audio knobs live in GLITCH_SCHEMA');
+assert.ok(keys.length >= 36, 'all Buffer A / presentation / logo / audio knobs live in GLITCH_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);

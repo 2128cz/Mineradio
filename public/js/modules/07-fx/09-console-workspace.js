@@ -362,6 +362,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-glitchvignetteScale', '晕影范围', '故障 艺术 晕影 范围'),
         fxConsoleItem('fx-glitchvignetteExponent', '晕影衰减', '故障 艺术 晕影 衰减'),
         fxConsoleItem('t-glitchlyricOn', '歌词', '故障 艺术 歌词 开关'),
+        fxConsoleItem('fx-glitchlyricWarp', '歌词场扭曲', '故障 艺术 歌词 场 扭曲'),
+        fxConsoleItem('fx-glitchlyricFill', '歌词场填充', '故障 艺术 歌词 场 填充'),
         fxConsoleItem('fx-glitchlyricGlitch', '歌词故障强度', '故障 艺术 歌词 故障 错位'),
         fxConsoleItem('fx-glitchlyricSize', '歌词字号', '故障 艺术 歌词 字号'),
         fxConsoleItem('fx-glitchstyleCycle', '风格切换秒数', '故障 艺术 风格 切换 周期'),
@@ -370,6 +372,9 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-glitchaudioTear', '音频撕裂联动', '故障 艺术 音频 撕裂 联动'),
         fxConsoleItem('fx-glitchaudioBloom', '音频溢光联动', '故障 艺术 音频 溢光 联动'),
         fxConsoleItem('fx-glitchbeatPulse', '鼓点脉冲', '故障 艺术 鼓点 脉冲'),
+        fxConsoleItem('fx-glitchaudioSpeed', '音频加速播放', '故障 艺术 音频 加速 播放'),
+        fxConsoleItem('fx-glitchaudioStyle', '音频驱动风格', '故障 艺术 音频 驱动 风格'),
+        fxConsoleItem('fx-glitchaudioRipple', '鼓点增涟漪', '故障 艺术 鼓点 涟漪'),
         fxConsoleItem({ selector: '.fx-glitch-tuning .fx-actions' }, '恢复故障艺术默认', '故障 艺术 重置 还原 默认'),
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
