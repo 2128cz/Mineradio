@@ -2178,7 +2178,13 @@ function runMixerDeskPresetCheck() {
     [/Grid dogrid\(vec3 ro,vec3 rd\)/, 'the reference grid function has to survive the port'],
     [/vec4 map\(vec3 p,Grid grid\)/, 'the reference module field has to survive the port'],
     [/March domarch\(vec3 ro,vec3 rd,int iter\)/, 'the reference march has to survive the port'],
-    [/texture\(iChannel0,vec2\(march\.grid\.h\.z,0\)\)\.x\*uLevelGain/, 'the level channel has to be the reference lookup with its gain knob'],
+    [/float mLevel\(float h\)/, 'the level lookup has to be one helper the whole field can use'],
+    [/texture\(iChannel0, vec2\(fract\(h\), 0\.5\)\)\.x \* uLevelGain \* uAudioDrive/, 'the helper has to scale by the level and audio-drive knobs'],
+    [/float drv=mLevel\(grid\.h\.z\*1\.37\+\.11\)/, 'the knobs have to read their own spectrum point'],
+    [/ani=clamp\(ani\+mLevel\(grid\.h\.z\*2\.17\+\.31\)/, 'the buttons have to be driven by the spectrum too'],
+    [/plasma\*=\(\.7\+\.6\*mLevel/, 'the kaoss surface has to be driven by the spectrum'],
+    [/uBeat\*uShakeAmp\*\.02/, 'the camera shake has to be scaled by the beat and its knob'],
+    [/sin\(iTime\*uShakeRate\*8\.7\)/, 'the shake has to wobble at its own rate'],
     [/domarch\(ro,rd,int\(uSteps\)\)/, 'the march steps have to come from the knob'],
     [/int\(uShadowSteps\)/, 'the shadow steps have to come from the knob'],
     [/if\(rl>uMaxDist\)\{break;\}/, 'the far distance has to come from the knob'],
@@ -2238,7 +2244,7 @@ function runMixerDeskPresetCheck() {
     fail('the visual console needs a 调音台 group in the 动效 tab');
   }
   if (!/presets: \[MIXER_PRESET_INDEX\]/.test(consoleText)) fail('the 调音台 group has to carry presets: [MIXER_PRESET_INDEX]');
-  if (!/mineradio-mixer-tuning-v5/.test(tuningText) || !/function bindMixerTuningResetButtons\(/.test(tuningText)) {
+  if (!/mineradio-mixer-tuning-v6/.test(tuningText) || !/function bindMixerTuningResetButtons\(/.test(tuningText)) {
     fail('the desk knobs need their own store and one reset button per row');
   }
   const levelTest = path.join(appRoot, 'tests', 'mixer-level-table.test.js');

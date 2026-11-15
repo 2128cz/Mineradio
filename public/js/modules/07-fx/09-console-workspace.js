@@ -284,7 +284,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-neonbeatScene', '场景跟拍量', '日本霓虹 场景 网格 太阳 雪线 跟拍 强度'),
         fxConsoleItem({ selector: '.fx-neon-tuning .fx-actions' }, '恢复日本霓虹默认', '日本霓虹 重置 还原 默认')
       ] },
-      { key: 'mixer', title: '调音台', presets: [MIXER_PRESET_INDEX], hint: '参考调音台 shader 的移植：整屏由可平铺的模块组成，镜头缓慢平移；电平表由音乐频段驱动', items: [
+      { key: 'mixer', title: '调音台', presets: [MIXER_PRESET_INDEX], hint: '参考调音台 shader 的移植：整屏可平铺模块，旋转/推子/灯/屏全部由频谱点驱动，镜头随鼓点震动', items: [
         fxConsoleItem('fx-mixercamPan', '镜头平移速度', '调音台 镜头 平移 走带 速度'),
         fxConsoleItem('fx-mixercamAnim', '镜头摆动速度', '调音台 镜头 摆动 速度'),
         fxConsoleItem('fx-mixercamRoll', '镜头滚转', '调音台 镜头 滚转 角度'),
@@ -295,6 +295,9 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mixermarchSteps', '光线步数', '调音台 光线 步数 精度 性能'),
         fxConsoleItem('fx-mixershadowSteps', '阴影步数', '调音台 阴影 步数 性能'),
         fxConsoleItem('fx-mixermaxDist', '最远距离', '调音台 最远 距离 步进'),
+        fxConsoleItem('fx-mixercamShake', '镜头跟拍震动', '调音台 相机 鼓点 震动 摇晃'),
+        fxConsoleItem('fx-mixercamShakeRate', '震动频率', '调音台 相机 震动 频率 快慢'),
+        fxConsoleItem('fx-mixeraudioDrive', '音频驱动强度', '调音台 音频 驱动 所有 模块 电平 频谱'),
         fxConsoleItem('fx-mixerrenderScale', '渲染分辨率', '调音台 渲染 分辨率 性能'),
         fxConsoleItem({ selector: '.fx-mixer-tuning .fx-actions' }, '恢复调音台默认', '调音台 重置 还原 默认')
       ] },

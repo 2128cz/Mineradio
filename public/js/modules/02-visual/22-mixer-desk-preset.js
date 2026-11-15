@@ -23,6 +23,9 @@ var MIXER_TUNING_SCHEMA = {
   marchSteps: { def: 100, min: 24, max: 160, kind: 'count', rebuild: 'live' },
   shadowSteps: { def: 30, min: 0, max: 60, kind: 'count', rebuild: 'live' },
   maxDist: { def: 50, min: 10, max: 120, kind: 'unit', rebuild: 'live' },
+  camShake: { def: 0.6, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  camShakeRate: { def: 1, min: 0.1, max: 4, kind: 'ratio', rebuild: 'live' },
+  audioDrive: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
 
@@ -48,11 +51,19 @@ var MIXER_PORT_LINES = [
   "uniform float uCamFov;",
   "uniform float uGridScale;",
   "uniform float uLevelGain;",
+  "uniform float uAudioDrive;",
   "uniform float uSteps;",
   "uniform float uShadowSteps;",
   "uniform float uMaxDist;",
+  "uniform float uBeat;",
+  "uniform float uShakeAmp;",
+  "uniform float uShakeRate;",
   "#define lofi(i,j) (floor((i)/(j))*(j))",
   "#define lofir(i,j) (round((i)/(j))*(j))",
+  "",
+  "float mLevel(float h){",
+  "  return texture(iChannel0, vec2(fract(h), 0.5)).x * uLevelGain * uAudioDrive;",
+  "}",
   "",
   "const float PI=acos(-1.);",
   "const float TAU=PI*2.;",
@@ -161,7 +172,7 @@ var MIXER_PORT_LINES = [
   "      float hole=sdbox(pt.xy,vec2(0.,.7))-.03;",
   "      d=max(d,-hole);",
   "      ",
-  "      pt.y-=.5-smoothstep(-.5,.5,sin(iTime+c.x+grid.h.z*100.));",
+  "      float drv=mLevel(grid.h.z*1.93+.37); pt.y-=.5-smoothstep(-.5,.5,sin(iTime+c.x+grid.h.z*100.)) - (drv-.5)*.7;",
   "      float d2=sdbox(pt,vec3(.02,.07,.07))-.03;",
   "      ",
   "      if(d2<d){",
@@ -192,8 +203,8 @@ var MIXER_PORT_LINES = [
   "        return vec4(d2,4.*l,0,0);",
   "      }",
   "    }else if(grid.h.y<1.){//bigass knob",
-  "      float ani=smoothstep(-.5,.5,sin(iTime+grid.h.z*100.));",
-  "      pt.xy*=r2d(PI/6.*5.*mix(-1.,1.,ani));",
+  "      float ani=smoothstep(-.5,.5,sin(iTime+grid.h.z*100.)); float drv=mLevel(grid.h.z*1.37+.11);",
+  "      pt.xy*=r2d(PI/6.*5.*mix(-1.,1.,ani) + (drv-.5)*1.7);",
   "",
   "      float metal=step(length(pt.xy),.45);",
   "      float wave=metal*sin(length(pt.xy)*500.)/1000.;",
@@ -223,7 +234,7 @@ var MIXER_PORT_LINES = [
   "      ",
   "      if(d3<d){",
   "        float led=1.-ani;",
-  "        led*=.5+.5*sin(iTime*exp2(3.+3.*grid.h.z));",
+  "        led*=(.5+.5*sin(iTime*exp2(3.+3.*grid.h.z)))*(.35+.65*mLevel(grid.h.z*2.3+.41));",
   "        return vec4(d3,2,led,0);",
   "      }",
   "    }",
@@ -232,8 +243,8 @@ var MIXER_PORT_LINES = [
   "      float hole=sdbox(p.xy,vec2(.9,.05));",
   "      d=max(d,-hole);",
   "      ",
-  "      float ani=smoothstep(-.2,.2,sin(iTime+grid.h.z*100.));",
-  "      pt.x-=mix(-.8,.8,ani);",
+  "      float ani=smoothstep(-.2,.2,sin(iTime+grid.h.z*100.)); float drv=mLevel(grid.h.z*1.71+.23);",
+  "      pt.x-=mix(-.8,.8,clamp(ani*.65+drv*.45,0.,1.));",
   "      ",
   "      float d2=sdbox(pt,vec3(.07,.25,.4))+.05*p.z;",
   "      d2=max(d2,-p.z);",
@@ -264,7 +275,7 @@ var MIXER_PORT_LINES = [
   "      float hole=sdbox(pt.xy,vec2(.19,.33))-.01;",
   "      d=max(d,-hole);",
   "      ",
-  "      float ani=smoothstep(.8,.9,sin(10.*iTime-c.x*2.2+grid.h.z*100.));",
+  "      float ani=smoothstep(.8,.9,sin(10.*iTime-c.x*2.2+grid.h.z*100.)); ani=clamp(ani+mLevel(grid.h.z*2.17+.31)*.7,0.,1.);",
   "",
   "      vec4 fuck=vec4(d,0,0,0);",
   "      float d3=length(pt-vec3(0,.22,.04))-.05;",
@@ -301,8 +312,8 @@ var MIXER_PORT_LINES = [
   "      float hole=length(p.xy)-.25;",
   "      d=max(d,-hole);",
   "      ",
-  "      float ani=smoothstep(-.5,.5,sin(2.*iTime+grid.h.z*100.));",
-  "      pt.xy*=r2d(PI/6.*5.*mix(-1.,1.,ani));",
+  "      float ani=smoothstep(-.5,.5,sin(2.*iTime+grid.h.z*100.)); float drv=mLevel(grid.h.z*1.51+.29);",
+  "      pt.xy*=r2d(PI/6.*5.*mix(-1.,1.,ani) + (drv-.5)*1.7);",
   "      ",
   "      float d2=length(pt.xy)-.23+.05*pt.z;",
   "      d2=max(d2,abs(pt.z)-.4);",
@@ -429,6 +440,9 @@ var MIXER_PORT_LINES = [
   "  vec2 uv = vec2(fragCoord.x / iResolution.x, fragCoord.y / iResolution.y);",
   "  vec2 p=uv*2.-1.;",
   "  p.x*=iResolution.x/iResolution.y;",
+  "  float shk=uBeat*uShakeAmp*.02;",
+  "  p+=vec2(sin(iTime*uShakeRate*8.7),cos(iTime*uShakeRate*7.3))*shk;",
+  "  p=r2d(cos(iTime*uShakeRate*5.3)*shk*.8)*p;",
   "",
   "  vec3 col=vec3(0);",
   "",
@@ -452,10 +466,11 @@ var MIXER_PORT_LINES = [
   "    ",
   "    float mtl=march.isect.y;",
   "    float mtlp=march.isect.z;",
+  "    float drv=mLevel(march.grid.h.z*2.1+.37);",
   "    if(mtl==0.){",
   "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),.1));",
   "      vec3 c=.9+.0*sin(.1*(march.grid.c.x+march.grid.c.y)+march.grid.h.z+vec3(0,2,3));",
-  "      basecol=mix(vec3(.04),c,mtlp);",
+  "      basecol=mix(vec3(.04),c,mtlp)*(.75+.5*drv);",
   "    }else if(mtl==1.){",
   "      basecol=vec3(0);",
   "      speccol=vec3(.5);",
@@ -468,7 +483,7 @@ var MIXER_PORT_LINES = [
   "      vec3 led=vec3(1);",
   "      led*=exp(-60.*sdbox(cc,vec2(0.,.08)));",
   "      led*=c.x>.5?vec3(5,1,2):vec3(1,5,2);",
-  "      float lv=texture(iChannel0,vec2(march.grid.h.z,0)).x*uLevelGain;",
+  "      float lv=mLevel(march.grid.h.z*1.13+.07);",
   "      col+=led*step(c.x,-.8+1.6*lv);",
   "      basecol=.04*led;",
   "    }else if(mtl==2.){//led",
@@ -476,9 +491,9 @@ var MIXER_PORT_LINES = [
   "      speccol=vec3(1.);",
   "      specpow=100.;",
   "      ",
-  "      col+=mtlp*vec3(2,.5,.5);",
+  "      col+=mtlp*vec3(2,.5,.5)*(.4+.6*drv);",
   "    }else if(mtl==3.){//metal",
-  "      basecol=vec3(.2);",
+  "      basecol=vec3(.2)+vec3(.06)*drv;",
   "      speccol=vec3(1.8);",
   "      specpow=100.;",
   "      ndelta=3E-2;",
@@ -495,12 +510,12 @@ var MIXER_PORT_LINES = [
   "      led*=exp(-60.*sdbox(cc,vec2(0.,.0)));",
   "      led*=vec3(2,1,2);",
   "      float plasma=sin(length(c)*10.-10.*iTime+march.grid.h.z*.7);",
-  "      plasma+=sin(c.y*10.-7.*iTime);",
+  "      plasma+=sin(c.y*10.-7.*iTime); plasma*=(.7+.6*mLevel(march.grid.h.z*2.7+.53));",
   "      led*=.5+.5*sin(plasma);",
-  "      col+=2.*led;",
+  "      col+=2.*led*(.4+.6*drv);",
   "      basecol=.04*led;",
   "    }else if(mtl==5.){//808",
-  "      basecol=vec3(.9,mtlp,.02);",
+  "      basecol=vec3(.9,mtlp,.02)*(.35+.65*drv);",
   "    }",
   "    ",
   "    vec3 n=nmap(march.rp,march.grid,ndelta);",
@@ -560,14 +575,12 @@ var MIXER_BLIT_FS = [
   '}'
 ].join('\n');
 
-// ---------------------------------------------------------------- level table (iChannel0)
+// ---------------------------------------------------------------- iChannel0: 64-bin spectrum
 
-var MIXER_LEVEL_BANDS = 8;
-var MIXER_LEVEL_AGES = 8;
+var MIXER_BINS = 64;
 var mixerLevelState = {
-  level: new Float32Array(MIXER_LEVEL_BANDS),
-  peak: new Float32Array(MIXER_LEVEL_BANDS),
-  clock: 0
+  level: new Float32Array(MIXER_BINS),
+  peak: new Float32Array(MIXER_BINS)
 };
 
 function mixerClamp01(value) {
@@ -575,8 +588,16 @@ function mixerClamp01(value) {
   return !isFinite(n) ? 0 : Math.min(1, Math.max(0, n));
 }
 
+// Log-spaced bin -> FFT index, so the low end is not squeezed into one texel.
+function mixerSpectrumIndex(bin, bins) {
+  var n = (typeof frequencyData !== 'undefined' && frequencyData && frequencyData.length) ? frequencyData.length : 0;
+  if (!n) return 0;
+  var t = Math.pow(n, Math.max(0, Math.min(1, bin / Math.max(1, bins - 1))));
+  return Math.min(n - 1, Math.max(0, Math.floor(t)));
+}
+
 function mixerBandValues(frame) {
-  var out = new Float32Array(MIXER_LEVEL_BANDS);
+  var out = new Float32Array(8);
   if (frame && (frame.sonicDetailed || frame.subBass !== undefined)) {
     out[0] = Number(frame.subBass) || 0;
     out[1] = Number(frame.bass) || 0;
@@ -602,26 +623,35 @@ function mixerBandValues(frame) {
   return out;
 }
 
-function mixerWriteLevelTable(data, level, peak, shift) {
-  if (shift) {
-    for (var age = MIXER_LEVEL_AGES - 1; age >= 1; age--) {
-      for (var band = 0; band < MIXER_LEVEL_BANDS; band++) {
-        var from = ((age - 1) * MIXER_LEVEL_BANDS + band) * 4;
-        var to = (age * MIXER_LEVEL_BANDS + band) * 4;
-        data[to] = data[from];
-        data[to + 1] = data[from + 1];
-      }
+// Spectrum where the analyser has data; bands shaped across the 64 bins where it does not, so the
+// console still moves on a track that has not been analysed yet.
+function mixerFillSpectrum(level, frame, smooth) {
+  var k = Math.max(0.06, 1 - Math.min(0.95, Math.max(0, Number(smooth) || 0)) * 0.85);
+  var hasFft = typeof frequencyData !== 'undefined' && frequencyData && frequencyData.length > 4;
+  var bands = hasFft ? null : mixerBandValues(frame);
+  for (var j = 0; j < MIXER_BINS; j++) {
+    var target = 0;
+    if (hasFft) {
+      target = frequencyData[mixerSpectrumIndex(j, MIXER_BINS)] / 255;
+    } else if (bands) {
+      var t = j / (MIXER_BINS - 1);
+      var a = bands[Math.min(7, Math.floor(t * 8))];
+      var b = bands[Math.min(7, Math.floor(t * 8) + 1)];
+      target = (a + (b - a) * ((t * 8) % 1)) * (1 - t * 0.35);
     }
+    var next = level[j] + (target - level[j]) * k;
+    level[j] = mixerClamp01(next);
   }
-  for (var b = 0; b < MIXER_LEVEL_BANDS; b++) {
-    var at = b * 4;
-    data[at] = Math.round(mixerClamp01(level[b]) * 255);
-    data[at + 1] = Math.round(mixerClamp01(peak[b]) * 255);
-    for (var a = 0; a < MIXER_LEVEL_AGES; a++) {
-      var off = (a * MIXER_LEVEL_BANDS + b) * 4;
-      data[off + 2] = Math.round((b / (MIXER_LEVEL_BANDS - 1)) * 255);
-      data[off + 3] = Math.round((a / (MIXER_LEVEL_AGES - 1)) * 255);
-    }
+  return level;
+}
+
+function mixerWriteSpectrum(data, level) {
+  for (var j = 0; j < MIXER_BINS; j++) {
+    var off = j * 4;
+    data[off] = Math.round(level[j] * 255);
+    data[off + 1] = Math.round(level[j] * 255);
+    data[off + 2] = Math.round((j / (MIXER_BINS - 1)) * 255);
+    data[off + 3] = 255;
   }
 }
 
@@ -651,7 +681,11 @@ function mixerInitialUniforms() {
     uLevelGain: { value: 1 },
     uSteps: { value: 100 },
     uShadowSteps: { value: 30 },
-    uMaxDist: { value: 50 }
+    uMaxDist: { value: 50 },
+    uBeat: { value: 0 },
+    uShakeAmp: { value: 0.6 },
+    uShakeRate: { value: 1 },
+    uAudioDrive: { value: 1 }
   };
 }
 
@@ -660,11 +694,11 @@ function mixerBuildScene() {
   if (typeof THREE === 'undefined' || typeof renderer === 'undefined' || !renderer) return false;
   try {
     mixerState.size = new THREE.Vector2(1, 1);
-    var levelData = new Uint8Array(MIXER_LEVEL_BANDS * MIXER_LEVEL_AGES * 4);
-    var levelTex = new THREE.DataTexture(levelData, MIXER_LEVEL_BANDS * MIXER_LEVEL_AGES, 1,
+    var levelData = new Uint8Array(MIXER_BINS * 4);
+    var levelTex = new THREE.DataTexture(levelData, MIXER_BINS, 1,
       THREE.RGBAFormat, THREE.UnsignedByteType);
-    levelTex.magFilter = THREE.NearestFilter;
-    levelTex.minFilter = THREE.NearestFilter;
+    levelTex.magFilter = THREE.LinearFilter;
+    levelTex.minFilter = THREE.LinearFilter;
     levelTex.needsUpdate = true;
 
     var uniforms = mixerInitialUniforms();
@@ -707,8 +741,7 @@ function mixerBuildScene() {
     mixerState.blitCam = blitCam;
     mixerLevelState.level.fill(0);
     mixerLevelState.peak.fill(0);
-    mixerLevelState.clock = 0;
-    mixerWriteLevelTable(levelData, mixerLevelState.level, mixerLevelState.peak, false);
+    mixerWriteSpectrum(levelData, mixerLevelState.level);
     mixerState.built = true;
     return true;
   } catch (err) {
@@ -744,23 +777,10 @@ function mixerAlignPassSize() {
 // ---------------------------------------------------------------- per-frame
 
 function mixerUpdateLevels(frame, dt, smooth) {
-  var values = mixerBandValues(frame);
-  var k = Math.max(0.08, 1 - Math.min(0.95, Math.max(0, Number(smooth) || 0)) * 0.85);
-  for (var b = 0; b < MIXER_LEVEL_BANDS; b++) {
-    mixerLevelState.level[b] += (values[b] - mixerLevelState.level[b]) * k;
-    mixerLevelState.peak[b] = Math.max(mixerLevelState.peak[b] * 0.94, mixerLevelState.level[b]);
-  }
-  mixerLevelState.clock += Math.max(0, dt);
-  var ticked = false;
-  while (mixerLevelState.clock >= 1 / 12) {
-    mixerLevelState.clock -= 1 / 12;
-    ticked = true;
-  }
-  if (ticked) {
-    mixerWriteLevelTable(mixerState.levelData, mixerLevelState.level, mixerLevelState.peak, true);
-    mixerState.levelTex.needsUpdate = true;
-  }
-  return ticked;
+  mixerFillSpectrum(mixerLevelState.level, frame, smooth);
+  mixerWriteSpectrum(mixerState.levelData, mixerLevelState.level);
+  mixerState.levelTex.needsUpdate = true;
+  return true;
 }
 
 function mixerFeedUniforms(nowSec) {
@@ -775,6 +795,10 @@ function mixerFeedUniforms(nowSec) {
   u.uSteps.value = Math.max(8, Math.min(160, mixerParam('marchSteps')));
   u.uShadowSteps.value = Math.max(0, Math.min(60, mixerParam('shadowSteps')));
   u.uMaxDist.value = Math.max(5, mixerParam('maxDist'));
+  u.uBeat.value = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
+  u.uShakeAmp.value = Math.max(0, mixerParam('camShake'));
+  u.uShakeRate.value = Math.max(0.1, mixerParam('camShakeRate'));
+  u.uAudioDrive.value = Math.max(0, mixerParam('audioDrive'));
   mixerState.blitMat.uniforms.uVignette.value = 0.2;
   void nowSec;
 }

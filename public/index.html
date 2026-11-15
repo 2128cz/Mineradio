@@ -1291,7 +1291,7 @@
         <div class="fx-slider"><label>场景跟拍量</label><input id="fx-neonbeatScene" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatScene', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNeonTuning()">恢复日本霓虹默认</button></div>
       </div>
-      <!-- 调音台 (preset 17)：参考 shader 的移植；这些旋钮把参考里的镜头/格距/步进参数抽了出来。 -->
+      <!-- 调音台 (preset 17)：参考 shader 的移植；旋钮抽出镜头/格距/步进，音频驱动整墙模块。 -->
       <div class="fx-mixer-tuning">
         <div class="fx-slider"><label>镜头平移速度</label><input id="fx-mixercamPan" type="range" min="0" max="3" step="0.01" oninput="setMixerTuning('camPan', this.value)"><output></output></div>
         <div class="fx-slider"><label>镜头摆动速度</label><input id="fx-mixercamAnim" type="range" min="0" max="3" step="0.01" oninput="setMixerTuning('camAnim', this.value)"><output></output></div>
@@ -1303,6 +1303,9 @@
         <div class="fx-slider"><label>光线步数</label><input id="fx-mixermarchSteps" type="range" min="24" max="160" step="1" oninput="setMixerTuning('marchSteps', this.value)"><output></output></div>
         <div class="fx-slider"><label>阴影步数</label><input id="fx-mixershadowSteps" type="range" min="0" max="60" step="1" oninput="setMixerTuning('shadowSteps', this.value)"><output></output></div>
         <div class="fx-slider"><label>最远距离</label><input id="fx-mixermaxDist" type="range" min="10" max="120" step="1" oninput="setMixerTuning('maxDist', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头跟拍震动</label><input id="fx-mixercamShake" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('camShake', this.value)"><output></output></div>
+        <div class="fx-slider"><label>震动频率</label><input id="fx-mixercamShakeRate" type="range" min="0.1" max="4" step="0.05" oninput="setMixerTuning('camShakeRate', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频驱动强度</label><input id="fx-mixeraudioDrive" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('audioDrive', this.value)"><output></output></div>
         <div class="fx-slider"><label>渲染分辨率</label><input id="fx-mixerrenderScale" type="range" min="0.5" max="1" step="0.01" oninput="setMixerTuning('renderScale', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetMixerTuning()">恢复调音台默认</button></div>
       </div>
