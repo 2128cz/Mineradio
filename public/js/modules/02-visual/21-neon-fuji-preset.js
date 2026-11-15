@@ -61,7 +61,10 @@ var NEON_TUNING_SCHEMA = {
   carDepthFar: { def: 90, min: 20, max: 400, kind: 'unit', rebuild: 'live' },
   carDrop: { def: 0.22, min: 0.02, max: 0.6, kind: 'ratio', rebuild: 'live' },
   carLead: { def: 2.4, min: 0.4, max: 6, kind: 'sec', rebuild: 'live' },
-  carExitSize: { def: 1.4, min: 0.6, max: 4, kind: 'ratio', rebuild: 'live' },
+  carAccel: { def: 0.9, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
+  carRise: { def: 0.9, min: 0, max: 3, kind: 'unit', rebuild: 'live' },
+  carExitSize: { def: 0.9, min: 0.4, max: 3, kind: 'ratio', rebuild: 'live' },
+  carFadeTravel: { def: 0.55, min: 0.1, max: 2, kind: 'unit', rebuild: 'live' },
   beatSync: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   trailCount: { def: 8, min: 0, max: 12, kind: 'count', rebuild: 'live' },
   trailInterval: { def: 0.07, min: 0.02, max: 0.4, kind: 'sec', rebuild: 'live' },
@@ -389,15 +392,27 @@ function neonEntranceAt(startAt, lead, grid) {
   return Math.min(enterAt, startAt - 0.35);
 }
 
-// The travel parameter at which a line has grown past carExitSize screen heights: there is
-// nothing left to read, so that is when it leaves the frame.
-function neonExitTravel() {
+// The travel parameter at which a line has grown to `size` screen heights: size is carSize · near/d,
+// so this inverts the same exponential the placement uses.
+function neonSizeTravel(size) {
   var near = Math.max(0.5, neonParam('carDepthNear'));
   var far = Math.max(near * 1.2, neonParam('carDepthFar'));
   var ratio = far / near;
-  var size = Math.max(0.01, neonParam('carSize'));
-  var exitSize = Math.max(size * 1.01, neonParam('carExitSize'));
-  return 1 + Math.log(exitSize / size) / Math.log(ratio);
+  var base = Math.max(0.01, neonParam('carSize'));
+  return 1 + Math.log(Math.max(base * 1.001, size) / base) / Math.log(ratio);
+}
+
+// Where the text starts dimming: by the time it is this big the line is past the eye, and both its
+// brightness and its opacity fall from here. It keeps moving the whole time - the frame is left by
+// the glyphs sweeping overhead, not by them being cut off.
+function neonFadeTravel() {
+  return neonSizeTravel(neonParam('carExitSize'));
+}
+
+// End of life: the fade has finished and the line is recycled. The extra travel is what gives the
+// afterimage stamps behind it room to live out their own life instead of vanishing with the text.
+function neonExitTravel() {
+  return neonFadeTravel() + Math.max(0.05, neonParam('carFadeTravel'));
 }
 
 function neonLineClock(line) {
@@ -430,7 +445,11 @@ function neonActiveLines() {
     if (!isFinite(end) || end <= start) end = start + Math.max(0.6, Number(line.duration) || 4);
     var enterAt = neonEntranceAt(start, lead, grid);
     var dur = Math.max(0.35, start - enterAt);
-    var t = (now - enterAt) / dur;
+    // The run is not evenly spaced: p is the share of the lead time that has passed (1 at the
+    // line's timestamp) and the travel is its (1+accel) power, so the text hangs far away and then
+    // whips in - and keeps accelerating after arrival instead of coasting.
+    var p = (now - enterAt) / dur;
+    var t = p > 0 ? Math.pow(p, 1 + Math.max(0, neonParam('carAccel'))) : p;
     if (!(t > 0) || t >= exitT) continue;
     out.push({
       key: 'l' + start.toFixed(3), text: neonLineText(line), start: start, end: end,
@@ -552,20 +571,25 @@ function neonPlaceCar(car, t, opacityScale) {
   var d = Math.max(near * 0.02, near * Math.pow(ratio, 1 - tt));
   var size = neonParam('carSize') * (near / d);
   var horizon = neonParam('horizon');
-  var yNdc = horizon - neonParam('carDrop') * Math.min(1, Math.max(0, tt));
+  // The drop stops at arrival; after that the run lifts, so the glyphs sweep up over the camera
+  // rather than sliding off the bottom of the frame.
+  var after = Math.max(0, tt - 1);
+  var yNdc = horizon - neonParam('carDrop') * Math.min(1, tt) + neonParam('carRise') * after * after;
   var worldH = Math.max(0.0001, size * 2 * d * tanHalf);
   var worldW = worldH * Math.max(1, car.aspect);
   var yWorld = yNdc * d * tanHalf;
-  // The entrance fades in over the first tenth of the run; the exit fades out as the glyphs grow
-  // past the point where they mean anything.
+  // Fades: in over the first tenth of the run, out from carExitSize over carFadeTravel. The fade
+  // dims the glyphs as well as dissolving them - a huge white plane would read as a flash.
   var fadeIn = Math.min(1, tt / 0.10);
-  var exitSize = Math.max(0.01, neonParam('carExitSize'));
-  var fadeOut = 1 - Math.min(1, Math.max(0, (size - exitSize * 0.62) / Math.max(1e-4, exitSize * 0.38)));
+  var fadeStart = neonFadeTravel();
+  var fadeSpan = Math.max(0.05, neonExitTravel() - fadeStart);
+  var fade = 1 - neonClamp01((tt - fadeStart) / fadeSpan);
   car.body.visible = true;
   car.body.position.set(0, yWorld, -d);
   car.body.scale.set(worldW, worldH, 1);
-  car.bodyMat.opacity = neonClamp01((0.35 + 0.65 * opacityScale) * fadeIn * fadeOut);
-  return { d: d, y: yWorld, w: worldW, h: worldH, size: size };
+  car.bodyMat.opacity = neonClamp01((0.35 + 0.65 * opacityScale) * fadeIn * fade);
+  if (car.bodyMat.color && car.bodyMat.color.setRGB) car.bodyMat.color.setRGB(fade, fade, fade);
+  return { d: d, y: yWorld, w: worldW, h: worldH, size: size, fade: fade };
 }
 
 function neonRetireTrails(car) {
@@ -578,7 +602,7 @@ function neonRetireTrails(car) {
 
 // Stamp the line's current projection into a free slot. The slot is frozen where the car is at
 // this instant - position and size - and only its opacity changes after that.
-function neonSpawnTrail(car, nowSec, capacity, opacity) {
+function neonSpawnTrail(car, nowSec, capacity, opacity, brightness) {
   var slot = null;
   var k;
   for (k = 0; k < capacity; k++) {
@@ -591,10 +615,38 @@ function neonSpawnTrail(car, nowSec, capacity, opacity) {
     }
   }
   slot.bornAt = nowSec;
+  slot.fade = neonClamp01(brightness == null ? 1 : brightness);
   slot.mesh.visible = true;
   slot.mesh.position.set(car.body.position.x, car.body.position.y, car.body.position.z);
   slot.mesh.scale.set(car.body.scale.x, car.body.scale.y, 1);
-  slot.mat.opacity = neonClamp01(opacity);
+  if (slot.mat.color && slot.mat.color.setRGB) slot.mat.color.setRGB(slot.fade, slot.fade, slot.fade);
+  slot.mat.opacity = neonClamp01(opacity * slot.fade);
+}
+
+// Age every live stamp in the pool. Returns how many are still alive, which is also the answer to
+// "may this car be disposed yet" - the text can be gone while its afterimages are still on screen.
+function neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, capacity) {
+  var alive = 0;
+  for (var k = 0; k < NEON_TRAIL_MAX; k++) {
+    var slot = car.trails[k];
+    if (slot.bornAt < 0 || k >= capacity) {
+      slot.bornAt = -1;
+      slot.mesh.visible = false;
+      slot.mat.opacity = 0;
+      continue;
+    }
+    var age = nowSec - slot.bornAt;
+    if (age >= trailLife) {
+      slot.bornAt = -1;
+      slot.mesh.visible = false;
+      slot.mat.opacity = 0;
+      continue;
+    }
+    slot.mesh.visible = true;
+    slot.mat.opacity = neonClamp01(trailOpacity * (1 - age / trailLife) * (0.65 + 0.35 * beat) * (slot.fade == null ? 1 : slot.fade));
+    alive++;
+  }
+  return alive;
 }
 
 function neonStepCars(nowSec, dt) {
@@ -602,14 +654,16 @@ function neonStepCars(nowSec, dt) {
   var wanted = {};
   var i, k;
   for (i = 0; i < lines.length; i++) wanted[lines[i].key] = lines[i];
+  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
+  var kick = (typeof smoothBass !== 'undefined' && isFinite(smoothBass)) ? Number(smoothBass) : 0;
+  var boost = 1 + neonParam('beatKick') * (beat * 0.6 + kick * 0.4);
+  var trailCount = Math.min(NEON_TRAIL_MAX, Math.max(0, Math.round(neonParam('trailCount'))));
+  var trailInterval = Math.max(0.02, neonParam('trailInterval'));
+  var trailLife = Math.max(0.1, neonParam('trailLife'));
+  var trailOpacity = Math.max(0, neonParam('trailOpacity'));
+  var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
   // Cars are keyed by the line they carry, not by array position: reusing a slot for the next
-  // line would swap the text under a snapshot that is still floating down the road.
-  for (i = neonState.cars.length - 1; i >= 0; i--) {
-    if (!wanted[neonState.cars[i].key]) {
-      neonDisposeCar(neonState.cars[i]);
-      neonState.cars.splice(i, 1);
-    }
-  }
+  // line would swap the text under a stamp that is still floating down the road.
   for (i = 0; i < lines.length; i++) {
     var key = lines[i].key;
     var found = null;
@@ -620,18 +674,22 @@ function neonStepCars(nowSec, dt) {
       neonState.cars.push(found);
     }
   }
-  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
-  var kick = (typeof smoothBass !== 'undefined' && isFinite(smoothBass)) ? Number(smoothBass) : 0;
-  var boost = 1 + neonParam('beatKick') * (beat * 0.6 + kick * 0.4);
-  var trailCount = Math.min(NEON_TRAIL_MAX, Math.max(0, Math.round(neonParam('trailCount'))));
-  var trailInterval = Math.max(0.02, neonParam('trailInterval'));
-  var trailLife = Math.max(0.1, neonParam('trailLife'));
-  var trailOpacity = Math.max(0, neonParam('trailOpacity'));
-  var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
-  for (i = 0; i < neonState.cars.length; i++) {
+  for (i = neonState.cars.length - 1; i >= 0; i--) {
     var car = neonState.cars[i];
     var line = wanted[car.key];
-    if (!line) continue;
+    if (!line) {
+      // The line has left. Keep the car as a ghost until its last stamp expires, so the trail is
+      // given the room to dissolve instead of being deleted with the text.
+      car.body.visible = false;
+      car.band.visible = false;
+      car.lastTravel = -1;
+      car.trailClock = 0;
+      if (neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount) === 0) {
+        neonDisposeCar(car);
+        neonState.cars.splice(i, 1);
+      }
+      continue;
+    }
     neonRasterCar(car, line.text || ' ');
     if (!line.text) {
       car.body.visible = false;
@@ -640,43 +698,26 @@ function neonStepCars(nowSec, dt) {
       continue;
     }
     var placed = neonPlaceCar(car, line.travel, line.current ? 1 : 0.7);
-    // Band under the car: the light it drags over the road. Flashes with the beat.
-    car.band.visible = placed.size < neonParam('carExitSize') * 0.9;
+    // Band under the car: the light it drags over the road. Flashes with the beat, dims with the text.
+    car.band.visible = placed.fade > 0.05;
     car.band.position.set(0, placed.y - placed.h * 0.62, -placed.d);
     car.band.scale.set(placed.w * 1.25, Math.max(0.001, placed.h * 0.10), 1);
-    car.bandMat.opacity = neonClamp01(neonParam('lightBand') * (0.25 + 0.75 * beat) * boost * 0.8);
+    car.bandMat.opacity = neonClamp01(neonParam('lightBand') * (0.25 + 0.75 * beat) * boost * 0.8 * placed.fade);
     car.bandMat.color.setRGB(1.0, 0.35, 0.85);
-    // Spawn the next projection only while the line is actually travelling, and only once the
-    // previous frame had a position to leave behind.
+    // Spawn the next stamp only while the line is actually travelling, and only once the previous
+    // frame had a position to leave behind.
     var moved = car.lastTravel >= 0 && Math.abs(line.travel - car.lastTravel) > 1e-5;
     if (moved && trailCount > 0) {
       car.trailClock += step;
       if (car.trailClock >= trailInterval) {
         car.trailClock = Math.min(trailInterval, car.trailClock - trailInterval);
-        neonSpawnTrail(car, nowSec, trailCount, trailOpacity);
+        neonSpawnTrail(car, nowSec, trailCount, trailOpacity, placed.fade);
       }
     } else if (!moved) {
       car.trailClock = 0;
     }
     car.lastTravel = line.travel;
-    for (k = 0; k < NEON_TRAIL_MAX; k++) {
-      var slot = car.trails[k];
-      if (slot.bornAt < 0 || k >= trailCount) {
-        slot.bornAt = -1;
-        slot.mesh.visible = false;
-        slot.mat.opacity = 0;
-        continue;
-      }
-      var age = nowSec - slot.bornAt;
-      if (age >= trailLife) {
-        slot.bornAt = -1;
-        slot.mesh.visible = false;
-        slot.mat.opacity = 0;
-        continue;
-      }
-      slot.mesh.visible = true;
-      slot.mat.opacity = neonClamp01(trailOpacity * (1 - age / trailLife) * (0.65 + 0.35 * beat));
-    }
+    neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, trailCount);
   }
   return boost;
 }

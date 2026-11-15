@@ -1981,6 +1981,7 @@ function runNeonFujiPresetCheck() {
     [/fujiWidth: \{ def: 1\.75,/, 'the mountain width must default to the reference 1.75'],
     [/cloudWidth: \{ def: 0\.075,/, 'the cloud width must default to the reference 0.075'],
     [/carLead: \{ def: 2\.4,/, 'the car lead has to exist and default to a visible approach'],
+    [/carAccel: \{ def: 0\.9,/, 'the accelerating run has to exist and default on'],
     [/beatSync: \{ def: 1,/, 'the beat-synced entrance has to default on'],
   ]) {
     if (!literal.test(text)) fail(why);
@@ -1992,20 +1993,27 @@ function runNeonFujiPresetCheck() {
     [/function neonBeatGrid\(/, 'the entrance has to read the song tempo, not a fixed offset'],
     [/function neonEntranceAt\(startAt, lead, grid\)/, 'the entrance time has to be its own function, so a beat snap is testable'],
     [/Math\.floor\(\(enterAt - grid\.origin\) \/ grid\.step\) \* grid\.step/, 'the entrance has to snap back onto the beat grid'],
-    [/var t = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the line timestamp'],
+    [/var p = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the line timestamp'],
+    [/Math\.pow\(p, 1 \+ Math\.max\(0, neonParam\('carAccel'\)\)\)/, 'the run has to accelerate instead of advancing linearly'],
+    [/Math\.max\(0, tt - 1\)/, 'the path has to keep going after arrival'],
+    [/neonParam\('carRise'\) \* after \* after/, 'the glyphs have to sweep up over the camera, not off the bottom'],
     [/var d = Math\.max\(near \* 0\.02, near \* Math\.pow\(ratio, 1 - tt\)\);/, 'the run has to be exponential in t so it keeps coming past the near plane'],
     [/var size = neonParam\('carSize'\) \* \(near \/ d\);/, 'the screen size has to stay 1/depth'],
-    [/neonParam\('carExitSize'\)/, 'the exit has to be decided by size, not by sliding off the bottom'],
+    [/var fade = 1 - neonClamp01\(\(tt - fadeStart\) \/ fadeSpan\);/, 'the text has to keep dimming as it passes'],
+    [/car\.bodyMat\.color\.setRGB\(fade, fade, fade\)/, 'brightness has to fade with the opacity'],
     [/slot\.bornAt = nowSec;/, 'each afterimage has to be stamped at the moment it is spawned'],
     [/slot\.mesh\.position\.set\(car\.body\.position\.x, car\.body\.position\.y, car\.body\.position\.z\);/, 'a stamped afterimage has to keep its position'],
+    [/function neonAgeTrails\(/, 'the stamps need one ageing path, shared by live and departed lines'],
     [/age >= trailLife/, 'an afterimage has to go back to the pool when its life is over'],
+    [/if \(neonAgeTrails\(car, nowSec, trailLife, trailOpacity, beat, trailCount\) === 0\) \{/, 'a departed line has to survive until its last stamp expires'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
   // One declaration each. The linear-depth set once shadowed the perspective one, so the shipped
   // function was not the one the bench and the probes were reading; a duplicate must fail here.
   for (const name of ['neonMakeCar', 'neonRasterCar', 'neonStepCars', 'neonPlaceCar', 'neonDisposeScene',
-    'neonDisposeCar', 'neonActiveLines', 'neonBeatGrid', 'neonEntranceAt', 'neonSpawnTrail']) {
+    'neonDisposeCar', 'neonActiveLines', 'neonBeatGrid', 'neonEntranceAt', 'neonSpawnTrail',
+    'neonAgeTrails', 'neonSizeTravel', 'neonFadeTravel']) {
     const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
     if (count !== 1) fail(`${name} must be declared exactly once (found ${count}): the later declaration wins and the earlier one is dead`);
   }

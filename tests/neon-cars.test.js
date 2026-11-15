@@ -72,9 +72,9 @@ const rtBeat = { tempoGap: 0.5, lastHitAt: 0 };
 const neonState = { cars: [], group: new Group() };
 const neonLyricPalette = () => ({ main: '#ffe6fa', glow: '#ff4fd8' });
 
-const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonExitTravel', 'neonLineClock',
-  'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar', 'neonPlaceCar',
-  'neonRetireTrails', 'neonSpawnTrail', 'neonStepCars', 'neonDisposeCar'];
+const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonSizeTravel', 'neonFadeTravel',
+  'neonExitTravel', 'neonLineClock', 'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar',
+  'neonPlaceCar', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
 const run = new Function(
   'THREE', 'document', 'lyricsLines', 'audio', 'currentBeatMap', 'rtBeat', 'beatPulse', 'smoothBass',
   'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
@@ -86,7 +86,8 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
 
 // ---------------------------------------------------------------- 1) entrance timing
 // carLead 2.4s before t=10 would be 7.6; the 0.5s grid behind it is 7.5, so the line enters on a
-// beat and still lands exactly on its own timestamp.
+// beat and still lands exactly on its own timestamp. The travel is (elapsed share)^(1+accel),
+// so at the midpoint of the lead it is far from halfway in - the run accelerates.
 {
   const far = at(7.4);
   assert.equal(far.length, 0, 'before the beat the next line is not on the road yet');
@@ -94,22 +95,24 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   assert.equal(entering.length, 1, 'the line enters while it is still far away');
   assert.equal(entering[0].current, true);
   assert.ok(Math.abs(entering[0].enterAt - 7.5) < 1e-9, 'the entrance must snap back onto the beat grid');
-  assert.ok(Math.abs(entering[0].travel - 0.5) < 1e-9, 'half a second of travel at the midpoint');
-  assert.ok(entering[0].travel < 1, 'at mid-approach the line is still far away');
+  const half = Math.pow(0.5, 1 + defaults.carAccel);
+  assert.ok(Math.abs(entering[0].travel - half) < 1e-9,
+    `half the lead is only ${half} of the travel with accel ${defaults.carAccel}`);
+  assert.ok(entering[0].travel < 0.35, 'the text hangs far away through the first half of the lead');
 }
 {
   const arrival = at(10);
   assert.equal(arrival[0].travel, 1, 'arrival is the line timestamp, t=1');
-  const past = at(11.6);
-  assert.ok(past[0].travel > 1.5, 'after its timestamp the line keeps coming');
+  const past = at(11.2);
+  assert.ok(past[0].travel > 2, 'after its timestamp the line keeps coming, and accelerates');
   assert.equal(past.length, 2, 'the next line is already on the road by then');
   assert.equal(past[1].current, false);
 }
 {
   const gone = at(12.5);
   const keys = gone.map((line) => line.key);
-  assert.equal(gone.length, 2, 'the line that grew past the frame leaves, the next two remain');
-  assert.ok(gone.every((line) => line.travel < run.neonExitTravel()), 'nothing visible has passed the exit size');
+  assert.equal(gone.length, 2, 'the line past its life is gone, the next two remain');
+  assert.ok(gone.every((line) => line.travel < run.neonExitTravel()), 'nothing visible has passed the end of the fade');
   assert.ok(!keys.some((key) => Math.abs(Number(key.slice(1)) - 10) < 1e-6), 'the first line must be gone');
 }
 {
@@ -170,17 +173,43 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   assert.ok(alive.length > 0, 'the moving car keeps stamping new ones');
 }
 
-// ---------------------------------------------------------------- 3) the car leaves by size
+// ---------------------------------------------------------------- 3) the text leaves by fading past
 {
   const car = neonState.cars[0];
+  const fadeT = run.neonFadeTravel();
   const exitT = run.neonExitTravel();
-  const placed = run.neonPlaceCar(car, exitT, 1);
   const tanHalf = Math.tan((defaults.camFov * Math.PI) / 360);
-  assert.ok(Math.abs(placed.h / (2 * placed.d * tanHalf) - defaults.carExitSize) < 1e-6,
-    'the exit frame is carExitSize screen heights, not an arbitrary fade');
-  assert.ok(placed.size > 1, 'by then the text no longer fits the screen');
+  const atFade = run.neonPlaceCar(car, fadeT, 1);
+  assert.ok(Math.abs(atFade.h / (2 * atFade.d * tanHalf) - defaults.carExitSize) < 1e-6,
+    'the fade starts at carExitSize screen heights');
+  assert.ok(atFade.fade > 0.99, 'and the text is still fully lit there');
+  const atExit = run.neonPlaceCar(car, exitT, 1);
+  assert.ok(atExit.fade < 1e-6 && atExit.size > atFade.size * 2,
+    'by the end of the fade the glyphs are many screens tall and fully dimmed');
 }
 
-console.log('OK neon-cars: beat-snapped entrance at 7.5s, ' + neonState.cars.length
-  + ' car(s), ' + neonState.cars[0].trails.filter((slot) => slot.bornAt >= 0).length
-  + ' live projections, exit at t=' + run.neonExitTravel().toFixed(2));
+// ---------------------------------------------------------------- 4) the trail outlives the text
+{
+  // Walk frame by frame past the end of the first line. Its text goes away, but the stamps it left
+  // behind are still fading - the car has to stay as a ghost until the last one expires.
+  let now = audio.currentTime;
+  for (; now < 11.55; now += 0.07) {
+    audio.currentTime = now;
+    run.neonStepCars(now, 0.07);
+  }
+  const ghost = neonState.cars.find((car) => car.key === 'l10.000');
+  assert.ok(ghost, 'the car must survive its line while its projections are still fading');
+  assert.equal(ghost.body.visible, false, 'the text itself is gone');
+  assert.ok(ghost.trails.some((slot) => slot.bornAt >= 0), 'the stamps are still there');
+  for (let f = 0; f < 12; f++) {
+    now += 0.07;
+    audio.currentTime = now;
+    run.neonStepCars(now, 0.07);
+  }
+  assert.ok(!neonState.cars.some((car) => car.key === 'l10.000'),
+    'once the last stamp expires the ghost car is disposed');
+}
+
+console.log('OK neon-cars: beat-snapped entrance at 7.5s, accel ' + defaults.carAccel
+  + ' (half lead -> t=' + Math.pow(0.5, 1 + defaults.carAccel).toFixed(2) + '), '
+  + neonState.cars.length + ' car(s), fade ends at t=' + run.neonExitTravel().toFixed(2));
