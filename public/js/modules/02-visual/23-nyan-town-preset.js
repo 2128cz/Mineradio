@@ -44,7 +44,7 @@ var NYAN_TOWN_TUNING_SCHEMA = {
   // 0 keeps a whole line on one plate; >0 cuts it into that many characters per plate, each
   // taking its own sky lane so the pieces read as a stream instead of stacking on top of each other.
   lyricSplit: { def: 0, min: 0, max: 20, kind: 'count', rebuild: 'live' },
-  lyricSkyElev: { def: 18, min: 0, max: 40, kind: 'deg', rebuild: 'live' },
+  lyricSkyElev: { def: 24, min: 0, max: 65, kind: 'deg', rebuild: 'live' },
   lyricSize: { def: 1, min: 0.4, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricSpeed: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
   lyricLead: { def: 4.5, min: 0, max: 8, kind: 'sec', rebuild: 'live' },
@@ -725,7 +725,8 @@ function nyanTownMakeLyricRow() {
   return {
     canvas: canvas, ctx: ctx, texture: texture, material: material, mesh: mesh,
     depthMat: depthMat, depthMesh: depthMesh,
-    plateKey: '', drawKey: '', needsDraw: false, widthRatio: 1
+    plateKey: '', drawKey: '', needsDraw: false, widthRatio: 1,
+    anchorBase: null, anchorAxis: null, anchorDistance: 0
   };
 }
 
@@ -910,18 +911,21 @@ function nyanTownScenePose(t, iTime, opts) {
   };
 }
 
-// Put a plate in the sky in the camera's own frame: the azimuth and elevation are angles around
-// the town view, so the band rides with the camera's movement instead of staying behind in world
-// space. Whether it is visible is left to the real depth test: when the view drops to the street,
-// the band's pixels sit behind the town and disappear; the sky only shows it while looking up.
-function nyanTownSkyPoint(pose, azimuth, elevation, distance) {
+// A plate is anchored in the world once, where the town camera will be when its line is sung:
+// the band is a true sky elevation above the horizon, the lateral sweep then slides along the
+// world horizon. The camera is free to move and turn afterwards — the text stays where it was
+// put and sweeps the frame with the town, instead of following the camera like a screen overlay.
+function nyanTownSkyAnchor(pose, elevation, distance) {
+  var fx = pose.forward[0], fz = pose.forward[2];
+  var fl = Math.sqrt(fx * fx + fz * fz) || 1;
+  var hx = fx / fl, hz = fz / fl;
   var ce = Math.cos(elevation), se = Math.sin(elevation);
-  var ca = Math.cos(azimuth), sa = Math.sin(azimuth);
-  var dx = pose.forward[0] * ca * ce + pose.right[0] * sa * ce + pose.up[0] * se;
-  var dy = pose.forward[1] * ca * ce + pose.right[1] * sa * ce + pose.up[1] * se;
-  var dz = pose.forward[2] * ca * ce + pose.right[2] * sa * ce + pose.up[2] * se;
   var d = Math.max(0.01, Number(distance) || 1);
-  return [pose.pos[0] + dx * d, pose.pos[1] + dy * d, pose.pos[2] + dz * d];
+  return {
+    base: [pose.pos[0] + hx * ce * d, pose.pos[1] + se * d, pose.pos[2] + hz * ce * d],
+    axis: [-hz, 0, hx],
+    distance: d
+  };
 }
 
 // Face the plate at the eye while keeping the camera's own roll, so the text sits parallel to the
@@ -1045,6 +1049,7 @@ function nyanTownUpdateLyrics(dt) {
     var resetRows = nyanTownState.lyricRows;
     for (var r = 0; r < resetRows.length; r++) {
       resetRows[r].plateKey = '';
+      resetRows[r].anchorBase = null;
       resetRows[r].drawKey = '';
       resetRows[r].mesh.visible = false;
       resetRows[r].depthMesh.visible = false;
@@ -1081,6 +1086,7 @@ function nyanTownUpdateLyrics(dt) {
     var plate = byKey[row.plateKey];
     if (!plate) {
       row.plateKey = '';
+      row.anchorBase = null;
       row.drawKey = '';
       row.mesh.visible = false;
       row.depthMesh.visible = false;
@@ -1090,6 +1096,7 @@ function nyanTownUpdateLyrics(dt) {
     var plateP = (t - (plate.startAt - lead)) / plateDur;
     if (plateP > 1.15) {
       row.plateKey = '';
+      row.anchorBase = null;
       row.drawKey = '';
       row.mesh.visible = false;
       row.depthMesh.visible = false;
@@ -1104,6 +1111,7 @@ function nyanTownUpdateLyrics(dt) {
     for (var fr = 0; fr < rows.length; fr++) if (!rows[fr].plateKey) { free = rows[fr]; break; }
     if (!free) continue;
     free.plateKey = wanted.key;
+    free.anchorBase = null;
     free.drawKey = '';
   }
   var sizeKnob = nyanTownClamp(nyanTownParam('lyricSize'), 0.2, 2);
@@ -1123,10 +1131,10 @@ function nyanTownUpdateLyrics(dt) {
   nyanTownApplyLyricCamera(pose);
   if (!nyanTownState.cameraInvQuat) nyanTownState.cameraInvQuat = new THREE.Quaternion();
   nyanTownState.cameraInvQuat.copy(nyanTownState.lyricCam.quaternion).invert();
-  // The band rides with the view, so it has to be gated by the view's own pitch: it fades in only
-  // while the town camera is looking up, and is gone (not just dimmed) when the street fills the frame.
-  var look = nyanTownClamp((pose.forward[1] - 0.02) / 0.16, 0, 1);
-  var lookGate = look * look * (3 - 2 * look);
+  var camSpeedKnob = nyanTownParam('camSpeed');
+  var timeScaleKnob = Math.max(0, nyanTownParam('timeScale'));
+  var fovKnob = nyanTownParam('fov');
+  var fovPumpKnob = nyanTownParam('fovPump');
   function plateIsCurrent(plate) { return plate.itemIndex === sung; }
   var rasterBudget = 2;
   for (var cr = 0; cr < rows.length && rasterBudget > 0; cr++) {
@@ -1182,24 +1190,49 @@ function nyanTownUpdateLyrics(dt) {
       spread: spread,
       roll: roll
     });
-    if (flight.alpha <= 0.001 || lookGate <= 0.001) {
+    if (flight.alpha <= 0.001) {
       piece.mesh.visible = false;
       piece.depthMesh.visible = false;
       continue;
     }
+    // Anchor once, where the camera will be when this line is sung, then leave the plate in the
+    // world: the camera moving or turning sweeps the text across the frame with the town.
+    if (!piece.anchorBase) {
+      var ahead = Math.max(0, flightPlate.startAt - t);
+      var startPose = ahead > 0.05
+        ? nyanTownScenePose((t + ahead) * timeScaleKnob, clock + ahead, {
+          camSpeed: camSpeedKnob,
+          aspect: (nyanTownState.lyricCam && nyanTownState.lyricCam.aspect) || 1.78,
+          fov: fovKnob,
+          fovPump: fovPumpKnob
+        })
+        : pose;
+      var anchor = nyanTownSkyAnchor(startPose, flight.elevation, flight.distance);
+      piece.anchorBase = anchor.base;
+      piece.anchorAxis = anchor.axis;
+      piece.anchorDistance = anchor.distance;
+    }
+    var lateral = Math.tan(nyanTownClamp(flight.azimuth, -1.2, 1.2)) * piece.anchorDistance;
+    var px = piece.anchorBase[0] + piece.anchorAxis[0] * lateral;
+    var py = piece.anchorBase[1] + piece.anchorAxis[1] * lateral;
+    var pz = piece.anchorBase[2] + piece.anchorAxis[2] * lateral;
     var width = height * piece.widthRatio;
-    var point = nyanTownSkyPoint(pose, flight.azimuth, flight.elevation, flight.distance);
-    piece.mesh.position.set(point[0], point[1], point[2]);
+    piece.mesh.position.set(px, py, pz);
     nyanTownFaceCamera(piece.mesh, nyanTownState.lyricCam, nyanTownState.cameraInvQuat);
     piece.mesh.rotateZ(flight.roll);
     piece.mesh.scale.set(width, height, 1);
-    piece.material.opacity = opacityKnob * flight.alpha * lookGate;
+    piece.material.opacity = opacityKnob * flight.alpha;
     piece.mesh.visible = true;
     piece.depthMesh.position.copy(piece.mesh.position);
     piece.depthMesh.quaternion.copy(piece.mesh.quaternion);
     piece.depthMesh.scale.copy(piece.mesh.scale);
-    piece.depthMat.uniforms.uDepth.value = nyanTownClamp(flight.distance / 25, 0, 0.98);
-    piece.depthMesh.renderOrder = Math.round((1 - nyanTownClamp(flight.distance / far, 0, 1)) * 1000);
+    // The depth test is per pixel against the live eye: the plate's distance changes as the
+    // camera moves past it.
+    var eye = nyanTownState.lyricCam.position;
+    var dxw = px - eye.x, dyw = py - eye.y, dzw = pz - eye.z;
+    var liveDistance = Math.sqrt(dxw * dxw + dyw * dyw + dzw * dzw);
+    piece.depthMat.uniforms.uDepth.value = nyanTownClamp(liveDistance / 25, 0, 0.98);
+    piece.depthMesh.renderOrder = Math.round((1 - nyanTownClamp(liveDistance / far, 0, 1)) * 1000);
     piece.depthMesh.visible = true;
     live += 1;
   }

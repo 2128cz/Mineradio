@@ -207,30 +207,24 @@ assert.ok(Math.abs(pose.fovDeg - shaderFovDeg) < 1e-6, 'the reference fov is a h
 const intro = sandbox.nyanTownScenePose(0, 0, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
 assert.ok(intro.fovDeg < pose.fovDeg, 'the reference zooms out: iTime drives the intro fov, not the song clock');
 
-// Sky placement: the band lives in the camera's own frame, so its vertical angle is measured from
-// the view axis and it rides with the camera instead of staying behind in the world.
-const el = 18 * Math.PI / 180;
-const sky = sandbox.nyanTownSkyPoint(pose, 0, el, 14);
-for (let i = 0; i < 3; i++) {
-  const expected = pose.pos[i] + (pose.forward[i] * Math.cos(el) + pose.up[i] * Math.sin(el)) * 14;
-  assert.ok(Math.abs(sky[i] - expected) < 1e-9, 'azimuth 0 has to sit on the view axis, raised by the elevation');
-}
-const sidePoint = sandbox.nyanTownSkyPoint(pose, Math.PI / 2, 0, 14);
-for (let i = 0; i < 3; i++) {
-  assert.ok(Math.abs(sidePoint[i] - (pose.pos[i] + pose.right[i] * 14)) < 1e-9, 'azimuth 90 sits on the camera right axis');
-}
+// Sky anchoring: the plate is fixed in the world at the height the camera will have when its line
+// is sung. The elevation is a real angle above the world horizon (not the view axis), and the
+// lateral sweep rides the world-horizontal axis, so camera motion sweeps the text with the town.
+const el = 24 * Math.PI / 180;
+const anchor = sandbox.nyanTownSkyAnchor(pose, el, 14);
+const lift = anchor.base[1] - pose.pos[1];
+assert.ok(Math.abs(lift - Math.sin(el) * 14) < 1e-9, 'the anchor has to sit at a world elevation above the horizon');
+const horizontal = [anchor.base[0] - pose.pos[0], anchor.base[2] - pose.pos[2]];
+const headingLen = Math.hypot(horizontal[0], horizontal[1]);
+assert.ok(Math.abs(headingLen - Math.cos(el) * 14) < 1e-9, 'the anchor stays over the camera heading in the horizontal plane');
+assert.ok(Math.abs(anchor.axis[1]) < 1e-12 && Math.abs(Math.hypot(anchor.axis[0], anchor.axis[2]) - 1) < 1e-9,
+  'the sweep axis is horizontal and unit length, so the plate slides along the world horizon');
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+assert.ok(Math.abs(anchor.axis[0] * horizontal[0] + anchor.axis[2] * horizontal[1]) / (headingLen || 1) < 1e-9, 'the sweep axis is perpendicular to the heading');
 const poseLater = sandbox.nyanTownScenePose(3.0, 10, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
-function bandAngles(p) {
-  const s = sandbox.nyanTownSkyPoint(p, 0, el, 14);
-  const d = [0, 1, 2].map((i) => (s[i] - p.pos[i]) / 14);
-  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  return { alongForward: dot(d, p.forward), alongUp: dot(d, p.up) };
-}
-for (const p of [pose, poseLater]) {
-  const band = bandAngles(p);
-  assert.ok(Math.abs(band.alongForward - Math.cos(el)) < 1e-9 && Math.abs(band.alongUp - Math.sin(el)) < 1e-9,
-    'the band has to keep its angle above the view axis at every camera pose (it follows the camera)');
-}
+const anchorLater = sandbox.nyanTownSkyAnchor(poseLater, el, 14);
+assert.ok(Math.abs((anchorLater.base[1] - poseLater.pos[1]) - Math.sin(el) * 14) < 1e-9,
+  'the world elevation does not depend on the camera pitch: it is a sky height, not a screen position');
 
 // Style: every knob of the app's lyric console that the plates can honour has to be read here,
 // and a plate is one line — no wrap, no paragraph.
@@ -240,7 +234,7 @@ assert.match(moduleText, /lyricLetterSpacingPx\(/);
 assert.match(moduleText, /lyricFontWeightValue\(/);
 assert.ok(moduleText.indexOf('nyanTownLyricWrapText') < 0, 'plates are single-line: wrapping would turn a danmaku strip into a paragraph');
 assert.match(moduleText, /nyanTownApplyLyricCamera\(pose\)/);
-assert.match(moduleText, /uDepth\.value = nyanTownClamp\(flight\.distance \/ 25/);
+assert.match(moduleText, /uDepth\.value = nyanTownClamp\(liveDistance \/ 25/);
 
 const sampleItems = [{ index: 0, startAt: 0 }, { index: 1, startAt: 5 }, { index: 2, startAt: 10 }];
 assert.strictEqual(sandbox.nyanTownLyricSungIndex(sampleItems, -1), -1);
