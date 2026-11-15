@@ -20,7 +20,7 @@ assert.strictEqual(sandbox.GLITCH_PRESET_INDEX, 19, 'the preset index is 19 and 
 
 const schema = sandbox.GLITCH_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 33, 'all Buffer A / presentation / logo / audio knobs live in GLITCH_SCHEMA');
+assert.ok(keys.length >= 31, 'all Buffer A / presentation / logo / audio knobs live in GLITCH_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);
@@ -81,14 +81,13 @@ assert.match(moduleText, /glitchGaussian\(k, radius, texel, kBloomKernelShape, s
 assert.match(moduleText, /vec3\(1\.5, 1\.0, 0\.7\)/);
 assert.match(moduleText, /vec3\(0\.2\)/);
 
-// Lyric/logo layer: canvas text glitched in screen space around the hexagon, one style phase.
-for (const key of ['logoOn', 'logoSize', 'lyricOn', 'lyricGlitch', 'lyricSize', 'styleCycle']) {
-  assert.ok(schema[key], 'the lyric/logo knob is missing: ' + key);
+// Lyric layer: canvas text glitched in screen space over the reference field, one style phase.
+for (const key of ['lyricOn', 'lyricGlitch', 'lyricSize', 'styleCycle']) {
+  assert.ok(schema[key], 'the lyric knob is missing: ' + key);
 }
 assert.match(moduleText, /uniform sampler2D uLyricMain;/);
 assert.match(moduleText, /uniform sampler2D uLyricSub;/);
 assert.match(moduleText, /vec4 lyricPlate\(vec2 uv, sampler2D tex, vec4 rect, float seed\)/);
-assert.match(moduleText, /vec4 hexLogo\(vec2 uv\)/);
 assert.match(moduleText, /uStyleSeed/);
 assert.match(moduleText, /function glitchUpdateLyrics\(clock\)/);
 assert.match(moduleText, /function glitchDrawPlate\(/);

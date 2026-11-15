@@ -1,16 +1,18 @@
 'use strict';
 
-// 故障艺术 (preset 19). Reference: Shadertoy "lfscD7" — a fault-art presentation fragment
-// (Vignette + bloom + a downsampled texelFetch composite + a saturate/pow/lift tone curve).
-// The page could not be fetched (403), so the supplied presentation pass is the authoritative
-// fragment and everything else is split into its named components: a hashed-block source, a
-// separable bloom, the low-res composite and the vignette. Helpers the reference names but does
-// not define here (PCG, SeparableBlurUp, SetGlobals) are reimplemented against the same contract.
-// Licence UNVERIFIED — see the sidecar/NOTICE before shipping a build.
+// 故障艺术 (preset 19). Reference: Shadertoy "lfscD7" — Common + Buffer A + Buffer B + Image,
+// supplied by the requester. Common and Buffer A are ported verbatim (GLSL3): the reference's
+// hexagonal tiling, ripple/invert field, two-style time blend, static/vertical/horizontal
+// interference, ordered-dither quantisation, supersampling and motion blur. Image is adapted: bloom
+// + the downsampled Buffer A at 0.6 + pow(0.8) + mix(0.1,0.9) + vignette. The reference's #defines
+// are uniforms (GLITCH_SCHEMA). Buffer B/Up's bloom is approximated by two kernel passes.
 //
-// Every constant that shapes the picture is a knob in GLITCH_SCHEMA (one home for the defaults),
-// and the source reads the same 64-bin spectrum + 8-band frame the other presets use, so the audio
-// wiring lives in glitchFeedUniforms().
+// Added on top (not in the reference): the app's lyrics, rasterised to canvas textures and run
+// through the same fault primitives so the type matches the picture. Licence UNVERIFIED — see the
+// sidecar / NOTICE before shipping.
+//
+// Every knob lives in GLITCH_SCHEMA (one home for the defaults); the audio wiring is the 8-band
+// frame + beat fed through glitchFeedAudio().
 
 var GLITCH_PRESET_INDEX = 19;
 
@@ -40,8 +42,6 @@ var GLITCH_SCHEMA = {
   vignetteScale: { def: 0.6, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   vignetteExponent: { def: 3, min: 1, max: 8, kind: 'ratio', rebuild: 'live' },
   // ---- centre logo + glitched lyrics
-  logoOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  logoSize: { def: 1, min: 0.5, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   lyricGlitch: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lyricSize: { def: 1, min: 0.5, max: 1.6, kind: 'ratio', rebuild: 'live' },
@@ -916,12 +916,9 @@ uniform vec4 uSubRect;
 uniform float uLyricOn;
 uniform float uLyricGlitch;
 uniform float uHasSub;
-uniform float uLogoOn;
-uniform float uLogoSize;
 uniform float uStyleHue;
 uniform float uAspect;
 uniform float uStyleSeed;
-uniform float uBeat;
 uniform float uBass;
 const float kRoot2 = 1.41421356237;
 const float kTau = 6.28318530718;
@@ -946,37 +943,6 @@ float Vignette(vec2 fragCoord) {
   float y = 2.0 * (uv.y - 0.5);
   float dist = sqrt(x * x + y * y) / kRoot2;
   return mix(1.0, max(0.0, 1.0 - pow(dist * uVigScale, uVigExponent)), uVigStrength);
-}
-
-// Hexagon logo: a dark plate, a neon outline with a hashed horizontal tear, an inner rotating ring
-// and a scanline wash. The style hue comes from the same phase that seeds the lyric glitch, so the
-// words and the icon read as one picture.
-vec4 hexLogo(vec2 uv) {
-  vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
-  p /= max(0.2, uLogoSize);
-  float ang = iTime * 0.16;
-  p = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * p;
-  vec2 cell = floor(uv * vec2(90.0, 60.0));
-  float h = glitchHash2(cell, uStyleSeed * 1.3 + 3.0);
-  float tear = (h - 0.5) * 0.05 * uLyricGlitch;
-  float dA = max(abs(p.x), dot(abs(p), normalize(vec2(1.0, 1.7320508)))) - 0.135;
-  vec2 pt = p + vec2(tear, 0.0);
-  float dB = max(abs(pt.x), dot(abs(pt), normalize(vec2(1.0, 1.7320508)))) - 0.135;
-  float inside = smoothstep(0.006, -0.006, dA);
-  float ringA = smoothstep(0.006, 0.001, abs(dA));
-  float ringB = smoothstep(0.006, 0.001, abs(dB));
-  float inner = max(abs(p.x), dot(abs(p), normalize(vec2(1.0, 1.7320508)))) - 0.082;
-  float ringI = smoothstep(0.004, 0.0008, abs(inner));
-  vec3 hueA = glitchHsv(uStyleHue, 0.82, 1.0);
-  vec3 hueB = glitchHsv(fract(uStyleHue + 0.45), 0.82, 1.0);
-  vec3 col = vec3(0.025, 0.02, 0.045) * inside;
-  col += hueA * ringA * (1.1 + uBeat * 1.2);
-  col += hueB * ringB * 0.55;
-  col += hueB * ringI * 0.6;
-  float scan = 1.0 - 0.16 * inside * (0.5 + 0.5 * sin(uv.y * 1300.0 + iTime * 4.0));
-  col *= scan;
-  float alpha = max(inside * 0.62, max(ringA, max(ringB, ringI)) * 0.95);
-  return vec4(col, alpha);
 }
 
 // Glitched lyric plate: the canvas text is sampled through a screen-space block shift, a moving
@@ -1015,11 +981,6 @@ void mainImage(out vec4 rgba, vec2 xy) {
   rgb = mix(vec3(uLift), vec3(1.0 - uLift), rgb);
   float vig = Vignette(xy);
   rgb *= vig;
-  if (uLogoOn > 0.5) {
-    vec4 logo = hexLogo(uv);
-    logo.rgb *= vig;
-    rgb = mix(rgb, logo.rgb, logo.a);
-  }
   if (uLyricOn > 0.5) {
     float phase = uStyleSeed;
     vec4 main = lyricPlate(uv, uLyricMain, uMainRect, phase * 2.7 + 1.0);
@@ -1234,8 +1195,6 @@ function glitchUpdateStyle(clock) {
   cu.uStyleSeed.value = seed;
   cu.uStyleHue.value = (glitchParam('gradeHue') * 3 + seed * 0.137) % 1;
   cu.uLyricOn.value = glitchParam('lyricOn') > 0 ? 1 : 0;
-  cu.uLogoOn.value = glitchParam('logoOn') > 0 ? 1 : 0;
-  cu.uLogoSize.value = glitchParam('logoSize');
   var aspect = cu.uAspect.value || 1.78;
   var scale = glitchParam('lyricSize');
   var mainW = Math.min(1.35, 0.92 * scale);
@@ -1264,7 +1223,6 @@ function glitchFeedAudio(frame) {
   if (cu) {
     cu.uBloomStrength.value = glitchParam('bloomStrength') * (1 + glitchParam('audioBloom') * bands[1] * drive);
     cu.uBass.value = bands[1];
-    cu.uBeat.value = glitchClamp(beat, 0, 1) * glitchParam('beatPulse');
     cu.uLyricGlitch.value = glitchParam('lyricGlitch') * (0.65 + 0.7 * bands[6] * drive);
   }
 }
@@ -1382,8 +1340,6 @@ function glitchBuildScene() {
         uLyricOn: { value: 1 },
         uLyricGlitch: { value: 0.6 },
         uHasSub: { value: 0 },
-        uLogoOn: { value: 1 },
-        uLogoSize: { value: 1 },
         uStyleHue: { value: 0.85 },
         uStyleSeed: { value: 0 },
         uBeat: { value: 0 },

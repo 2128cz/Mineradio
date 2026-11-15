@@ -25,8 +25,7 @@ Differences from the reference: the passes compile as GLSL3 (uint/bit ops and te
 reference blue-noise iChannel0 is replaced by a generated 1024x1024 white-noise texture (the same
 Rand(sampler) contract), the default AA is 2 instead of 5 and iterations 1 instead of 2 for live
 performance, and the bloom is a two-pass kernel approximation rather than the exact Buffer B/Image
-pair. The centre hexagon logo and the glitched lyric plates are original additions, not in the
-reference.
+pair. The glitched lyric plates are an original addition, not in the reference.
 
 LICENCE STATUS
 --------------
@@ -44,8 +43,7 @@ CHANGES FROM THE SUPPLIED FRAGMENT
 - Every constant is a knob; the source/presentation uniforms are listed in GLITCH_SCHEMA and are
   also the audio connection points (audioDrive, audioGlitch, audioTear, audioBloom, beatPulse read
   the 8-band audio frame and the beat pulse).
-- The app's particle layer is suppressed (the reference presentation is the whole picture). An
-  original centre hexagon logo and glitched lyric plates were added on top of the presentation: the
-  current lyric and its translation are rasterised to canvas textures and run through the same
-  fault primitives (screen-space block shift, moving tear band, chromatic split, scanline), with the
-  split fringes taking the logo's style hue. They are not part of the reference.
+- The app's particle layer is suppressed (the reference presentation is the whole picture). Original
+  glitched lyric plates were added on top: the current lyric and its translation are rasterised to
+  canvas textures and run through the same fault primitives (screen-space block shift, moving tear
+  band, chromatic split, scanline). They are not part of the reference.

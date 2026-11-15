@@ -361,8 +361,6 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-glitchvignetteStrength', '晕影强度', '故障 艺术 晕影 强度'),
         fxConsoleItem('fx-glitchvignetteScale', '晕影范围', '故障 艺术 晕影 范围'),
         fxConsoleItem('fx-glitchvignetteExponent', '晕影衰减', '故障 艺术 晕影 衰减'),
-        fxConsoleItem('t-glitchlogoOn', '中心图标', '故障 艺术 六边形 图标 开关'),
-        fxConsoleItem('fx-glitchlogoSize', '中心图标尺寸', '故障 艺术 图标 尺寸'),
         fxConsoleItem('t-glitchlyricOn', '歌词', '故障 艺术 歌词 开关'),
         fxConsoleItem('fx-glitchlyricGlitch', '歌词故障强度', '故障 艺术 歌词 故障 错位'),
         fxConsoleItem('fx-glitchlyricSize', '歌词字号', '故障 艺术 歌词 字号'),
