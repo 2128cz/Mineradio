@@ -2469,12 +2469,18 @@ function runGlitchArtPresetCheck() {
     [/for \(int i = -6; i <= 6; i\+\+\)/, 'the separable bloom needs its kernel'],
     [/uniforms\.uDir\.value\.set\(1, 0\)/, 'the bloom needs a horizontal pass'],
     [/uniforms\.uDir\.value\.set\(0, 1\)/, 'the bloom needs a vertical pass'],
-    [/float frameSeed = floor\(float\(iFrame\) \* 0\.1667\)/, 'the block layout has to be quantised, not per-frame white noise'],
+    [/vec2 Cartesian2DToHexagonalTiling\(/, 'the reference hexagonal tiling has to survive'],
+    [/uvec4 PCGAdvance\(\)/, 'the reference PCG generator has to survive'],
+    [/bool Interfere\(inout vec2 xy, inout vec3 tint, in vec2 res\)/, 'the reference interference pass has to survive'],
+    [/vec3 SampleSpectrum\(float delta\)/, 'the reference spectral colour has to survive'],
+    [/xy \*= uScreenDownsample;/, 'Buffer A has to render below screen resolution through kScreenDownsample'],
+    [/glslVersion: THREE\.GLSL3/, 'Buffer A needs GLSL3 for uint/bit ops and texelFetch'],
+    [/new THREE\.DataTexture\(noiseData, 1024, 1024/, 'the reference blue-noise channel has to be replaced by a generated noise texture'],
     [/function glitchDisposeScene\(/, 'leaving the preset has to release its render targets'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
-  if (text.indexOf('uint ') >= 0) fail('the source must stay GLSL1: no uint/bit ops (the PCG wrapper would not compile)');
+  if (text.indexOf('glslVersion: THREE.GLSL3') < 0) fail('the Buffer A material must compile as GLSL3');
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
   const schemaBlock = (text.match(/var GLITCH_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
@@ -2483,7 +2489,7 @@ function runGlitchArtPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 29) fail(`the glitch knob schema must be complete (found ${schema.size})`);
+  if (schema.size < 33) fail(`the glitch knob schema must be complete (found ${schema.size})`);
   for (const [key, spec] of schema) {
     if (spec.kind === 'bool') {
       const id = 't-glitch' + key;
