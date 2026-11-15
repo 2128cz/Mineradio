@@ -264,7 +264,7 @@ const sliderGroups = [
   { keys: bhKeys, specs: bhSchema, prefix: 'fx-bh', store: 'mineradio-blackhole-tuning-v1', storeKey: 'blackHoleTuning', label: 'black hole dials' },
   { keys: neonKeys, specs: neonSchema, prefix: 'fx-neon', store: 'mineradio-neon-tuning-v2', storeKey: 'neonTuning', label: 'neon road dials' },
   { keys: mixerKeys, specs: mixerSchema, prefix: 'fx-mixer', store: 'mineradio-mixer-tuning-v6', storeKey: 'mixerTuning', label: 'mixer desk dials' },
-  { keys: nyanKeys, specs: nyanSchema, prefix: 'fx-nyan', store: 'mineradio-nyan-town-tuning-v1', storeKey: 'nyanTownTuning', label: 'nyan town dials' }
+  { keys: nyanKeys, specs: nyanSchema, prefix: 'fx-nyan', store: 'mineradio-nyan-town-tuning-v3', storeKey: 'nyanTownTuning', label: 'nyan town dials' }
 ];
 const sliderRows = sliderGroups.reduce(function (sum, group) { return sum + group.keys.length; }, 0);
 
@@ -466,7 +466,7 @@ console.log('rows: ' + (sliderRows + haloBools.length + pvBools.length + 2)
       assert.strictEqual(api.nyanTownTuning[neighbour], neighbourMoved,
         key + ': its button must leave the neighbour ' + neighbour + ' where the user put it');
     }
-    assert.strictEqual(storedValue('mineradio-nyan-town-tuning-v1', key), spec.def, key + ': the reset must persist');
+    assert.strictEqual(storedValue('mineradio-nyan-town-tuning-v3', key), spec.def, key + ': the reset must persist');
     assert.strictEqual(dom.byId.get(id).value, String(spec.def), key + ': the slider must be written back');
     assert.strictEqual(rowOf(id).querySelector('output').textContent, api.nyanTownTuningFormat(key),
       key + ': the read-out must be refreshed with the knob');

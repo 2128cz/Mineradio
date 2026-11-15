@@ -28,6 +28,7 @@ function replaceOnce(needle, replacement, label) {
   expected = expected.slice(0, at) + replacement + expected.slice(at + needle.length);
 }
 replaceOnce('#define RAY_STEPS 150', '#define RAY_STEPS int(uRaySteps)', 'ray steps');
+replaceOnce('float det=0.0;', 'float det=0.0;\nfloat nyanDepth=1.0;', 'depth slot');
 replaceOnce('#define BRIGHTNESS 1.2', '#define BRIGHTNESS uBrightness', 'brightness');
 replaceOnce('#define GAMMA 1.4', '#define GAMMA uGamma', 'gamma');
 replaceOnce('#define SATURATION .65', '#define SATURATION uSaturation', 'saturation');
@@ -45,6 +46,7 @@ replaceOnce('\tfloat ns=3.0;', '\tfloat ns=uNyanSpeed;', 'nyan speed');
 replaceOnce('\tfloat fov=.9-max(0.,.7-iTime*.3);', '\tfloat fov=uFov-max(0.,uFovPump-iTime*.3);', 'field of view');
 replaceOnce('color=mix(vec3(0.),color,pow(max(0.,.95-length(oriuv*oriuv*oriuv*vec2(1.05,1.1))),.3));',
   'color=mix(vec3(0.),color,pow(max(0.,.95-length(oriuv*oriuv*oriuv*vec2(1.05,1.1))),.3)*uBorder);', 'border');
+replaceOnce('if (totdist>25.) col=backg; // hit background', 'if (totdist>25.) col=backg; // hit background\n\tnyanDepth=clamp(totdist/25.,0.,1.); // 0 near .. 1 far, for the lyric depth test', 'depth export');
 replaceOnce([
   '#ifdef NYAN',
   '\tdir.yx*=rot(dir.x);',
@@ -69,6 +71,7 @@ replaceOnce([
   '#endif'
 ].join('\n'), 'nyan block toggles');
 
+replaceOnce('	fragColor = vec4(color,1.);', '	fragColor = vec4(color,nyanDepth);', 'depth in alpha');
 const preamble = [
   '// GLSL3: three r128 does not provide gl_FragColor, and the driver writes it in main().',
   'out vec4 outColor;',
@@ -163,5 +166,32 @@ for (const r of rects) {
 }
 assert.ok(rects.some((r) => r.y === 5), 'the ears have to sit at row 5, inside the sampled band');
 assert.ok(rects.some((r) => r.y + r.h === 20), 'the feet have to end at row 19, inside the sampled band');
+
+// The scene's alpha is the march hit distance (RGB untouched), and the composite is a depth test.
+assert.match(body, /float nyanDepth=1\.0;/);
+assert.match(body, /nyanDepth=clamp\(totdist\/25\.,0\.,1\.\);/);
+assert.match(body, /fragColor = vec4\(color,nyanDepth\);/);
+assert.match(moduleText, /smoothstep\(scene\.a - soft, scene\.a \+ soft, lyricDepth\)/);
+assert.match(moduleText, /uniform float uLyricOn;/);
+
+// Pure flight math: far to near monotonically, fades at both ends, sides alternate, the current
+// line keeps a lane closer to the centre so it can be read.
+const flightOpts = { near: 4, far: 20, spread: 1, roll: 10, fov: 45, aspect: 1.78 };
+const start = sandbox.nyanTownLyricFlight({ index: 2 }, 0, false, flightOpts);
+const middle = sandbox.nyanTownLyricFlight({ index: 2 }, 0.5, false, flightOpts);
+const end = sandbox.nyanTownLyricFlight({ index: 2 }, 1, false, flightOpts);
+assert.ok(start.depth > middle.depth && middle.depth > end.depth, 'the plate has to come from far to near');
+assert.ok(Math.abs(start.depth - 20) < 0.01 && Math.abs(end.depth - 4) < 0.01, 'the depth knobs bound the flight');
+assert.ok(start.alpha < 0.01 && middle.alpha > 0.99 && end.alpha < 0.01, 'the plate fades in and out');
+assert.ok(sandbox.nyanTownLyricFlight({ index: 2 }, 0.5, false, flightOpts).side === 1, 'even lines enter from one side');
+assert.ok(sandbox.nyanTownLyricFlight({ index: 3 }, 0.5, false, flightOpts).side === -1, 'odd lines enter from the other side');
+const currentLane = Math.abs(sandbox.nyanTownLyricFlight({ index: 2 }, 0.5, true, flightOpts).y);
+const otherLane = Math.abs(sandbox.nyanTownLyricFlight({ index: 2 }, 0.5, false, flightOpts).y);
+assert.ok(currentLane <= otherLane, 'the current line has to stay closer to the centre lane');
+
+const sampleItems = [{ index: 0, startAt: 0 }, { index: 1, startAt: 5 }, { index: 2, startAt: 10 }];
+assert.strictEqual(sandbox.nyanTownLyricSungIndex(sampleItems, -1), -1);
+assert.strictEqual(sandbox.nyanTownLyricSungIndex(sampleItems, 6), 1);
+assert.strictEqual(sandbox.nyanTownLyricSungIndex(sampleItems, 99), 2);
 
 console.log('OK nyan-town-port: ' + lines.length + ' reference lines, ' + Object.keys(schema).length + ' knobs, defaults pinned');

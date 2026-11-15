@@ -6,7 +6,7 @@
 // so the defaults have one home; this file is the store and the console bindings. It is not part
 // of `fx`: these values only mean something while the town is on screen.
 
-var NYAN_TOWN_TUNING_STORE_KEY = 'mineradio-nyan-town-tuning-v1';
+var NYAN_TOWN_TUNING_STORE_KEY = 'mineradio-nyan-town-tuning-v3';
 
 function nyanTownTuningClamp(key, value) {
   var spec = NYAN_TOWN_TUNING_SCHEMA[key];
@@ -38,6 +38,8 @@ function nyanTownTuningFormat(key) {
   if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(value));
   if (spec.kind === 'unit') return (Math.round(value * 1000) / 1000) + 'u';
+  if (spec.kind === 'sec') return (Math.round(value * 100) / 100) + 's';
+  if (spec.kind === 'deg') return Math.round(value) + '°';
   return Math.round(value * 100) + '%';
 }
 

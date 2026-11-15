@@ -37,7 +37,19 @@ var NYAN_TOWN_TUNING_SCHEMA = {
   audioDrive: { def: 1, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' },
   catOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  rainbowOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' }
+  rainbowOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  // ---- the lyric lane: lines fly through the town and are depth-tested against the march
+  lyricOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  lyricRows: { def: 10, min: 3, max: 16, kind: 'count', rebuild: 'live' },
+  lyricSize: { def: 1, min: 0.4, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricSpeed: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
+  lyricLead: { def: 4.5, min: 0, max: 8, kind: 'sec', rebuild: 'live' },
+  lyricDepthNear: { def: 4, min: 1.5, max: 12, kind: 'unit', rebuild: 'live' },
+  lyricDepthFar: { def: 20, min: 8, max: 32, kind: 'unit', rebuild: 'live' },
+  lyricSpread: { def: 1, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  lyricRoll: { def: 10, min: 0, max: 40, kind: 'deg', rebuild: 'live' },
+  lyricOpacity: { def: 1, min: 0.2, max: 1, kind: 'ratio', rebuild: 'live' },
+  lyricOcclusion: { def: 0.012, min: 0, max: 0.05, kind: 'unit', rebuild: 'live' }
 };
 
 function nyanTownParam(key) {
@@ -104,6 +116,7 @@ var NYAN_TOWN_PORT_LINES = [
   "",
   "const vec3 origin=vec3(-1.,.7,0.);",
   "float det=0.0;",
+  "float nyanDepth=1.0;",
   "",
   "",
   "// 2D rotation function",
@@ -245,6 +258,7 @@ var NYAN_TOWN_PORT_LINES = [
   "\t",
   "\tcol=mix(vec3(1.,.9,.3),col,exp(-.004*totdist*totdist));// distant fading to sun color",
   "\tif (totdist>25.) col=backg; // hit background",
+  "\tnyanDepth=clamp(totdist/25.,0.,1.); // 0 near .. 1 far, for the lyric depth test",
   "\tcol=pow(col,vec3(GAMMA))*BRIGHTNESS;",
   "\tcol=mix(vec3(length(col)),col,SATURATION);",
   "#ifdef SHOWONLYEDGES",
@@ -298,7 +312,7 @@ var NYAN_TOWN_PORT_LINES = [
   "\t#ifdef BORDER",
   "\tcolor=mix(vec3(0.),color,pow(max(0.,.95-length(oriuv*oriuv*oriuv*vec2(1.05,1.1))),.3)*uBorder);",
   "\t#endif",
-  "\tfragColor = vec4(color,1.);",
+  "\tfragColor = vec4(color,nyanDepth);",
   "}",
 ];
 
@@ -312,13 +326,47 @@ var NYAN_TOWN_BLIT_VS = [
   '}'
 ].join('\n');
 
-// The reference already applies gamma, brightness, saturation and its own border; copy it as is.
+// The scene pass already applied gamma, brightness, saturation and the border. The last pass is a
+// depth-aware composite: the scene's alpha carries the march hit distance, the lyric pass carries
+// premultiplied text plus a depth plane, and a lyric pixel only survives where it is in front of the
+// town. The same border mask keeps text out of the rounded black corners.
 var NYAN_TOWN_BLIT_FS = [
   'precision highp float;',
-  'uniform sampler2D tDiffuse;',
+  'uniform sampler2D tScene;',
+  'uniform sampler2D tLyric;',
+  'uniform sampler2D tLyricDepth;',
+  'uniform float uOcclusion;',
+  'uniform float uLyricOn;',
   'varying vec2 vUv;',
   'void main() {',
-  '  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);',
+  '  vec4 scene = texture2D(tScene, vUv);',
+  '  vec4 lyric = texture2D(tLyric, vUv);',
+  '  float lyricDepth = texture2D(tLyricDepth, vUv).r;',
+  '  vec2 oriuv = vUv * 2.0 - 1.0;',
+  '  float border = pow(max(0.0, 0.95 - length(oriuv * oriuv * oriuv * vec2(1.05, 1.1))), 0.3);',
+  '  float soft = max(0.0005, uOcclusion);',
+  '  float visible = 1.0 - smoothstep(scene.a - soft, scene.a + soft, lyricDepth);',
+  '  float m = visible * border * uLyricOn;',
+  '  float a = lyric.a * m;',
+  '  vec3 rgb = scene.rgb * (1.0 - a) + lyric.rgb * m;',
+  '  gl_FragColor = vec4(rgb, 1.0);',
+  '}'
+].join('\n');
+
+var NYAN_TOWN_DEPTH_VS = [
+  'varying vec2 vUv;',
+  'void main() {',
+  '  vUv = uv;',
+  '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+  '}'
+].join('\n');
+
+var NYAN_TOWN_DEPTH_FS = [
+  'precision highp float;',
+  'uniform float uDepth;',
+  'varying vec2 vUv;',
+  'void main() {',
+  '  gl_FragColor = vec4(uDepth, uDepth, uDepth, 1.0);',
   '}'
 ].join('\n');
 
@@ -473,7 +521,531 @@ function nyanTownMakeSpriteCanvas() {
   return canvas;
 }
 
-// ---------------------------------------------------------------- resources
+// ---------------------------------------------------------------- the lyric lane
+//
+// Lines are camera-facing plates in a private scene: they fly from the far end of the town toward
+// the eye, cross the screen on alternating sides and roll a little. The scene pass carries its hit
+// distance in alpha, the lane carries one normalized depth per plate, and the final composite only
+// keeps a text pixel where the text is in front of the town. That is what makes an arch cut a line
+// in half instead of the line floating over everything.
+
+function nyanTownClamp(value, lo, hi) {
+  var n = Number(value);
+  if (!isFinite(n)) n = lo;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function nyanTownLyricTranslationOf(line) {
+  if (!line) return '';
+  if (typeof haloLyricTranslationOf === 'function') return haloLyricTranslationOf(line);
+  if (typeof normalizeLyricTranslationText === 'function') return normalizeLyricTranslationText(line.translation);
+  return String(line.translation || '').trim();
+}
+
+function nyanTownLyricItems() {
+  var lines = (typeof lyricsLines !== 'undefined' && Array.isArray(lyricsLines)) ? lyricsLines : [];
+  var offset = 0;
+  if (typeof getActiveLyricTimingOffsetSeconds === 'function') offset = Number(getActiveLyricTimingOffsetSeconds()) || 0;
+  var items = [];
+  for (var i = 0; i < lines.length; i++) {
+    var text = String((lines[i] && lines[i].text) || '').trim();
+    if (!text) continue;
+    items.push({
+      index: i,
+      text: text,
+      sub: nyanTownLyricTranslationOf(lines[i]),
+      startAt: Number(lines[i].t) + offset,
+      endAt: 0
+    });
+  }
+  for (var k = 0; k < items.length; k++) {
+    items[k].endAt = k + 1 < items.length ? items[k + 1].startAt : items[k].startAt + 6;
+  }
+  return items;
+}
+
+function nyanTownLyricSongKey() {
+  if (typeof haloCurrentSong === 'function') {
+    try {
+      var current = haloCurrentSong();
+      return String((current && (current.id || current.name || current.title)) || '');
+    } catch (_) {}
+  }
+  if (typeof currentTrack !== 'undefined' && currentTrack) {
+    return String(currentTrack.id || currentTrack.name || currentTrack.title || '');
+  }
+  return '';
+}
+
+function nyanTownLyricListKey(items) {
+  return nyanTownLyricSongKey() + '|' + items.length + '|' + (items.length ? items[0].text : '');
+}
+
+function nyanTownLyricDuration(item, speed) {
+  var span = Math.max(0.1, Number(item && item.endAt) - Number(item && item.startAt));
+  return nyanTownClamp((span + 1.8) * 2.2 / Math.max(0.2, Number(speed) || 1), 2.5, 16);
+}
+
+function nyanTownLyricSungIndex(items, t) {
+  if (!items || !items.length) return -1;
+  var found = -1;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].startAt <= t) found = i; else break;
+  }
+  return found;
+}
+
+function nyanTownLyricFontStack() {
+  if (typeof lyricFontStackForKey === 'function' && typeof fx !== 'undefined' && fx) {
+    try {
+      var stack = String(lyricFontStackForKey(fx.lyricFont) || '').trim();
+      if (stack) return stack;
+    } catch (_) {}
+  }
+  return '"JetBrains Mono","Microsoft YaHei",monospace';
+}
+
+function nyanTownLyricRasterPx() {
+  var clarity = 1;
+  if (typeof lyricTextureClarityScale === 'function') {
+    clarity = Number(lyricTextureClarityScale()) || 1;
+  } else if (typeof fx !== 'undefined' && fx && isFinite(Number(fx.lyricTextureClarity))) {
+    clarity = Number(fx.lyricTextureClarity);
+  }
+  return Math.round(54 + 18 * nyanTownClamp(clarity, 1, 4));
+}
+
+function nyanTownLyricTranslationShown() {
+  if (typeof lyricTranslationLayoutActive === 'function') {
+    try { return !!lyricTranslationLayoutActive(); } catch (_) {}
+  }
+  return typeof fx !== 'undefined' && fx && String(fx.lyricTranslationMode || 'off') !== 'off';
+}
+
+function nyanTownLyricTranslationScale() {
+  if (typeof lyricTranslationScaleValue === 'function') {
+    try { return nyanTownClamp(lyricTranslationScaleValue(), 0.4, 1.1); } catch (_) {}
+  }
+  return 0.65;
+}
+
+function nyanTownLyricTranslationOpacity() {
+  if (typeof lyricTranslationOpacityValue === 'function') {
+    try { return nyanTownClamp(lyricTranslationOpacityValue(), 0.2, 1); } catch (_) {}
+  }
+  return 0.86;
+}
+
+function nyanTownLyricLineHeight() {
+  if (typeof lyricLineHeightFactor === 'function') {
+    try { return nyanTownClamp(lyricLineHeightFactor(), 0.72, 1.8); } catch (_) {}
+  }
+  return 1;
+}
+
+function nyanTownLyricPalette() {
+  var pal = (typeof effectiveLyricPalette === 'function') ? effectiveLyricPalette(null) : null;
+  pal = pal || {};
+  var primary = pal.primary || '#d6f8ff';
+  var highlight = pal.highlight || '#eef7ff';
+  var context = pal.secondary || '#9cffdf';
+  var glow = pal.glowColor || pal.glow || context;
+  return {
+    primary: primary, highlight: highlight, context: context, glow: glow,
+    signature: [primary, highlight, context, glow].join(',')
+  };
+}
+
+function nyanTownLyricStyleKey() {
+  var pal = nyanTownLyricPalette();
+  return [nyanTownLyricFontStack(), nyanTownLyricRasterPx(), nyanTownLyricTranslationShown() ? 1 : 0,
+    nyanTownLyricTranslationScale().toFixed(2), nyanTownLyricTranslationOpacity().toFixed(2),
+    nyanTownLyricLineHeight().toFixed(2), pal.signature].join('|');
+}
+
+// Greedy wrap, same policy as the rest of the lyric surfaces: Latin at spaces, CJK between glyphs.
+function nyanTownLyricWrapText(ctx, text, maxWidth, maxLines) {
+  var source = String(text || '');
+  var out = [];
+  var current = '';
+  var limit = Math.max(1, Math.round(Number(maxLines) || 1));
+  var truncated = false;
+  for (var i = 0; i < source.length; i++) {
+    var ch = source.charAt(i);
+    var candidate = current + ch;
+    if (current && ctx.measureText(candidate).width > maxWidth) {
+      var space = current.lastIndexOf(' ');
+      if (space > 0 && ch !== ' ') {
+        out.push(current.slice(0, space));
+        current = current.slice(space + 1) + ch;
+      } else {
+        out.push(current);
+        current = ch;
+      }
+      if (out.length >= limit) { current = ''; truncated = true; break; }
+    } else {
+      current = candidate;
+    }
+  }
+  if (current && out.length < limit) out.push(current);
+  if (!out.length) out.push('');
+  if (truncated && out.length) {
+    var lastIndex = out.length - 1;
+    var last = String(out[lastIndex] || '');
+    while (last.length > 0 && ctx.measureText(last + '…').width > maxWidth) last = last.slice(0, -1);
+    out[lastIndex] = last + '…';
+  }
+  return out;
+}
+
+function nyanTownLyricRowCount() {
+  if (!nyanTownState.lyricScene || !nyanTownState.lyricGeometry) return 0;
+  var want = Math.round(nyanTownParam('lyricRows'));
+  want = nyanTownClamp(want, 3, 16);
+  while (nyanTownState.lyricRows.length < want) {
+    var row = nyanTownMakeLyricRow();
+    nyanTownState.lyricScene.add(row.mesh);
+    nyanTownState.lyricDepthScene.add(row.depthMesh);
+    nyanTownState.lyricRows.push(row);
+  }
+  while (nyanTownState.lyricRows.length > want) {
+    var extra = nyanTownState.lyricRows.pop();
+    nyanTownDisposeLyricRow(extra);
+  }
+  return nyanTownState.lyricRows.length;
+}
+
+function nyanTownMakeLyricRow() {
+  var canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 32;
+  var ctx = canvas.getContext('2d');
+  var texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  var material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false
+  });
+  var mesh = new THREE.Mesh(nyanTownState.lyricGeometry, material);
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  var depthMat = new THREE.ShaderMaterial({
+    uniforms: { uDepth: { value: 1 } },
+    vertexShader: NYAN_TOWN_DEPTH_VS,
+    fragmentShader: NYAN_TOWN_DEPTH_FS,
+    depthTest: false,
+    depthWrite: false
+  });
+  var depthMesh = new THREE.Mesh(nyanTownState.lyricGeometry, depthMat);
+  depthMesh.frustumCulled = false;
+  depthMesh.visible = false;
+  return {
+    canvas: canvas, ctx: ctx, texture: texture, material: material, mesh: mesh,
+    depthMat: depthMat, depthMesh: depthMesh,
+    itemIndex: -1, drawKey: '', needsDraw: false, widthRatio: 1
+  };
+}
+
+function nyanTownDisposeLyricRow(row) {
+  if (!row) return;
+  if (row.mesh && row.mesh.parent) row.mesh.parent.remove(row.mesh);
+  if (row.depthMesh && row.depthMesh.parent) row.depthMesh.parent.remove(row.depthMesh);
+  if (row.texture && row.texture.dispose) row.texture.dispose();
+  if (row.material && row.material.dispose) row.material.dispose();
+  if (row.depthMat && row.depthMat.dispose) row.depthMat.dispose();
+}
+
+function nyanTownDrawLyricRow(row, item, current, palette, styleKey) {
+  var raster = nyanTownLyricRasterPx();
+  var stack = nyanTownLyricFontStack();
+  var font = '700 ' + raster.toFixed(1) + 'px ' + stack;
+  var subPx = Math.max(10, Math.round(raster * nyanTownLyricTranslationScale()));
+  var subFont = '400 ' + subPx.toFixed(1) + 'px ' + stack;
+  var pad = Math.max(4, raster * 0.22);
+  var mainH = raster * 1.2 * nyanTownLyricLineHeight();
+  var subH = subPx * 1.55;
+  var gap = raster * 0.18;
+  var maxWidth = 1100;
+  var measure = row.ctx;
+  measure.font = font;
+  var mainLines = nyanTownLyricWrapText(measure, item.text, maxWidth, 3);
+  measure.font = subFont;
+  var subText = nyanTownLyricTranslationShown() ? String(item.sub || '') : '';
+  var subLines = subText ? nyanTownLyricWrapText(measure, subText, maxWidth, 2) : [];
+  var textWidth = 0;
+  measure.font = font;
+  for (var mi = 0; mi < mainLines.length; mi++) {
+    textWidth = Math.max(textWidth, measure.measureText(mainLines[mi]).width || 0);
+  }
+  measure.font = subFont;
+  for (var si = 0; si < subLines.length; si++) {
+    textWidth = Math.max(textWidth, measure.measureText(subLines[si]).width || 0);
+  }
+  var canvasWidth = Math.max(raster * 3, Math.min(2048, Math.ceil(textWidth + pad * 2)));
+  var canvasHeight = Math.ceil(pad * 2 + mainLines.length * mainH + (subLines.length ? gap + subLines.length * subH : 0));
+  if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
+    row.canvas.width = canvasWidth;
+    row.canvas.height = canvasHeight;
+    row.ctx = row.canvas.getContext('2d');
+  }
+  var ctx = row.ctx;
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  var colour = current ? palette.highlight : palette.primary;
+  var alpha = current ? 1 : 0.82;
+  var coreY = pad + mainH * 0.5;
+  // Two passes: a wide glow first, then the crisp core. Both share the same box.
+  function fillLines() {
+    // A dark stroke first: the town's sky and sun are bright, and a pale glyph with no outline
+    // disappears into them. The stroke is baked into the plate so it costs nothing per frame.
+    ctx.strokeStyle = 'rgba(6, 10, 16, 0.55)';
+    ctx.lineWidth = Math.max(1, raster * 0.055);
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = colour;
+    for (var st = 0; st < mainLines.length; st++) {
+      ctx.strokeText(mainLines[st], canvasWidth / 2, pad + (st + 0.5) * mainH);
+    }
+    for (var m = 0; m < mainLines.length; m++) {
+      ctx.fillText(mainLines[m], canvasWidth / 2, pad + (m + 0.5) * mainH);
+    }
+    if (subLines.length) {
+      ctx.font = subFont;
+      ctx.fillStyle = palette.context;
+      ctx.globalAlpha = alpha * nyanTownLyricTranslationOpacity();
+      var subTop = pad + mainLines.length * mainH + gap;
+      for (var s = 0; s < subLines.length; s++) {
+        ctx.fillText(subLines[s], canvasWidth / 2, subTop + (s + 0.5) * subH);
+      }
+      ctx.globalAlpha = alpha;
+      ctx.font = font;
+      ctx.fillStyle = colour;
+    }
+  }
+  ctx.globalAlpha = alpha;
+  ctx.save();
+  ctx.shadowColor = palette.glow;
+  ctx.shadowBlur = raster * 0.26;
+  fillLines();
+  ctx.restore();
+  ctx.globalAlpha = alpha;
+  fillLines();
+  ctx.globalAlpha = 1;
+  row.widthRatio = canvasWidth / Math.max(1, canvasHeight);
+  row.texture.needsUpdate = true;
+  row.drawKey = [item.text, item.sub, styleKey, current ? 1 : 0].join('|');
+  row.needsDraw = false;
+  void coreY;
+}
+
+// Pure flight math, so the timing can be checked without a camera: p runs 0 (spawn, far) to 1
+// (nearest point, fading out). The depth is exponential so the approach slows down near the eye.
+function nyanTownLyricFlight(item, p, isCurrent, opts) {
+  var near = Math.max(1, Number(opts.near) || 4);
+  var far = Math.max(near + 1, Number(opts.far) || 20);
+  var spread = nyanTownClamp(opts.spread === undefined ? 1 : opts.spread, 0, 1.5);
+  var rollDeg = nyanTownClamp(opts.roll === undefined ? 10 : opts.roll, 0, 40);
+  var fov = Math.max(0.2, Number(opts.fov) || 45) * Math.PI / 180;
+  var aspect = Math.max(0.2, Number(opts.aspect) || 1.78);
+  var idx = Math.max(0, Math.round(Number(item && item.index) || 0));
+  var t = nyanTownClamp(p, 0, 1);
+  var depth = near * Math.pow(far / near, 1 - t);
+  var halfH = Math.tan(fov * 0.5) * depth;
+  var halfW = halfH * aspect;
+  var side = (idx % 2 === 0) ? 1 : -1;
+  var lane = (((idx * 37) % 100) / 100 - 0.5) * 0.55 * spread;
+  if (isCurrent) lane *= 0.25;
+  // The sung line crosses the centre early enough to be read while it is bright; the others
+  // sweep the full width and leave the readable moment to the current line.
+  var x0 = side * (isCurrent ? 1.0 : 1.18);
+  var x1 = isCurrent ? -side * 1.1 : -side * 0.32;
+  var x = (x0 + (x1 - x0) * t) * halfW + Math.sin(t * 6.283 + idx) * 0.02 * halfW;
+  var y = lane * halfH + Math.sin(t * 5.1 + idx * 0.7) * 0.015 * halfH;
+  var roll = side * (1 - t) * (rollDeg * Math.PI / 180) + Math.sin(t * 4.3 + idx) * 0.015;
+  var fadeStart = isCurrent ? 0.86 : 0.78;
+  var alpha = nyanTownClamp(t / 0.1, 0, 1) * (1 - nyanTownClamp((t - fadeStart) / (1 - fadeStart), 0, 1));
+  return { depth: depth, x: x, y: y, roll: roll, alpha: alpha, side: side };
+}
+
+function nyanTownHideLyricRows() {
+  var rows = nyanTownState.lyricRows;
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].mesh.visible = false;
+    rows[i].depthMesh.visible = false;
+  }
+}
+
+function nyanTownUpdateLyrics(dt) {
+  if (!nyanTownState.built || !nyanTownState.lyricScene) return false;
+  var on = typeof fx === 'undefined' || !fx || fx.particleLyrics !== false;
+  on = on && nyanTownParam('lyricOn') > 0;
+  nyanTownState.lyricVisible = on ? 1 : 0;
+  if (!on) {
+    nyanTownHideLyricRows();
+    nyanTownState.lyricSung = -2;
+    if (nyanTownState.blitMat) nyanTownState.blitMat.uniforms.uLyricOn.value = 0;
+    return true;
+  }
+  var items = nyanTownLyricItems();
+  var listKey = nyanTownLyricListKey(items);
+  if (listKey !== nyanTownState.lyricListKey) {
+    nyanTownState.lyricListKey = listKey;
+    nyanTownState.lyricItems = items;
+    var resetRows = nyanTownState.lyricRows;
+    for (var r = 0; r < resetRows.length; r++) {
+      resetRows[r].itemIndex = -1;
+      resetRows[r].drawKey = '';
+      resetRows[r].mesh.visible = false;
+      resetRows[r].depthMesh.visible = false;
+    }
+  }
+  nyanTownLyricRowCount();
+  var rows = nyanTownState.lyricRows;
+  if (!items.length || !rows.length) {
+    nyanTownHideLyricRows();
+    if (nyanTownState.blitMat) nyanTownState.blitMat.uniforms.uLyricOn.value = 0;
+    return true;
+  }
+  var clock = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? Number(audio.currentTime) : 0;
+  var t = (typeof getAdjustedLyricPlaybackTime === 'function') ? Number(getAdjustedLyricPlaybackTime(clock)) : clock;
+  if (!isFinite(t)) t = clock;
+  var sung = nyanTownLyricSungIndex(items, t);
+  nyanTownState.lyricSung = sung;
+  var lo = Math.max(0, (sung < 0 ? 0 : sung) - 2);
+  var hi = Math.min(items.length - 1, (sung < 0 ? 0 : sung) + 3);
+  var palette = nyanTownLyricPalette();
+  var styleKey = nyanTownLyricStyleKey();
+  if (styleKey !== nyanTownState.lyricStyleKey) {
+    nyanTownState.lyricStyleKey = styleKey;
+    for (var s = 0; s < rows.length; s++) rows[s].drawKey = '';
+  }
+  // Free rows whose line left the window or whose flight is over.
+  var lead = Math.max(0, nyanTownParam('lyricLead'));
+  var speed = Math.max(0.2, nyanTownParam('lyricSpeed'));
+  var near = Math.max(1, nyanTownParam('lyricDepthNear'));
+  var far = Math.max(near + 1, nyanTownParam('lyricDepthFar'));
+  for (var f = 0; f < rows.length; f++) {
+    var row = rows[f];
+    if (row.itemIndex < 0) continue;
+    var line = items[row.itemIndex];
+    if (!line || row.itemIndex < lo || row.itemIndex > hi) {
+      row.itemIndex = -1;
+      row.drawKey = '';
+      row.mesh.visible = false;
+      row.depthMesh.visible = false;
+      continue;
+    }
+    var dur = nyanTownLyricDuration(line, speed);
+    var p = (t - (line.startAt - lead)) / dur;
+    if (p > 1.15) {
+      row.itemIndex = -1;
+      row.drawKey = '';
+      row.mesh.visible = false;
+      row.depthMesh.visible = false;
+    }
+  }
+  // Claim a row for every line that can be flying now.
+  for (var idx = lo; idx <= hi; idx++) {
+    var claimed = false;
+    for (var c = 0; c < rows.length; c++) if (rows[c].itemIndex === idx) { claimed = true; break; }
+    if (claimed) continue;
+    var free = null;
+    for (var fr = 0; fr < rows.length; fr++) if (rows[fr].itemIndex < 0) { free = rows[fr]; break; }
+    if (!free) continue;
+    free.itemIndex = idx;
+    free.drawKey = '';
+  }
+  // The current line gets the raster budget first; a future line that has not spawned must not
+  // consume it (that starved the one line actually on screen for a whole song in the first cut).
+  var sungRow = null;
+  for (var sr = 0; sr < rows.length; sr++) {
+    if (rows[sr].itemIndex === sung) { sungRow = rows[sr]; break; }
+  }
+  function plateKey(item, current) {
+    return [item.text, item.sub, styleKey, current ? 1 : 0].join('|');
+  }
+  if (sungRow) {
+    var sungItem = items[sungRow.itemIndex];
+    if (sungItem) {
+      var sungDur = nyanTownLyricDuration(sungItem, speed);
+      var sungP = (t - (sungItem.startAt - lead)) / sungDur;
+      var sungKey = plateKey(sungItem, true);
+      if (sungP >= 0 && sungP <= 1.15 && sungRow.drawKey !== sungKey) {
+        nyanTownDrawLyricRow(sungRow, sungItem, true, palette, styleKey);
+      }
+    }
+  }
+  var sizeKnob = nyanTownClamp(nyanTownParam('lyricSize'), 0.2, 2);
+  var opacityKnob = nyanTownClamp(nyanTownParam('lyricOpacity'), 0, 1);
+  var spread = nyanTownParam('lyricSpread');
+  var roll = nyanTownParam('lyricRoll');
+  var aspect = (nyanTownState.lyricCam && nyanTownState.lyricCam.aspect) || 1.78;
+  var fov = (nyanTownState.lyricCam && nyanTownState.lyricCam.fov) || 45;
+  var rasterBudget = 1;
+  var live = 0;
+  for (var q = 0; q < rows.length; q++) {
+    var piece = rows[q];
+    if (piece.itemIndex < 0) continue;
+    var item = items[piece.itemIndex];
+    if (!item) continue;
+    var current = piece.itemIndex === sung;
+    var lineDur = nyanTownLyricDuration(item, speed);
+    var rawProgress = (t - (item.startAt - lead)) / lineDur;
+    if (rawProgress < 0) {
+      piece.mesh.visible = false;
+      piece.depthMesh.visible = false;
+      continue;
+    }
+    var drawKey = plateKey(item, current);
+    if (piece.drawKey !== drawKey) {
+      piece.needsDraw = true;
+      if (rasterBudget > 0 && piece !== sungRow) {
+        nyanTownDrawLyricRow(piece, item, current, palette, styleKey);
+        rasterBudget -= 1;
+      } else if (piece !== sungRow) {
+        piece.mesh.visible = false;
+        piece.depthMesh.visible = false;
+        continue;
+      }
+    }
+    var progress = nyanTownClamp(rawProgress, 0, 1);
+    var flight = nyanTownLyricFlight(item, progress, current, {
+      near: near, far: far, spread: spread, roll: roll, fov: fov, aspect: aspect
+    });
+    // The readable moment is around depth 10, so the plate has to be large in world units: at
+    // 1.15 it covers ~14% of the viewport there (about 45 px per text line on a 1080p window).
+    var height = 1.8 * sizeKnob * (current ? 1.2 : 0.9);
+    var width = height * piece.widthRatio;
+    piece.mesh.position.set(flight.x, flight.y, -flight.depth);
+    piece.mesh.rotation.set(0, 0, flight.roll);
+    piece.mesh.scale.set(width, height, 1);
+    piece.material.opacity = opacityKnob * flight.alpha;
+    piece.mesh.visible = true;
+    piece.depthMesh.position.copy(piece.mesh.position);
+    piece.depthMesh.rotation.copy(piece.mesh.rotation);
+    piece.depthMesh.scale.copy(piece.mesh.scale);
+    piece.depthMat.uniforms.uDepth.value = nyanTownClamp(flight.depth / 25, 0, 0.98);
+    // Far plates first, near plates last, so the depth target ends up holding the nearest plate
+    // that also sits on top in the colour target. Without this a farther rectangle could own the
+    // depth at a pixel and hide the text the colour pass drew there.
+    piece.depthMesh.renderOrder = Math.round((1 - nyanTownClamp(flight.depth / far, 0, 1)) * 1000);
+    piece.depthMesh.visible = true;
+    live += 1;
+  }
+  if (nyanTownState.blitMat) {
+    nyanTownState.blitMat.uniforms.uLyricOn.value = live > 0 ? 1 : 0;
+    nyanTownState.blitMat.uniforms.uOcclusion.value = nyanTownParam('lyricOcclusion');
+  }
+  return true;
+}
+
+
 
 var nyanTownState = {
   built: false, quadScene: null, quadCam: null, quad: null, mat: null,
@@ -481,6 +1053,10 @@ var nyanTownState = {
   rt: null, rtW: 0, rtH: 0, passScale: 0,
   levelData: null, levelTex: null,
   spriteCanvas: null, spriteTex: null,
+  lyricScene: null, lyricDepthScene: null, lyricCam: null,
+  lyricRt: null, lyricDepthRt: null, lyricW: 0, lyricH: 0,
+  lyricGeometry: null, lyricRows: [], lyricItems: [], lyricListKey: '', lyricStyleKey: '',
+  lyricSung: -2, lyricVisible: 0, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   size: null
 };
@@ -555,7 +1131,13 @@ function nyanTownBuildScene() {
     quadScene.add(quad);
 
     var blitMat = new THREE.ShaderMaterial({
-      uniforms: { tDiffuse: { value: null } },
+      uniforms: {
+        tScene: { value: null },
+        tLyric: { value: null },
+        tLyricDepth: { value: null },
+        uOcclusion: { value: 0.012 },
+        uLyricOn: { value: 1 }
+      },
       vertexShader: NYAN_TOWN_BLIT_VS,
       fragmentShader: NYAN_TOWN_BLIT_FS,
       depthTest: false,
@@ -578,6 +1160,12 @@ function nyanTownBuildScene() {
     nyanTownState.blitMat = blitMat;
     nyanTownState.blitScene = blitScene;
     nyanTownState.blitCam = blitCam;
+    nyanTownState.lyricScene = new THREE.Scene();
+    nyanTownState.lyricDepthScene = new THREE.Scene();
+    nyanTownState.lyricCam = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+    nyanTownState.lyricCam.position.set(0, 0, 0);
+    nyanTownState.lyricGeometry = new THREE.PlaneGeometry(1, 1);
+    nyanTownState.clearColor = new THREE.Color();
     nyanTownLevelState.level.fill(0);
     nyanTownWriteSpectrum(levelData, nyanTownLevelState.level);
     nyanTownState.built = true;
@@ -594,7 +1182,11 @@ function nyanTownAlignPassSize() {
   var scale = Math.min(1, Math.max(0.4, nyanTownParam('renderScale')));
   var w = Math.max(32, Math.round((nyanTownState.size.x || 1) * scale));
   var h = Math.max(32, Math.round((nyanTownState.size.y || 1) * scale));
-  if (nyanTownState.rt && nyanTownState.rtW === w && nyanTownState.rtH === h && nyanTownState.passScale === scale) return true;
+  var lw = Math.max(64, Math.round(nyanTownState.size.x || 1));
+  var lh = Math.max(64, Math.round(nyanTownState.size.y || 1));
+  var sceneSized = nyanTownState.rt && nyanTownState.rtW === w && nyanTownState.rtH === h && nyanTownState.passScale === scale;
+  var lyricSized = nyanTownState.lyricRt && nyanTownState.lyricW === lw && nyanTownState.lyricH === lh;
+  if (sceneSized && lyricSized) return true;
   if (!nyanTownState.rt) {
     nyanTownState.rt = new THREE.WebGLRenderTarget(w, h, {
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
@@ -608,7 +1200,28 @@ function nyanTownAlignPassSize() {
   nyanTownState.rtH = h;
   nyanTownState.passScale = scale;
   nyanTownState.mat.uniforms.iResolution.value = shadertoyUvUniforms(w, h).value;
-  nyanTownState.blitMat.uniforms.tDiffuse.value = nyanTownState.rt.texture;
+  if (!nyanTownState.lyricRt) {
+    nyanTownState.lyricRt = new THREE.WebGLRenderTarget(lw, lh, {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+      depthBuffer: false, stencilBuffer: false, generateMipmaps: false
+    });
+    nyanTownState.lyricDepthRt = new THREE.WebGLRenderTarget(lw, lh, {
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+      format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+      depthBuffer: false, stencilBuffer: false, generateMipmaps: false
+    });
+  } else if (nyanTownState.lyricW !== lw || nyanTownState.lyricH !== lh) {
+    nyanTownState.lyricRt.setSize(lw, lh);
+    nyanTownState.lyricDepthRt.setSize(lw, lh);
+  }
+  nyanTownState.lyricW = lw;
+  nyanTownState.lyricH = lh;
+  nyanTownState.lyricCam.aspect = lw / lh;
+  nyanTownState.lyricCam.updateProjectionMatrix();
+  nyanTownState.blitMat.uniforms.tScene.value = nyanTownState.rt.texture;
+  nyanTownState.blitMat.uniforms.tLyric.value = nyanTownState.lyricRt.texture;
+  nyanTownState.blitMat.uniforms.tLyricDepth.value = nyanTownState.lyricDepthRt.texture;
   return true;
 }
 
@@ -648,14 +1261,46 @@ function nyanTownFeedUniforms() {
 
 function updateNyanTownLayer(now, dt, sonicFrame) {
   if (!nyanTownPresetIsActive()) return false;
+  if (!nyanTownState.lyricLayerChecked) {
+    nyanTownState.lyricLayerChecked = true;
+    nyanTownEnableLyricLayer();
+  }
   var startedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   if (!nyanTownState.built && !nyanTownBuildScene()) return false;
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
   nyanTownUpdateLevels(sonicFrame, step);
   nyanTownFeedUniforms();
+  nyanTownUpdateLyrics(step);
   nyanTownState.frames++;
   nyanTownState.lastCostMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - startedAt;
   void now;
+  return true;
+}
+
+function nyanTownRenderLyricPasses() {
+  if (!nyanTownState.lyricRt || !nyanTownState.lyricDepthRt) return false;
+  var rows = nyanTownState.lyricRows;
+  var any = false;
+  for (var i = 0; i < rows.length; i++) if (rows[i].mesh.visible) { any = true; break; }
+  if (!any) return false;
+  var clear = nyanTownState.clearColor || new THREE.Color();
+  renderer.getClearColor(clear);
+  var oldAlpha = renderer.getClearAlpha();
+  renderer.autoClear = false;
+  try {
+    renderer.setRenderTarget(nyanTownState.lyricRt);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, false, false);
+    renderer.render(nyanTownState.lyricScene, nyanTownState.lyricCam);
+    renderer.setRenderTarget(nyanTownState.lyricDepthRt);
+    renderer.setClearColor(0xffffff, 1);
+    renderer.clear(true, false, false);
+    renderer.render(nyanTownState.lyricDepthScene, nyanTownState.lyricCam);
+  } finally {
+    renderer.setRenderTarget(null);
+    renderer.autoClear = true;
+    renderer.setClearColor(clear, oldAlpha);
+  }
   return true;
 }
 
@@ -672,6 +1317,7 @@ function renderNyanTownFrame() {
   try {
     renderer.setRenderTarget(nyanTownState.rt);
     renderer.render(nyanTownState.quadScene, nyanTownState.quadCam);
+    nyanTownRenderLyricPasses();
     renderer.setRenderTarget(null);
     renderer.render(nyanTownState.blitScene, nyanTownState.blitCam);
   } catch (err) {
@@ -683,6 +1329,29 @@ function renderNyanTownFrame() {
 }
 
 function nyanTownDisposeScene() {
+  var rows = nyanTownState.lyricRows || [];
+  for (var i = 0; i < rows.length; i++) nyanTownDisposeLyricRow(rows[i]);
+  nyanTownState.lyricRows = [];
+  if (nyanTownState.lyricRt) nyanTownState.lyricRt.dispose();
+  if (nyanTownState.lyricDepthRt) nyanTownState.lyricDepthRt.dispose();
+  if (nyanTownState.lyricGeometry) nyanTownState.lyricGeometry.dispose();
+  if (nyanTownState.lyricScene) nyanTownState.lyricScene.clear();
+  if (nyanTownState.lyricDepthScene) nyanTownState.lyricDepthScene.clear();
+  nyanTownState.lyricRt = null;
+  nyanTownState.lyricDepthRt = null;
+  nyanTownState.lyricGeometry = null;
+  nyanTownState.lyricScene = null;
+  nyanTownState.lyricDepthScene = null;
+  nyanTownState.lyricCam = null;
+  nyanTownState.lyricW = 0;
+  nyanTownState.lyricH = 0;
+  nyanTownState.lyricItems = [];
+  nyanTownState.lyricListKey = '';
+  nyanTownState.lyricStyleKey = '';
+  nyanTownState.lyricSung = -2;
+  nyanTownState.lyricVisible = 0;
+  nyanTownState.lyricLayerChecked = false;
+  nyanTownState.lyricLayerWasOff = false;
   if (nyanTownState.levelTex) nyanTownState.levelTex.dispose();
   if (nyanTownState.spriteTex) nyanTownState.spriteTex.dispose();
   if (nyanTownState.mat) nyanTownState.mat.dispose();
@@ -722,17 +1391,40 @@ function nyanTownStatus() {
     error: nyanTownState.error,
     passScale: nyanTownState.passScale, rt: [nyanTownState.rtW, nyanTownState.rtH],
     raySteps: nyanTownParam('raySteps'),
-    nyan: nyanTownParam('catOn') > 0
+    nyan: nyanTownParam('catOn') > 0,
+    lyricOn: nyanTownParam('lyricOn') > 0,
+    lyricRows: nyanTownState.lyricRows.length,
+    lyricLive: nyanTownState.lyricRows.filter(function (row) { return row.mesh.visible; }).length,
+    lyricText: (nyanTownState.lyricSung >= 0 && nyanTownState.lyricItems[nyanTownState.lyricSung])
+      ? String(nyanTownState.lyricItems[nyanTownState.lyricSung].text || '').slice(0, 24) : ''
   };
+}
+
+// The lane reads fx.particleLyrics as the global lyric switch (the app's 词 button). Restored fx
+// state can land after the preset is applied, so the first active frame checks too.
+function nyanTownEnableLyricLayer() {
+  if (nyanTownState.lyricLayerWasOff) return true;
+  if (typeof fx === 'undefined' || !fx || fx.particleLyrics !== false) return false;
+  if (typeof setParticleLyricsSilently !== 'function') return false;
+  nyanTownState.lyricLayerWasOff = true;
+  setParticleLyricsSilently(true);
+  return true;
 }
 
 function applyNyanTownPresetNow(prev, next) {
   var on = Number(next) === NYAN_TOWN_PRESET_INDEX;
   var was = Number(prev) === NYAN_TOWN_PRESET_INDEX;
   if (on) {
+    nyanTownState.lyricLayerChecked = true;
+    nyanTownEnableLyricLayer();
     nyanTownBuildScene();
     if (typeof markRenderInteraction === 'function') markRenderInteraction('nyan-town-preset');
   } else if (was) {
+    if (nyanTownState.lyricLayerWasOff) {
+      nyanTownState.lyricLayerWasOff = false;
+      if (typeof setParticleLyricsSilently === 'function') setParticleLyricsSilently(false);
+    }
+    nyanTownState.lyricLayerChecked = false;
     nyanTownDisposeScene();
   }
   return on;

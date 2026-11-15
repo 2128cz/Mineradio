@@ -2323,7 +2323,13 @@ function runNyanTownPresetCheck() {
     [/if \(uNyan>\.5\) \{/, 'the cat cameo has to be toggleable'],
     [/if \(uRainbow>\.5\) \{/, 'the rainbow has to be toggleable'],
     [/\*uBorder\);/, 'the border has to come from its knob'],
-    [/fragColor = vec4\(color,1\.\);/, 'the fragment has to write opaque alpha so the blit can copy it'],
+    [/fragColor = vec4\(color,nyanDepth\);/, 'the fragment has to write the march depth into alpha for the lyric occluder (RGB untouched)'],
+    [/nyanDepth=clamp\(totdist\/25\.,0\.,1\.\);/, 'the hit distance has to be exported for the depth test'],
+    [/uniform sampler2D tScene;/, 'the composite has to sample the scene target'],
+    [/uniform sampler2D tLyric;/, 'the composite has to sample the lyric target'],
+    [/uniform sampler2D tLyricDepth;/, 'the composite has to sample the lyric depth plane'],
+    [/float visible = 1\.0 - smoothstep\(scene\.a - soft, scene\.a \+ soft, lyricDepth\);/, 'a lyric pixel has to lose to the town when it is behind it'],
+    [/float border = pow\(max\(0\.0, 0\.95 - length\(oriuv/, 'the lyric composite has to keep the reference rounded border'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2339,6 +2345,16 @@ function runNyanTownPresetCheck() {
   if (!/applyNyanTownPresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the town and leaving it must release it');
   if (!/updateNyanTownLayer\(now, dt, sonicAudioFrame\)/.test(loopText)) fail('the main loop must step the town with the audio frame');
   if (!/renderNyanTownFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the town pass');
+  for (const [pattern, why] of [
+    [/nyanTownUpdateLyrics\(step\)/, 'the loop has to step the lyric lane with the same song clock'],
+    [/nyanTownRenderLyricPasses\(\)/, 'the frame has to render the lyric colour and depth targets'],
+    [/function nyanTownLyricFlight\(/, 'the flight has to be one pure helper so its timing can be checked'],
+    [/function nyanTownEnableLyricLayer\(/, 'the lane has to respect the app lyric switch and enable it on entry'],
+    [/uniforms\.uLyricOn\.value = live > 0 \? 1 : 0;/, 'the composite gate has to follow whether any plate is live'],
+    [/uOcclusion\.value = nyanTownParam\('lyricOcclusion'\)/, 'the occlusion softening has to come from its knob'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
   const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
   if (!/id: 'nyan-town'/.test(ownerBlock)) fail('the town must register as a takeover owner');
   for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
@@ -2354,7 +2370,7 @@ function runNyanTownPresetCheck() {
   while ((found = schemaRe.exec(text))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 18) fail(`the town knob schema must be complete (found ${schema.size})`);
+  if (schema.size < 28) fail(`the town knob schema must be complete (found ${schema.size})`);
   for (const [key, spec] of schema) {
     if (spec.kind === 'bool') {
       const id = 't-nyan' + key;
@@ -2381,7 +2397,7 @@ function runNyanTownPresetCheck() {
     fail('the visual console needs a 彩虹猫小镇 group in the 动效 tab');
   }
   if (!/presets: \[NYAN_TOWN_PRESET_INDEX\]/.test(consoleText)) fail('the 彩虹猫小镇 group has to carry presets: [NYAN_TOWN_PRESET_INDEX]');
-  if (!/mineradio-nyan-town-tuning-v1/.test(tuningText) || !/function bindNyanTownTuningResetButtons\(/.test(tuningText)) {
+  if (!/mineradio-nyan-town-tuning-v3/.test(tuningText) || !/function bindNyanTownTuningResetButtons\(/.test(tuningText)) {
     fail('the town knobs need their own store and one reset button per row');
   }
   const portTest = path.join(appRoot, 'tests', 'nyan-town-port.test.js');

@@ -58,6 +58,27 @@ function getJson(port, p) {
   await wait(2000);
   const secondAt = Date.now();
   const second = JSON.parse(await ev('JSON.stringify(nyanTownStatus())'));
+  let occlusion = null;
+  if (second.lyricLive > 0) {
+    occlusion = JSON.parse(await ev(`(function(){
+      var srt=nyanTownState.rt, lrt=nyanTownState.lyricRt, drt=nyanTownState.lyricDepthRt;
+      var sw=srt.width, sh=srt.height, lw=lrt.width, lh=lrt.height;
+      var sb=new Uint8Array(sw*sh*4); renderer.readRenderTargetPixels(srt,0,0,sw,sh,sb);
+      var lb=new Uint8Array(lw*lh*4); renderer.readRenderTargetPixels(lrt,0,0,lw,lh,lb);
+      var db=new Uint8Array(lw*lh*4); renderer.readRenderTargetPixels(drt,0,0,lw,lh,db);
+      var soft=0.012, cover=0, occluded=0, visible=0;
+      for (var y=0;y<lh;y+=2) for (var x=0;x<lw;x+=2) {
+        var li=(y*lw+x)*4;
+        if (lb[li+3] < 32) continue;
+        var sx=Math.min(sw-1, Math.round(x*sw/lw)), sy=Math.min(sh-1, Math.round(y*sh/lh));
+        var sceneD=sb[(sy*sw+sx)*4+3]/255, lyricD=db[li]/255;
+        cover++;
+        if (lyricD > sceneD + soft) occluded++;
+        else if (lyricD < sceneD - soft) visible++;
+      }
+      return JSON.stringify({cover:cover, occluded:occluded, visible:visible});
+    })()`));
+  }
   await ev('setPreset(' + previous + ')');
   ws.close();
 
@@ -70,6 +91,16 @@ function getJson(port, p) {
   check(second.passScale > 0, 'the offscreen pass is sized (' + second.passScale + ')');
   check(second.raySteps > 0, 'the ray-step knob reaches the status (' + second.raySteps + ')');
   check(second.nyan === true, 'the Nyan Cat cameo is on by default');
+  check(second.lyricOn === true, 'the lyric lane is on by default');
+  check(second.lyricRows >= 3, 'the lyric pool is allocated (' + second.lyricRows + ' rows)');
+  if (occlusion) {
+    console.log('[INFO] lyric depth test: ' + occlusion.cover + ' covered, ' + occlusion.occluded
+      + ' occluded by the town, ' + occlusion.visible + ' visible at this frame');
+    check(occlusion.cover > 0, 'the lyric target has text pixels while a line is live');
+    check(occlusion.occluded > 0, 'the town occludes at least some of those pixels');
+  } else {
+    console.log('[INFO] no lyric line is live at this instant; depth test not sampled');
+  }
   const fps = Math.round(((second.frames - first.frames) / Math.max(1, secondAt - firstAt)) * 10000) / 10;
   console.log('[INFO] in-app fps ~' + fps + ' at ' + second.rt.join('x') + ' (renderScale ' + second.passScale + ')');
   check(second.raySteps === first.raySteps, 'the ray-step knob stays stable while playing');
