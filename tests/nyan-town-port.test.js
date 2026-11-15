@@ -141,4 +141,27 @@ assert.match(moduleText, /spriteTex\.wrapS = THREE\.RepeatWrapping/);
 assert.match(moduleText, /spriteTex\.magFilter = THREE\.NearestFilter/);
 assert.match(moduleText, /shadertoyFragment\(NYAN_TOWN_PORT_BODY, \{ channels: 2 \}\)/);
 
+// The sprite has to live inside the band the reference actually samples. CanvasTexture flips Y, so
+// the visible rows for y = 0.5 + uv.y + ny (uv.y in [-.3,.3], ny in [-.0375,0]) on a 24 px sheet
+// are rows 5..19. Anything above or below is cut by the alpha window — that is exactly how the
+// ears and the feet disappeared once.
+const sandbox = { console };
+vm.runInNewContext(moduleText, sandbox);
+const rects = [];
+const fakeCtx = {
+  fillStyle: '',
+  fillRect(x, y, w, h) { rects.push({ x: x, y: y, w: w, h: h }); }
+};
+for (let frame = 0; frame < 6; frame++) {
+  sandbox.nyanTownPaintSpriteFrame(fakeCtx, frame * 40, frame);
+}
+assert.ok(rects.length > 40, 'the sprite painter has to draw the whole cat, not a placeholder');
+for (const r of rects) {
+  assert.ok(r.x >= 0 && r.x + r.w <= 240, `sprite art leaves the 6x40 strip: x ${r.x}..${r.x + r.w}`);
+  assert.ok(r.y >= 5 && r.y + r.h <= 20,
+    `sprite rows ${r.y}..${r.y + r.h - 1} leave the reference's sampled band 5..19; the alpha window clips them`);
+}
+assert.ok(rects.some((r) => r.y === 5), 'the ears have to sit at row 5, inside the sampled band');
+assert.ok(rects.some((r) => r.y + r.h === 20), 'the feet have to end at row 19, inside the sampled band');
+
 console.log('OK nyan-town-port: ' + lines.length + ' reference lines, ' + Object.keys(schema).length + ' knobs, defaults pinned');

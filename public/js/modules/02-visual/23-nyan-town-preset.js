@@ -418,39 +418,39 @@ function nyanTownPaintSpriteFrame(ctx, ox, frame) {
   var bob = frame % 2;
   var tail = [0, -1, 0, 1, 1, 0][frame];
   var ear = frame === 3 ? 1 : 0;
-  // The art fills the 40 px frame edge to edge, like the reference sheet: the sampled window is
-  // ~42.7 px, so a frame boundary always falls inside it. Full-bleed adjacent frames (which share
-  // the same body/head positions) read as one cat across the seam instead of leaving a gap.
+  // The reference's alpha window only samples y = 0.5 + uv.y + ny with uv.y in [-.3,.3] and
+  // ny in [-.0375,0], i.e. canvas rows 5..19 of the 24 px sheet (CanvasTexture flips Y). The whole
+  // cat — ears and feet included — has to stay inside that band or the cutoffs eat them.
   nyanTownSpriteRect(ctx, ox + 0, 12 + tail, 6, 4, '#8e8e8e');
   nyanTownSpriteRect(ctx, ox + 0, 12 + tail, 2, 4, '#5f5f5f');
   nyanTownSpriteRect(ctx, ox + 5, 12 + tail, 1, 2, '#bdbdbd');
-  nyanTownSpriteRect(ctx, ox + 8, 18, 3, 4 - bob, '#8e8e8e');
-  nyanTownSpriteRect(ctx, ox + 8, 21 - bob, 3, 1, '#f0f0f0');
-  nyanTownSpriteRect(ctx, ox + 15, 18, 3, 3 + bob, '#8e8e8e');
-  nyanTownSpriteRect(ctx, ox + 15, 21, 3, 1, '#f0f0f0');
-  nyanTownSpriteRect(ctx, ox + 5, 7, 15, 13, '#d9a070');
-  nyanTownSpriteRect(ctx, ox + 6, 8, 13, 11, '#f19cb7');
+  nyanTownSpriteRect(ctx, ox + 8, 17, 3, 3 - bob, '#8e8e8e');
+  nyanTownSpriteRect(ctx, ox + 8, 19 - bob, 3, 1, '#f0f0f0');
+  nyanTownSpriteRect(ctx, ox + 15, 17, 3, 2 + bob, '#8e8e8e');
+  nyanTownSpriteRect(ctx, ox + 15, 18 + bob, 3, 1, '#f0f0f0');
+  nyanTownSpriteRect(ctx, ox + 5, 7, 15, 11, '#d9a070');
+  nyanTownSpriteRect(ctx, ox + 6, 8, 13, 9, '#f19cb7');
   nyanTownSpriteRect(ctx, ox + 6, 8, 13, 1, '#f7bfd0');
   var sprinkles = [
     [7, 10, '#ff3b2b'], [10, 9, '#ffb000'], [13, 10, '#ffe600'], [16, 11, '#3fea2a'],
-    [8, 13, '#18a8ff'], [12, 14, '#7a55ff'], [15, 15, '#ff3b2b'], [7, 16, '#ffe600'],
-    [11, 17, '#ffb000'], [14, 17, '#3fea2a']
+    [8, 13, '#18a8ff'], [12, 13, '#7a55ff'], [15, 14, '#ff3b2b'], [7, 15, '#ffe600'],
+    [11, 16, '#ffb000'], [14, 16, '#3fea2a']
   ];
   for (var i = 0; i < sprinkles.length; i++) {
     nyanTownSpriteRect(ctx, ox + sprinkles[i][0], sprinkles[i][1], 1, 1, sprinkles[i][2]);
   }
-  nyanTownSpriteRect(ctx, ox + 20, 5, 14, 13, '#2b2b2b');
-  nyanTownSpriteRect(ctx, ox + 19, 8, 16, 7, '#2b2b2b');
-  nyanTownSpriteRect(ctx, ox + 21, 4 - ear, 3, 2 + ear, '#2b2b2b');
-  nyanTownSpriteRect(ctx, ox + 31, 4 - ear, 3, 2 + ear, '#2b2b2b');
-  nyanTownSpriteRect(ctx, ox + 21, 6, 12, 11, '#9a9a9a');
+  nyanTownSpriteRect(ctx, ox + 20, 6, 14, 12, '#2b2b2b');
+  nyanTownSpriteRect(ctx, ox + 19, 9, 16, 5, '#2b2b2b');
+  nyanTownSpriteRect(ctx, ox + 21 - ear, 5, 3, 2, '#2b2b2b');
+  nyanTownSpriteRect(ctx, ox + 31 + ear, 5, 3, 2, '#2b2b2b');
+  nyanTownSpriteRect(ctx, ox + 21, 7, 12, 10, '#9a9a9a');
   nyanTownSpriteRect(ctx, ox + 20, 9, 14, 5, '#9a9a9a');
-  nyanTownSpriteRect(ctx, ox + 22, 5 - ear, 2, 1 + ear, '#9a9a9a');
-  nyanTownSpriteRect(ctx, ox + 32, 5 - ear, 2, 1 + ear, '#9a9a9a');
+  nyanTownSpriteRect(ctx, ox + 22 - ear, 5, 2, 1, '#9a9a9a');
+  nyanTownSpriteRect(ctx, ox + 32 + ear, 5, 2, 1, '#9a9a9a');
   nyanTownSpriteRect(ctx, ox + 23, 8, 9, 7, '#f4f4f4');
   nyanTownSpriteRect(ctx, ox + 24, 7, 7, 9, '#f4f4f4');
-  nyanTownSpriteRect(ctx, ox + 22, 5 - ear, 1, 1, '#f19cb7');
-  nyanTownSpriteRect(ctx, ox + 33, 5 - ear, 1, 1, '#f19cb7');
+  nyanTownSpriteRect(ctx, ox + 22 - ear, 5, 1, 1, '#f19cb7');
+  nyanTownSpriteRect(ctx, ox + 33 + ear, 5, 1, 1, '#f19cb7');
   nyanTownSpriteRect(ctx, ox + 29, 9, 2, 3, '#111111');
   nyanTownSpriteRect(ctx, ox + 29, 9, 1, 1, '#ffffff');
   nyanTownSpriteRect(ctx, ox + 26, 13, 2, 1, '#f19cb7');
