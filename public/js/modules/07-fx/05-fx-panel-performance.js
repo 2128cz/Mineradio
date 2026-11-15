@@ -183,11 +183,17 @@ var SONIC_WORKSHOP_FX_CONTROL_IDS = [
   'sonic-workshop-color-row', 'sonic-workshop-base-row', 'sonic-workshop-warm-row', 'sonic-workshop-cool-row',
   'sonic-workshop-ripple-row', 'sonic-workshop-peak-row', 'sonic-workshop-theme-seg'
 ];
+// The row classes the console moves and the panel hides share this core; each side appends its
+// own extras. Keeping the common part in one place is what stops the two lists from drifting apart
+// while still letting them answer different questions (which block to move vs which to hide).
+var FX_CONTROL_ROW_SELECTOR = '.fx-slider,.lyric-color-row,.fx-seg,.sonic-audio-monitor';
+var FX_CONTROL_BLOCK_SELECTOR = FX_CONTROL_ROW_SELECTOR + ',.fx-toggle-grid,.fx-section-label';
+
 function fxPanelControlBlockById(id) {
   var el = document.getElementById(id);
   if (!el) return null;
-  if (el.classList && (el.classList.contains('fx-section-label') || el.classList.contains('fx-slider') || el.classList.contains('fx-toggle-grid') || el.classList.contains('sonic-audio-monitor') || el.classList.contains('lyric-color-row') || el.classList.contains('fx-seg'))) return el;
-  return el.closest ? el.closest('.fx-slider,.fx-toggle-grid,.sonic-audio-monitor,.lyric-color-row,.fx-seg,.fx-section-label') : null;
+  if (el.matches && el.matches(FX_CONTROL_BLOCK_SELECTOR)) return el;
+  return el.closest ? el.closest(FX_CONTROL_BLOCK_SELECTOR) : null;
 }
 function setFxPanelControlsHidden(ids, hidden) {
   ids.forEach(function (id) {

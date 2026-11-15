@@ -402,7 +402,10 @@ function fxConsoleResolveBlock(ref) {
   else if (ref && ref.element) el = ref.element;
   else if (ref && ref.selector) el = document.querySelector('#fx-panel ' + ref.selector) || document.querySelector(ref.selector);
   if (!el) return null;
-  var selector = '.fx-slider,.lyric-color-row,.lyric-color-grid,.fx-seg,.preset-grid,.user-archive-grid,.fx-font-grid,.fx-toggle,.lyric-glitch-controls,.lyric-glow-effect-row,.sonic-audio-monitor,.audio-output-section,.cache-storage-panel,.memory-status-chip,.memory-status-sub,.memory-action-row,.fx-actions';
+  // The core row classes come from the panel's constant so the two cannot drift; the extras below
+  // are containers only the console ever moves (grids, pickers, action bars).
+  var selector = FX_CONTROL_ROW_SELECTOR
+    + ',.lyric-color-grid,.preset-grid,.user-archive-grid,.fx-font-grid,.fx-toggle,.lyric-glitch-controls,.lyric-glow-effect-row,.audio-output-section,.cache-storage-panel,.memory-status-chip,.memory-status-sub,.memory-action-row,.fx-actions';
   if (el.matches && el.matches(selector)) return el;
   return el.closest ? (el.closest(selector) || el) : el;
 }

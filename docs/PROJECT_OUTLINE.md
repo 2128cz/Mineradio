@@ -446,7 +446,7 @@ graph LR
 | 项 | 证据（文件 + 函数） | 影响 | 本轮处置 |
 |---|---|---|---|
 | 控制台可见性两套 | 新：`data-fx-presets` + `fxConsoleSyncGroupVisibility`（组级）；旧：`SONIC_ORIGINAL_FX_CONTROL_IDS` / `SONIC_WORKSHOP_FX_CONTROL_IDS` + `setFxPanelControlsHidden`（控件级） | 旧的一套是因为声波区块标题没登记成控制台项、落在「其他设置」里，组级过滤够不着 | 新代码统一用 `presets`；旧的保留（两者互不冲突，已实机证明各自独立生效） |
-| 容器选择器两份 | `fxConsoleResolveBlock` 认 17 类容器；`fxPanelControlBlockById` 认 6 类 | 同一个控件"搬进分组"与"按 id 隐藏"可能认到不同宿主（尤其 `.fx-toggle-grid` / `.fx-section-label`） | 待修：合并成一份公共选择器，先要确认那两类容器的搬运结果不会换宿主 |
+| 容器选择器两份 | ~~`fxConsoleResolveBlock` 认 17 类容器；`fxPanelControlBlockById` 认 6 类~~ | 同一控件"搬进分组"与"按 id 隐藏"可能认到不同宿主 | **部分合并**：公共的 4 类（`.fx-slider/.lyric-color-row/.fx-seg/.sonic-audio-monitor`）抽成 `FX_CONTROL_ROW_SELECTOR`（`07-fx/05-fx-panel-performance.js`），两侧各自追加自己的额外容器（控制台另有 13 类、隐藏另有 `.fx-toggle-grid/.fx-section-label`）。两者回答的是不同问题（搬哪块 vs 隐哪块），**不强行统一**。改前后实机隐藏数逐字相同（预设 7/8/15 → 11/31/42），控制台行数 8/32/48/12/16/6/11 不变 |
 | 播放源知识散在四处 | ~~`MUSIC_SEARCH_PROVIDER_ORDER`、`SEARCH_HISTORY_MODES`、`searchModeProvider`、`searchProviderUrl`~~ | 加一家要改 4 处，漏一处就"搜得到但不出现"或反之 | **已合并**：`05-playback/07-search.js` 的 `SEARCH_PROVIDERS` 一张表（key + 搜索路由），历史分桶、合并顺序、模式判定、请求路由全部由它派生；`dev-feature-index.js --check` 另查每个路由在 `server.js` 里真有处理分支。改前后实机读数逐字相同。`platformMeta` / `platformStatus` / `/api/platform/capabilities` 仍是三处（跨主进程与 server），未合并 |
 | 首页遗留轨道仍在渲染 | `#home-tile-row` 标了 `aria-hidden`，但 `renderHomeTiles()` 仍被 `loadHomeDiscover` 调用，`handleHomeTileClick` 只被它自己用 | 每轮首页刷新白算一次 DOM；代码读起来像活功能 | 待定：删掉，或改造成正式区块——需要先定首页要不要这一排 |
 | 运行期创建的控件 | `ensureFxRangeControl` 建了 `fx-lyrictranslationscale` / `fx-lyrictranslationopacity`，`index.html` 里查不到 | 加控件前 grep 不到会以为漏了；也是第二条注册路径 | 已在 §13 记录；`dev-feature-index.js` 已把这类 id 当合法（通过解析创建者调用点，而不是白名单） |
@@ -476,5 +476,6 @@ graph LR
 | 2026-11-12 | 控制台动效页按当前预设过滤：分组声明 `presets`，`setPreset` 后同步 | 实机（CDP，一次脚本依次切 13/14/15）：只有对应预设那一组 `dropped:false`；变异（去掉 `data-fx-presets` 的读取）后 pv/halo/blackhole 三组同时常显，还原后恢复 |
 | 2026-11-12 | 控件形状检查（bool⇔`.fx-toggle`，数值⇔range+`<output>`）接进 `--check`；补 §11.1 / §11.2 / §13.1 | `--check` 覆盖 PV 7 + 环 31 + 黑洞 47 = 85 个键，rc=0；变异（把某个数值控件的 `type="range"` 改掉）后判红 |
 | 2026-11-12 | 播放源搜索配置合并为 `SEARCH_PROVIDERS` 一张表，另加"路由必须在 server.js 里存在"的检查 | 改前后实机读数逐字相同（`tmp/search-tables-before.json` vs `after.json`：history/order/mode/六个 URL 全同）；变异（把 kugou 路由改成 `/api/kugou/search-v2`）→ `--check` rc=1 并点名 |
+| 2026-11-12 | 控制台/面板的容器选择器抽公共常量 `FX_CONTROL_ROW_SELECTOR` | 改前后实机逐字相同：预设 7/8/15 的 `.fx-sonic-hidden` 计数 11/31/42，控制台行数 8/32/48/12/16/6/11 |
 
 
