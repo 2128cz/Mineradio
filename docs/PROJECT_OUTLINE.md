@@ -377,6 +377,41 @@ graph LR
 | 节拍分析 | 无 UI（后台） | beatmap 缓存 | `03-beat/*` | 统一节拍点 / 网格被多个视觉消费 |
 | 托盘与关闭行为 | 系统托盘菜单 | `desktop-behavior.json`（`closeBehavior`） | `desktop/main.js` | — |
 
+### 11.1 视觉控制台只显示当前预设的配置
+
+`FX_CONSOLE_LAYOUT` 是**静态**的：分组与行的归属写在 `07-fx/09-console-workspace.js`，面板在首页加载后建一次 DOM（`organizeFxConsoleWorkspace`）。因此：
+
+- 加/删分组、改标题 → 改代码 + **窗口内 Ctrl+R**（`public/**` 不用重启实例）；
+- "这个分组属于哪个预设" → 运行期判定，**切换预设立即生效，不刷新**。
+
+| 步骤 | 位置 | 作用 |
+|---|---|---|
+| 分组声明 `presets: [XX_PRESET_INDEX]` | `FX_CONSOLE_LAYOUT` | 标记归属；**用常量，别写数字** |
+| 建组时落到 DOM | `fxConsoleMakeGroup` → `data-fx-presets` | 把归属带到 fold 上 |
+| 同步时比对 `fx.preset` | `fxConsoleSyncGroupVisibility` | 不匹配 → 标 `fx-console-empty`（CSS `display:none`），并联动折叠空 tab |
+| 切预设后调用同步 | `setPreset`（`07-fx/04-preset-grid-uniforms.js`） | 切一下就生效 |
+
+已标归属：`pv`→13、`halo`→14、`blackhole`→15、`sonic-terrain`/`sonic-audio`/`sonic-blocks`→7、`sonic-we`→8。其余分组（基础画面、粒子与光影、界面/歌词/歌单架/系统）对所有预设常显。
+
+实机证据（CDP，一次脚本内依次切 13/14/15）：只有对应预设那一组 `dropped:false`，其余全为 `dropped:true`；把 `data-fx-presets` 的读取临时去掉后，三组同时常显——说明这条过滤确实由归属驱动，而不是别处顺手隐藏。
+
+**声波那几组另有一套**按控件 id 的隐藏（`SONIC_*_FX_CONTROL_IDS` + `setFxPanelControlsHidden`）：它们的区块标题没登记成控制台项，会落到「其他设置」分组，组级过滤够不着。新分组**不要**照抄这套，加 `presets` 即可。
+
+### 11.2 参数控件的三种形状
+
+| 参数类型 | 形状 | 关键标记 | 说明 |
+|---|---|---|---|
+| 数值 | `<div class="fx-slider">` + `<input type="range">` + `<output>` | `min/max` 与 schema 逐字相等 | `<output>` 由 store 的 sync 填 |
+| 布尔 | `<div class="fx-toggle" id="t-…" onclick="toggle…">` + `<span class="dot">` | 开＝行内 `.on` 类 | 再点一次就是复位，不配重置按钮 |
+| 枚举 | `<div class="fx-seg" id="…-seg">` + 多个 `<button data-…="v">` | 选中项加类 | 能被命名的档位（24/30/60/120/无上限）用它，别用滑条凑 |
+
+规则：
+
+- 一个可调参数只允许是这三种之一。颜色是 `lyric-color-row` / `*-picker`，动作是 `.fx-actions`，它们不是参数，别混用。
+- `kind: 'bool'` ⇔ `t-` 前缀 + `.fx-toggle`；其余 kind ⇔ `fx-` 前缀 + `.fx-slider` + 同级 `<output>`。**这条已被 `scripts/dev-feature-index.js --check` 按每个 store 的 schema 逐键检查**（当前覆盖 PV 7 + 环 31 + 黑洞 47 = 85 个键），形状不对或缺 `<output>` 直接判红。
+- 数值的显示格式由 `kind` 决定（`percent/ratio/count/deg/px/sec/unit/pow2/hz/autoHz`），在 store 的 format 函数里一处分支，不要各写一套。
+- 默认值只写在 schema；HTML 的 `min/max` 是它的副本，必须一致（quick-check 比对）。
+
 ## 12. 新东西放哪（决策表）
 
 | 要加的东西 | 落在哪 | 照这个文件抄 | 配方 |
@@ -404,7 +439,26 @@ graph LR
 | 两个歌词译文控件不在 `index.html` 里 | 由 `ensureFxRangeControl` 运行期创建（`07-fx/05-fx-panel-performance.js`） | 加控件前先确认是不是运行期生成，否则会以为漏了 |
 | 总门的已知脏项 | 内测版本钉死、部分壁纸探针指向已删窗口、一个探针硬编码 `D:\Steam` | 见 §9 表末行，改动前确认是不是历史包袱 |
 
-## 14. 变更留痕
+## 13.1 冗余与复用审查
+
+查的是"同一件事有两套实现"。每条都给了证据与处置；处置列为**待修**的不动，是因为合并会改行为、需要先确认观感。
+
+| 项 | 证据（文件 + 函数） | 影响 | 本轮处置 |
+|---|---|---|---|
+| 控制台可见性两套 | 新：`data-fx-presets` + `fxConsoleSyncGroupVisibility`（组级）；旧：`SONIC_ORIGINAL_FX_CONTROL_IDS` / `SONIC_WORKSHOP_FX_CONTROL_IDS` + `setFxPanelControlsHidden`（控件级） | 旧的一套是因为声波区块标题没登记成控制台项、落在「其他设置」里，组级过滤够不着 | 新代码统一用 `presets`；旧的保留（两者互不冲突，已实机证明各自独立生效） |
+| 容器选择器两份 | `fxConsoleResolveBlock` 认 17 类容器；`fxPanelControlBlockById` 认 6 类 | 同一个控件"搬进分组"与"按 id 隐藏"可能认到不同宿主（尤其 `.fx-toggle-grid` / `.fx-section-label`） | 待修：合并成一份公共选择器，先要确认那两类容器的搬运结果不会换宿主 |
+| 播放源知识散在四处 | `MUSIC_SEARCH_PROVIDER_ORDER`、`SEARCH_HISTORY_MODES`、`searchModeProvider`、`searchProviderUrl`；再加 `platformMeta` / `platformStatus` / `hasPlatformLogin` / `/api/platform/capabilities` | 加一家要改 5–7 处，漏一处就"搜得到但不出现"或反之 | 待修：抽一个 provider registry（名称/能力/搜索顺序/登录态一处定义） |
+| 首页遗留轨道仍在渲染 | `#home-tile-row` 标了 `aria-hidden`，但 `renderHomeTiles()` 仍被 `loadHomeDiscover` 调用，`handleHomeTileClick` 只被它自己用 | 每轮首页刷新白算一次 DOM；代码读起来像活功能 | 待定：删掉，或改造成正式区块——需要先定首页要不要这一排 |
+| 运行期创建的控件 | `ensureFxRangeControl` 建了 `fx-lyrictranslationscale` / `fx-lyrictranslationopacity`，`index.html` 里查不到 | 加控件前 grep 不到会以为漏了；也是第二条注册路径 | 已在 §13 记录；`dev-feature-index.js` 已把这类 id 当合法（通过解析创建者调用点，而不是白名单） |
+| 三份 per-preset clamp | `pvTuningClamp` / `haloTuningClamp` / `bhTuningClamp` 形状相同，各绑自己的 schema | 复制粘贴一处改三处 | 收益小、要动三个稳定文件，暂不动；要抽就抽 `makeTuningClamp(schema)` |
+
+顺带记录**不是**冗余的三处，避免以后误合并：
+
+- `index.html` 的静态控件与控制台分组不是两套设置：控制台是把同一批控件**搬进**分组，唯一数据源仍是 `fx` / 各 tuning store。
+- 三个 tuning store 各有一份 `xTuningSave` / `xTuningSyncInputs`：它们绑不同的 schema 与 id 前缀，合并会把"哪个键属于哪个预设"搅在一起。
+- `clamp01` / `clampRange`（`02-visual/04-visual-settings-persistence.js`）与各预设的 `xClamp`：前者是通用工具，后者是 schema 感知的边界，用途不同。
+
+
 
 | 日期 | 做了什么 | 证据 |
 |---|---|---|
@@ -419,5 +473,7 @@ graph LR
 | 2026-10-18 | JIZURA 勘察（只读，Bash 被策略拦在 `G:\SoftwareFile\JIZURA`，改用 Read/Glob/Grep） | 预览=Canvas2D：`src/09_render.js:8,23,38,146,189,493-495` 全 `getContext('2d')`/`drawImage`/`ctx.filter`；plan 可序列化：`src/11_export.js:311-339 J.planForAE`；工程 schema：`src/08_planner.js:12-39 J.defaultProject`；planner 的 DOM 依赖只有 `src/01_util.js:5 window.J` 与 `src/08_planner.js:951` 的 `typeof document` 守卫 |
 | 2026-11-12 | 本文件入档并补 §9.1 工具清单、§11 功能清单、§12 决策表、§13 已知缺口；§4 的模块数改为脚本产出（loader 116 条 / 0 缺失） | `node scripts/dev-feature-index.js --check` → `feature-index: OK (16 presets, 32 console groups, 3 tuning stores, 4 search providers)`；总门 `node scripts/quick-check.js` rc=0（日志 `tmp/gate-index.log`，含新增 step `Feature index`） |
 | 2026-11-12 | 新增 `scripts/dev-feature-index.js`（只读生成器）并接进总门 | 变异对照：把 `index.html` 的 `id="fx-halocenterX"` 改名 → `--check` rc=1 且点名「console item '圆环水平位置' (motion/halo) points at #fx-halocenterX」；还原后 rc=0 |
+| 2026-11-12 | 控制台动效页按当前预设过滤：分组声明 `presets`，`setPreset` 后同步 | 实机（CDP，一次脚本依次切 13/14/15）：只有对应预设那一组 `dropped:false`；变异（去掉 `data-fx-presets` 的读取）后 pv/halo/blackhole 三组同时常显，还原后恢复 |
+| 2026-11-12 | 控件形状检查（bool⇔`.fx-toggle`，数值⇔range+`<output>`）接进 `--check`；补 §11.1 / §11.2 / §13.1 | `--check` 覆盖 PV 7 + 环 31 + 黑洞 47 = 85 个键，rc=0；变异（把某个数值控件的 `type="range"` 改掉）后判红 |
 
 

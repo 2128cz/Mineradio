@@ -133,7 +133,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-cineshake', '电影镜头', '镜头晃动 强度'),
         fxConsoleItem('t-cinema', '电影镜头开关', '动态镜头')
       ] },
-      { key: 'pv', title: '歌词 PV', hint: '前五项立即生效；镜头密度与统一感改的是分镜本身，要按“重新生成当前歌”才重算', items: [
+      { key: 'pv', title: '歌词 PV', presets: [PV_PRESET_INDEX], hint: '前五项立即生效；镜头密度与统一感改的是分镜本身，要按“重新生成当前歌”才重算', items: [
         fxConsoleItem('fx-pvmotion', 'PV 运动量', '歌词PV 镜头 运动 动感 幅度'),
         fxConsoleItem('fx-pvglitch', 'PV 故障强度', '歌词PV 故障 干扰 抖动'),
         fxConsoleItem('fx-pvchroma', 'PV 色散', '歌词PV 色差 三色 重影'),
@@ -143,7 +143,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('t-pvunify', 'PV 统一感', '歌词PV 统一 unify 重复行 版式复用 需要重新生成'),
         fxConsoleItem({ selector: '.fx-pv-tuning .fx-actions' }, 'PV 重新生成', '刷新 重算 缓存 重新规划 bust')
       ] },
-      { key: 'halo', title: '环形数据流', hint: '圆环的取景、大小、外圈光线与歌词排布；文字大小复用「歌词」标签里的字号', items: [
+      { key: 'halo', title: '环形数据流', presets: [HALO_PRESET_INDEX], hint: '圆环的取景、大小、外圈光线与歌词排布；文字大小复用「歌词」标签里的字号', items: [
         fxConsoleItem('fx-halocenterX', '圆环水平位置', '环形数据流 水平 位置 取景 视角'),
         fxConsoleItem('fx-halocenterY', '圆环垂直位置', '环形数据流 垂直 位置 取景 视角'),
         fxConsoleItem('fx-haloradiusK', '圆环大小', '环形数据流 半径 尺寸'),
@@ -178,7 +178,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem({ selector: '.fx-halo-tuning .fx-actions' }, '恢复环形数据流默认', '环形数据流 重置 还原 默认'),
         fxConsoleItem('halo-camera-reset', '重置视角', '环形数据流 视角 复位 拖拽 缩放 平移')
       ] },
-      { key: 'blackhole', title: '银河黑洞', hint: '自带一片棒旋星系（内部两臂、外部再分叉），黑洞在它的中心，引力透镜把星系与歌词一起绕洞弯折；文字大小仍复用「歌词」标签里的字号', items: [
+      { key: 'blackhole', title: '银河黑洞', presets: [BLACKHOLE_PRESET_INDEX], hint: '自带一片棒旋星系（内部两臂、外部再分叉），黑洞在它的中心，引力透镜把星系与歌词一起绕洞弯折；文字大小仍复用「歌词」标签里的字号', items: [
         fxConsoleItem('fx-bhholeX', '黑洞水平位置', '银河黑洞 黑洞 水平 位置 取景 中心'),
         fxConsoleItem('fx-bhholeY', '黑洞垂直位置', '银河黑洞 黑洞 垂直 位置 取景 中心'),
         fxConsoleItem('fx-bhholeDepth', '黑洞距离', '银河黑洞 距离 深度 远近'),
@@ -241,7 +241,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-scatter', '离散感', '粒子散开'),
         fxConsoleItem('fx-bgfade', '背景压暗', '背景压缩 暗度')
       ] },
-      { key: 'sonic-terrain', title: '音域地形', hint: '地面形态、颜色和空间位置', items: [
+      { key: 'sonic-terrain', title: '音域地形', presets: [SONIC_PRESET_INDEX], hint: '地面形态、颜色和空间位置', items: [
         fxConsoleItem('fx-sonicamp', '地面起伏', '音域振幅'),
         fxConsoleItem('fx-sonicspeed', '起伏速度', '地形运动'),
         fxConsoleItem('fx-sonicdensity', '地形密度', '网格密度'),
@@ -255,7 +255,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('sonic-ground-accent-picker', '涟漪高光', '音域强调色'),
         fxConsoleItem('fx-sonicglow', '音域光强', '地形辉光')
       ] },
-      { key: 'sonic-audio', title: '频谱响应', hint: 'Kick 检测、频段范围和各段权重', items: [
+      { key: 'sonic-audio', title: '频谱响应', presets: [SONIC_PRESET_INDEX], hint: 'Kick 检测、频段范围和各段权重', items: [
         fxConsoleItem('t-sonicAudioMonitorEnabled', '实时频谱', '音频分析 频谱开关'),
         fxConsoleItem('t-sonicAudioAutoTrack', 'Kick 自动', '鼓点自动追踪'),
         fxConsoleItem('sonic-audio-monitor-toggle', '频谱面板', '音频监视器'),
@@ -273,7 +273,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-sonicbrilliance', '边缘微闪', 'Brilliance'),
         fxConsoleItem('fx-sonicair', '空气颗粒', 'Air 高频')
       ] },
-      { key: 'sonic-blocks', title: '音域方块', hint: '浮空方块的数量、尺寸和速度', items: [
+      { key: 'sonic-blocks', title: '音域方块', presets: [SONIC_PRESET_INDEX], hint: '浮空方块的数量、尺寸和速度', items: [
         fxConsoleItem('t-sonicGroundFloatingEnabled', '浮空方块', '音域方块开关'),
         fxConsoleItem('fx-sonicfloatcount', '方块数量', '浮空数量'),
         fxConsoleItem('fx-sonicfloatintensity', '方块强度', '浮空强度'),
@@ -281,7 +281,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-sonicfloatmax', '方块大值', '最大尺寸'),
         fxConsoleItem('fx-sonicfloatspeed', '方块速度', '浮空速度')
       ] },
-      { key: 'sonic-we', title: '音域回响 · WE', hint: 'Wallpaper Engine 派生地形的响应与配色', items: [
+      { key: 'sonic-we', title: '音域回响 · WE', presets: [SONIC_WORKSHOP_PRESET_INDEX], hint: 'Wallpaper Engine 派生地形的响应与配色', items: [
         fxConsoleItem('fx-sonicwegain', '输入压制', 'WE 输入增益'),
         fxConsoleItem('fx-sonicweaudio', '音频响应', 'WE 音频强度'),
         fxConsoleItem('fx-sonicwerange', '响应范围', 'WE 范围'),
@@ -443,6 +443,11 @@ function fxConsoleMakeGroup(page, tabMeta, groupMeta) {
   fold.className = 'fx-fold fx-console-group' + (groupMeta.open ? ' open' : '');
   fold.setAttribute('data-fx-console-group', groupMeta.key);
   fold.setAttribute('data-fx-console-tab', tabMeta.key);
+  // A group that belongs to one visual preset is declared once here instead of being
+  // hand-hidden elsewhere; the sync below drops it whenever another preset is active.
+  if (groupMeta.presets && groupMeta.presets.length) {
+    fold.setAttribute('data-fx-presets', groupMeta.presets.join(','));
+  }
   var groupId = 'fx-console-' + tabMeta.key + '-' + groupMeta.key;
   var head = document.createElement('button');
   head.type = 'button';
@@ -640,6 +645,7 @@ function fxConsoleSyncGroupVisibility() {
   if (!panel || !panel._fxConsoleWorkspaceOrganized) return false;
   var changed = false;
   var visibleByTab = {};
+  var preset = Number((typeof fx !== 'undefined' && fx && fx.preset) || 0);
   Object.keys(fxConsoleGroups).forEach(function (key) {
     var fold = fxConsoleGroups[key];
     if (!fold || !fold.isConnected) return;
@@ -648,6 +654,15 @@ function fxConsoleSyncGroupVisibility() {
     var any = false;
     for (var i = 0; i < items.length; i++) {
       if (fxConsoleItemVisible(items[i])) { any = true; break; }
+    }
+    // Preset-owned groups only exist for their own preset: the 动效 page would otherwise show
+    // every effect's knobs at once, which is what made the panel feel bottomless.
+    var owner = fold.getAttribute('data-fx-presets');
+    if (owner) {
+      var owned = false;
+      var list = owner.split(',');
+      for (var k = 0; k < list.length; k++) if (Number(list[k]) === preset) { owned = true; break; }
+      if (!owned) any = false;
     }
     var empty = !any;
     if (fold.classList.contains('fx-console-empty') !== empty) {

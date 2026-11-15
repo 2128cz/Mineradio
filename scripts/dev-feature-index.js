@@ -68,7 +68,8 @@ function parseConsole() {
     if (tabHit) { tab = tabHit[1]; group = null; continue; }
     const groupHit = /key:\s*'([^']+)',\s*title:\s*'([^']+)'/.exec(line);
     if (groupHit) {
-      group = { tab, key: groupHit[1], title: groupHit[2], items: [] };
+      const ownHit = /presets:\s*\[([^\]]*)\]/.exec(line);
+      group = { tab, key: groupHit[1], title: groupHit[2], items: [], owns: ownHit ? ownHit[1].split(',').map((x) => x.trim()).filter(Boolean) : [] };
       groups.push(group);
       continue;
     }
@@ -107,7 +108,29 @@ function parseSchemaCounts() {
   return counts;
 }
 
-function parseTuningStores(schemaCounts) {
+// Every `<X>_TUNING_SCHEMA` / `<X>_TUNING_FIELDS` block, as key -> kind. The kind is the only thing
+// that decides which control shape a row must use, so this is the map the shape check needs.
+function parseSchemaEntries() {
+  const out = {};
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      for (const m of text.matchAll(/var\s+([A-Z_][A-Z0-9_]*_TUNING_(?:SCHEMA|FIELDS))\s*=\s*\{/g)) {
+        const block = between(text.slice(m.index), '{', '\n};');
+        const entries = {};
+        for (const e of block.matchAll(/^\s{2}([A-Za-z_]\w*):\s*\{[^}]*kind:\s*'([^']+)'/gm)) entries[e[1]] = e[2];
+        out[m[1]] = entries;
+      }
+    }
+  };
+  walk(path.join(root, 'public', 'js', 'modules'));
+  return out;
+}
+
+function parseTuningStores(schemaCounts, schemaEntries) {
   const dir = path.join(root, 'public', 'js', 'modules', '07-fx');
   const out = [];
   for (const file of fs.readdirSync(dir).sort()) {
@@ -116,9 +139,21 @@ function parseTuningStores(schemaCounts) {
     const key = (text.match(/'(mineradio-[a-z-]+-tuning-v\d+)'/) || [])[1] || '';
     // Inline schema first, then a named schema the store only reads.
     const inline = (between(text, '{', '\n};').match(/^\s{2}[A-Za-z_]\w*:\s*\{\s*def:/gm) || []).length;
-    const named = (text.match(/\b([A-Z_][A-Z0-9_]*_TUNING_SCHEMA)\b/) || [])[1] || '';
+    const named = (text.match(/\b([A-Z_][A-Z0-9_]*_TUNING_(?:SCHEMA|FIELDS))\b/) || [])[1] || '';
     const keys = inline || (named && schemaCounts[named]) || 0;
-    out.push({ file: 'public/js/modules/07-fx/' + file, storage: key, keys, schema: named || 'inline' });
+    const entries = named && schemaEntries[named] ? schemaEntries[named] : {};
+    // The control ids are built as `getElementById('<prefix>' + key)`; the prefix is the shape's
+    // only home, so read it from there instead of guessing from the preset name.
+    const prefixes = [...text.matchAll(/getElementById\('([^']+)'\s*\+\s*key\)/g)].map((m) => m[1]);
+    out.push({
+      file: 'public/js/modules/07-fx/' + file,
+      storage: key,
+      keys,
+      schema: named || 'inline',
+      entries,
+      numericPrefix: prefixes.find((p) => p.indexOf('fx-') === 0) || '',
+      togglePrefix: prefixes.find((p) => p.indexOf('t-') === 0) || ''
+    });
   }
   return out;
 }
@@ -165,6 +200,24 @@ function parseRuntimeControls() {
   return ids;
 }
 
+function parsePresetConstants() {
+  const out = {};
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      for (const m of text.matchAll(/var\s+([A-Z_][A-Z0-9_]*_PRESET_INDEX)\s*=\s*(\d+)/g)) {
+        if (m[1] === 'MAX_VISUAL_PRESET_INDEX') continue;
+        out[m[1]] = Number(m[2]);
+      }
+    }
+  };
+  walk(path.join(root, 'public', 'js', 'modules'));
+  return out;
+}
+
 // ---------------------------------------------------------------- the checks
 
 function runChecks(model) {
@@ -187,6 +240,18 @@ function runChecks(model) {
     problems.push(`index-loader.js lists '${p}', which does not exist under public/ (the sync loader would 404 and the page would not boot)`);
   }
 
+  checkControlShapes(model, problems);
+
+  for (const group of model.console.groups) {
+    for (const refName of group.owns) {
+      const idx = model.presetConstants[refName];
+      if (!isFinite(idx)) {
+        problems.push(`console group '${group.key}' is owned by '${refName}', which is not a declared *_PRESET_INDEX`);
+      } else if (idx < 0 || idx >= presetCount) {
+        problems.push(`console group '${group.key}' is owned by ${refName}=${idx}, outside 0..${presetCount - 1}`);
+      }
+    }
+  }
   const htmlIds = new Set([...model.htmlIds, ...model.runtimeIds]);
   for (const group of model.console.groups) {
     if (!model.console.tabKeys.has(group.tab)) {
@@ -200,6 +265,50 @@ function runChecks(model) {
     }
   }
   return problems;
+}
+
+// Three control shapes, one per parameter type. A tuning key whose control has another shape is
+// how the panel drifts: a number without an <output>, a bool drawn as a slider, an enum without a
+// segmented control. Only the tuning stores are checked here - the global fx panel predates the
+// rule and is guarded per knob elsewhere.
+const CONTROL_SHAPES = {
+  number: { tag: 'type="range"', sibling: '<output', label: '数值滑条 + <output>' },
+  bool: { tag: 'class="fx-toggle"', sibling: '', label: '开关 .fx-toggle' },
+  enum: { tag: 'class="fx-seg"', sibling: '', label: '枚举 .fx-seg' }
+};
+
+function checkControlShapes(model, problems) {
+  const html = model.htmlText;
+  for (const st of model.stores) {
+    const entries = st.entries || {};
+    for (const key of Object.keys(entries)) {
+      const kind = entries[key];
+      const isBool = kind === 'bool';
+      const prefix = isBool ? st.togglePrefix : st.numericPrefix;
+      if (!prefix) continue;
+      const id = prefix + key;
+      const m = new RegExp('id="' + id + '"').exec(html);
+      if (!m) {
+        problems.push(`${st.storage}: '${key}' (${kind}) has no control #${id}`);
+        continue;
+      }
+      // Judge the whole opening tag, not just what follows the id: class/type may come before it.
+      const tagStart = html.lastIndexOf('<', m.index);
+      const tagEnd = html.indexOf('>', m.index);
+      const tag = html.slice(tagStart, tagEnd < 0 ? html.length : tagEnd + 1);
+      const shape = CONTROL_SHAPES[isBool ? 'bool' : 'number'];
+      if (tag.indexOf(shape.tag) < 0) {
+        problems.push(`${st.storage}: '${key}' (${kind}) must be a ${shape.label} - #${id} is not`);
+      }
+      if (shape.sibling) {
+        const lineEnd = html.indexOf('\n', m.index);
+        const line = html.slice(tagStart, lineEnd < 0 ? html.length : lineEnd);
+        if (line.indexOf(shape.sibling) < 0) {
+          problems.push(`${st.storage}: '${key}' has a slider but no ${shape.sibling}> beside it, so its value is never shown`);
+        }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- the report
@@ -225,11 +334,12 @@ function render(model) {
   out.push('## 2. 视觉控制台');  out.push('');
   out.push(`tab：${model.console.tabs.map((t) => `${t.label}(${t.key})`).join(' / ')}`);
   out.push('');
-  out.push('| tab | 分组 | 行数 | 控件 |');
-  out.push('| --- | --- | --- | --- |');
+  out.push('| tab | 分组 | 行数 | 归属预设 | 控件 |');
+  out.push('| --- | --- | --- | --- | --- |');
   for (const g of model.console.groups) {
     const refs = g.items.map((it) => (it.kind === 'id' ? '#' + it.ref : it.ref)).join(', ');
-    out.push(`| ${g.tab} | ${g.title} | ${g.items.length} | ${refs} |`);
+    const owns = g.owns.length ? g.owns.map((n) => n).join(', ') : '全部';
+    out.push(`| ${g.tab} | ${g.title} | ${g.items.length} | ${owns} | ${refs} |`);
   }
   out.push('');
   out.push('## 3. 面板控件（`public/index.html`）');
@@ -269,13 +379,16 @@ function render(model) {
 function main(argv) {
   const check = argv.includes('--check');
   const outArg = (argv.find((a) => a.startsWith('--out=')) || '').slice(6);
+  const schemaEntries = parseSchemaEntries();
   const model = {
     presets: parsePresets(),
     console: parseConsole(),
-    stores: parseTuningStores(parseSchemaCounts()),
+    stores: parseTuningStores(parseSchemaCounts(), schemaEntries),
     providers: parseProviders(),
     hotkeys: parseHotkeys(),
     loader: parseLoader(),
+    presetConstants: parsePresetConstants(),
+    htmlText,
     htmlIds: [...htmlText.matchAll(/id="([^"]+)"/g)].map((m) => m[1]),
     runtimeIds: [...parseRuntimeControls()]
   };

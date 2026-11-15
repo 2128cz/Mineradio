@@ -575,7 +575,9 @@ function runFxConsoleRegistrationCheck() {
   // them take effect. Cut counts/style/aspect are baked into the archive, so they are not here.
   const pvSliderIds = ['fx-pvmotion', 'fx-pvglitch', 'fx-pvchroma', 'fx-pvtexture', 'fx-pvkoma', 'fx-pvdensity'];
   const pvItemIds = pvSliderIds.concat(['t-pvunify']);
-  const pvGroup = /\{ key: 'pv', title: '[^']*', hint: '[^']*', items: \[([\s\S]*?)\] \}/.exec(workspace);
+  // Optional fields (presets, open) may sit between the title and the items, so the pattern only
+  // pins the key/title pair and lets anything else pass before `items:`.
+  const pvGroup = /\{ key: 'pv', title: '[^']*',[^{]*items: \[([\s\S]*?)\] \}/.exec(workspace);
   if (!pvGroup) fail('the console layout must register the 歌词 PV group');
   else {
     const items = (pvGroup[1].match(/fxConsoleItem\(/g) || []).length;

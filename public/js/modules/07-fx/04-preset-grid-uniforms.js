@@ -85,6 +85,9 @@ function setPreset(p, opts) {
   refreshPresetGrid();
   if (typeof updateSonicSeriesControlVisibility === 'function') updateSonicSeriesControlVisibility();
   if (typeof updateSonicWorkshopColorControls === 'function') updateSonicWorkshopColorControls();
+  // The console shows the active preset's own groups and hides the rest. The layout itself is
+  // static (built once at boot), so this is the only thing that has to run on a switch.
+  if (typeof fxConsoleSyncGroupVisibility === 'function') fxConsoleSyncGroupVisibility();
   if (changed && !opts.skipTransition) triggerPresetParticleTransition(prev, p);
   // 每个预设对应的相机基线 (改 userOrbit)
   if (changed && !opts.preserveCamera) {
