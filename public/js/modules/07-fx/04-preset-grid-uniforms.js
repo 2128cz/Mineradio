@@ -81,6 +81,7 @@ function setPreset(p, opts) {
   if (typeof applyPvPresetNow === 'function') applyPvPresetNow(prev, p);
   if (typeof applyHaloPresetNow === 'function') applyHaloPresetNow(prev, p);
   if (typeof applyBlackHolePresetNow === 'function') applyBlackHolePresetNow(prev, p);
+  if (typeof applyNeonPresetNow === 'function') applyNeonPresetNow(prev, p);
   uniforms.uPreset.value = p;
   refreshPresetGrid();
   if (typeof updateSonicSeriesControlVisibility === 'function') updateSonicSeriesControlVisibility();

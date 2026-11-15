@@ -167,3 +167,14 @@ Deliberate divergences from upstream:
 - **The callout shows lyrics.** Upstream draws small formulas; the port
   replaces them with the current lyric line and its translation.
 
+
+## Visual preset 16「日本霓虹」(NEON FUJI) — reference reproduction
+
+- Reference: <https://www.shadertoy.com/view/Wt33Wf> ("Cyber Fuji 2020")
+- Reference author: kaiware007 (2020-01-28)
+- Sun/grid functions credited upstream to: Jan Mróz (jaszunio15)
+- Licence: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+- Landing file: `public/js/modules/02-visual/21-neon-fuji-preset.js`
+- Attribution sidecar: `public/js/modules/02-visual/21-neon-fuji-preset.LICENSE.txt`
+
+The preset reproduces the reference's composition (horizon, scrolling perspective grid, striped sun, mountain silhouette, horizon haze) with GLSL written for this project; the upstream source was not copied. The lyric cars — text approaching the lens with an afterimage and a light band — are original. CC BY 3.0 requires attribution only, so no upstream licence text is bundled beyond the sidecar's attribution block and the licence links it names.

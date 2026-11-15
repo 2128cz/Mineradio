@@ -657,6 +657,9 @@ function animate() {
   if (typeof updatePvLayer === 'function') updatePvLayer(now, dt);
   // HALO ring (preset 14) draws into its own DOM layer too, with its own frame gate.
   if (typeof updateHaloLayer === 'function') updateHaloLayer(now, dt);
+  // 日本霓虹 (preset 16) paints a full-screen sky and drives its own lyric cars, so it updates in
+  // the same scene phase as the other presets and costs nothing while another one is selected.
+  if (typeof updateNeonLayer === 'function') updateNeonLayer(now, dt);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;
