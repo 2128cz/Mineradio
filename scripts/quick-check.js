@@ -2211,8 +2211,18 @@ function runMixerDeskPresetCheck() {
   if (!/renderMixerDeskFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the desk pass');
   const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
   if (!/id: 'mixer-desk'/.test(ownerBlock)) fail('the desk must register as a takeover owner');
-  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples']) {
     if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the desk must take ${layer} over: the port is the whole picture`);
+  }
+  // The app's own stage lyrics stay on and are composited over the blit; they must not be suppressed.
+  // lyricsParticles is the line stepper's gate, so suppressing it would freeze currentIdx at -1.
+  if (!/lyricsParticles: false/.test(ownerBlock)) fail('the desk must keep lyricsParticles running; that gate also steps the lyric line index');
+  if (!/stageLyrics: false/.test(ownerBlock)) fail('the desk must leave stageLyrics visible; the default scrolling lyrics ride over the console');
+  if (!/function updateMixerDeskLyrics\(/.test(text)) fail('the lyrics need their camera-matched transform after the app lays them out');
+  if (!/mixerRenderLyricsOverlay\(\)/.test(text)) fail('the lyrics have to be composited over the blit, or the opaque console hides them');
+  if (!/updateMixerDeskLyrics\(dt, stageLyricsStepDt > 0\)/.test(loopText)) fail('the main loop must apply the mixer camera to the lyrics after updateStageLyrics3D, with the layout-ran flag so the delta cannot stack');
+  if (!/sc\.basePos\.copy\(group\.position\)/.test(text) || !/group\.quaternion\.copy\(sc\.baseQuat\)/.test(text)) {
+    fail('the mixer lyric delta has to come from the last layout output, not from the already-offset group');
   }
   for (const field of ['frames:', 'error:', 'passScale:', 'rt:']) {
     if (text.indexOf(field) < 0) fail('mixerDeskStatus() has to report ' + field);

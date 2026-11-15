@@ -662,6 +662,7 @@ var mixerState = {
   blitScene: null, blitCam: null, blitMat: null,
   rt: null, rtW: 0, rtH: 0, passScale: 0,
   levelData: null, levelTex: null,
+  lyricScene: null, lyricGroup: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   size: null
 };
@@ -730,6 +731,7 @@ function mixerBuildScene() {
     blitQuad.frustumCulled = false;
     blitScene.add(blitQuad);
 
+    mixerState.lyricScene = new THREE.Scene();
     mixerState.levelData = levelData;
     mixerState.levelTex = levelTex;
     mixerState.mat = mat;
@@ -803,8 +805,89 @@ function mixerFeedUniforms(nowSec) {
   void nowSec;
 }
 
+// The app's own stage lyrics stay visible over the mixer. They keep their console settings and
+// their own scroll; this only adds the mixer camera's slow sway/roll and the beat shake to the
+// group after the layout has run, so the text moves with the console instead of sitting still on
+// top of it.
+var mixerLyricScratch = {
+  fwd: null, right: null, up: null, worldUp: null, rel: null, quat: null, camPos: null,
+  basePos: null, baseQuat: null, hasBase: false
+};
+
+function mixerStepSmooth(a, b, x) {
+  var t = mixerClamp01((Number(x) - a) / (b - a));
+  return t * t * (3 - 2 * t);
+}
+
+function updateMixerDeskLyrics(dt, layoutRan) {
+  if (!mixerPresetIsActive()) return false;
+  var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
+  var cam = (typeof camera !== 'undefined') ? camera : null;
+  if (!group || !group.visible || !cam || !group.position || !group.quaternion) return false;
+  var clock = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? Number(audio.currentTime) : 0;
+  var panAnim = mixerStepSmooth(-0.2, 0.2, Math.sin(clock * Math.max(0, mixerParam('camAnim'))));
+  var roll = (0.5 - 0.5 * panAnim) * Math.max(0, mixerParam('camRoll'));
+  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Math.max(0, Number(beatPulse)) : 0;
+  var shake = beat * Math.max(0, mixerParam('camShake')) * 0.02;
+  var rate = Math.max(0.1, mixerParam('camShakeRate'));
+  var shX = Math.sin(clock * rate * 8.7) * shake;
+  var shY = Math.cos(clock * rate * 7.3) * shake;
+  var shRoll = Math.cos(clock * rate * 5.3) * shake * 0.8;
+
+  var sc = mixerLyricScratch;
+  if (!sc.fwd) {
+    sc.fwd = new THREE.Vector3();
+    sc.right = new THREE.Vector3();
+    sc.up = new THREE.Vector3();
+    sc.worldUp = new THREE.Vector3(0, 1, 0);
+    sc.rel = new THREE.Vector3();
+    sc.quat = new THREE.Quaternion();
+    sc.basePos = new THREE.Vector3();
+    sc.baseQuat = new THREE.Quaternion();
+  }
+  // The layout only runs on its own gate. Keep its last output as the base so a skipped frame
+  // repeats the same camera delta instead of stacking another one on top of it.
+  if (layoutRan || !sc.hasBase) {
+    sc.basePos.copy(group.position);
+    sc.baseQuat.copy(group.quaternion);
+    sc.hasBase = true;
+  }
+  cam.getWorldDirection(sc.fwd);
+  sc.right.crossVectors(sc.fwd, sc.worldUp).normalize();
+  sc.up.crossVectors(sc.right, sc.fwd).normalize();
+  sc.quat.setFromAxisAngle(sc.fwd, -(roll + shRoll));
+
+  // Rotate the lyric arrangement around the camera, then slide it with the console's sway/shake.
+  sc.rel.subVectors(sc.basePos, cam.position).applyQuaternion(sc.quat);
+  group.position.copy(cam.position).add(sc.rel);
+  group.position.addScaledVector(sc.right, -(panAnim - 0.5) * 0.35 - shX * 4.0);
+  group.position.addScaledVector(sc.up, -(panAnim - 0.5) * 0.25 - shY * 4.0);
+  group.quaternion.copy(sc.baseQuat).premultiply(sc.quat);
+  return true;
+}
+
+function mixerRenderLyricsOverlay() {
+  var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
+  var cam = (typeof camera !== 'undefined') ? camera : null;
+  if (!group || !group.visible || !cam || !mixerState.lyricScene) return false;
+  var parent = group.parent;
+  mixerState.lyricScene.add(group);
+  try {
+    renderer.autoClear = false;
+    renderer.render(mixerState.lyricScene, cam);
+  } finally {
+    if (parent) parent.add(group);
+    renderer.autoClear = true;
+  }
+  return true;
+}
+
 function updateMixerDeskLayer(now, dt, sonicFrame) {
   if (!mixerPresetIsActive()) return false;
+  if (!mixerState.lyricLayerChecked) {
+    mixerState.lyricLayerChecked = true;
+    mixerEnableLyricLayer();
+  }
   var startedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   if (!mixerState.built && !mixerBuildScene()) return false;
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
@@ -830,6 +913,7 @@ function renderMixerDeskFrame() {
     renderer.render(mixerState.quadScene, mixerState.quadCam);
     renderer.setRenderTarget(null);
     renderer.render(mixerState.blitScene, mixerState.blitCam);
+    mixerRenderLyricsOverlay();
   } catch (err) {
     try { renderer.setRenderTarget(null); } catch (ignored) { /* already off-target */ }
     mixerState.error = String((err && (err.message || err)) || err).slice(0, 200);
@@ -849,6 +933,8 @@ function mixerDisposeScene() {
   if (mixerState.rt) mixerState.rt.dispose();
   if (mixerState.quadScene) mixerState.quadScene.clear();
   if (mixerState.blitScene) mixerState.blitScene.clear();
+  if (mixerState.lyricScene) mixerState.lyricScene.clear();
+  mixerState.lyricScene = null;
   mixerState.built = false;
   mixerState.quadScene = null;
   mixerState.quadCam = null;
@@ -863,6 +949,10 @@ function mixerDisposeScene() {
   mixerState.passScale = 0;
   mixerState.levelData = null;
   mixerState.levelTex = null;
+  mixerState.lyricGroup = null;
+  mixerState.lyricLayerChecked = false;
+  mixerState.lyricLayerWasOff = false;
+  mixerLyricScratch.hasBase = false;
   mixerState.frames = 0;
   mixerState.lastCostMs = 0;
   mixerState.error = '';
@@ -878,27 +968,46 @@ function mixerDeskStatus() {
   };
 }
 
+// Restored fx state can land after the preset is applied, so the first active frame checks too.
+function mixerEnableLyricLayer() {
+  if (mixerState.lyricLayerWasOff) return true;
+  if (typeof fx === 'undefined' || !fx || fx.particleLyrics !== false) return false;
+  if (typeof setParticleLyricsSilently !== 'function') return false;
+  mixerState.lyricLayerWasOff = true;
+  setParticleLyricsSilently(true);
+  return true;
+}
+
 function applyMixerPresetNow(prev, next) {
   var on = Number(next) === MIXER_PRESET_INDEX;
   var was = Number(prev) === MIXER_PRESET_INDEX;
   if (on) {
+    // The stage lyrics are part of this preset's picture. If the user has them switched off
+    // globally, turn them on for the visit and put the switch back when the visit ends.
+    mixerState.lyricLayerChecked = true;
+    mixerEnableLyricLayer();
     mixerBuildScene();
     if (typeof markRenderInteraction === 'function') markRenderInteraction('mixer-preset');
   } else if (was) {
+    if (mixerState.lyricLayerWasOff) {
+      mixerState.lyricLayerWasOff = false;
+      if (typeof setParticleLyricsSilently === 'function') setParticleLyricsSilently(false);
+    }
+    mixerState.lyricLayerChecked = false;
     mixerDisposeScene();
   }
   return on;
 }
 
-// The ported console is the whole picture: every layer behind it is taken over, including the
-// app's stage lyrics (the reference has no lyric element of its own).
+// The ported console takes over the scene behind it, but the app's own scrolling stage lyrics stay:
+// they are composited over the blit and follow the mixer camera's sway/roll and the beat shake.
 if (typeof registerVisualTakeoverOwner === 'function') {
   registerVisualTakeoverOwner({
     id: 'mixer-desk',
     isActive: mixerPresetIsActive,
     suppresses: {
       particles: true, bloom: true, float: true, backCover: true,
-      starRiver: true, ripples: true, lyricsParticles: true, stageLyrics: true
+      starRiver: true, ripples: true, lyricsParticles: false, stageLyrics: false
     }
   });
 }

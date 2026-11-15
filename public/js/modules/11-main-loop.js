@@ -707,6 +707,9 @@ function animate() {
   var stageLyricsPerfStart = performance.now();
   var stageLyricsStepDt = consumeFrameGate(mainFrameGates.stageLyrics, now, dt, targetMainStageLyricsFps(now), false, 'stage-lyrics');
   if (stageLyricsStepDt > 0 && !takeoverMask.suppress.stageLyrics) updateStageLyrics3D(stageLyricsStepDt);
+  // 调音台 (preset 17): the default lyric layout runs; this only adds the console camera sway/roll.
+  // The flag says whether the layout rewrote the group this frame, so the delta never stacks.
+  if (typeof updateMixerDeskLyrics === 'function') updateMixerDeskLyrics(dt, stageLyricsStepDt > 0);
   // Rows are displaced after the app has laid them out, every frame, so the flight into the hole
   // stays smooth even when the lyric layout itself is running on a lower gate.
   if (typeof updateBlackHoleLyricFlight === 'function') updateBlackHoleLyricFlight(dt);
