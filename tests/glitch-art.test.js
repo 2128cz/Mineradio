@@ -22,11 +22,11 @@ assert.strictEqual(sandbox.GLITCH_PRESET_INDEX, 19, 'the preset index is 19 and 
 // Every knob: a default inside its range, and the audio wiring knobs exist.
 const schema = sandbox.GLITCH_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 23, 'the component knobs have to all live in GLITCH_SCHEMA');
+assert.ok(keys.length >= 29, 'the component knobs have to all live in GLITCH_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);
-  assert.ok(spec.kind === 'bool' || spec.kind === 'count' || spec.kind === 'ratio', `${key} needs a known kind`);
+  assert.ok(spec.kind === 'bool' || spec.kind === 'count' || spec.kind === 'ratio' || spec.kind === 'sec', `${key} needs a known kind`);
 }
 for (const key of ['audioDrive', 'audioGlitch', 'audioTear', 'audioBloom', 'beatPulse']) {
   assert.ok(schema[key], `audio wiring knob missing: ${key}`);
@@ -58,6 +58,22 @@ assert.ok(moduleText.indexOf('uSpectrum') < 0, 'the source must not declare a sa
 assert.match(moduleText, /float frameSeed = floor\(float\(iFrame\) \* 0\.1667\)/);
 // The source is GLSL1, so the hash cannot use integer bit ops (PCG is replaced by a float hash).
 assert.ok(moduleText.indexOf('uint ') < 0, 'the source must stay GLSL1: no uint/bit ops');
+
+// Lyric/logo layer: the canvas text is glitched in screen space, around the hexagon, and both take
+// the same style phase.
+for (const key of ['logoOn', 'logoSize', 'lyricOn', 'lyricGlitch', 'lyricSize', 'styleCycle']) {
+  assert.ok(schema[key], 'the lyric/logo knob is missing: ' + key);
+}
+assert.match(moduleText, /uniform sampler2D uLyricMain;/);
+assert.match(moduleText, /uniform sampler2D uLyricSub;/);
+assert.match(moduleText, /vec4 lyricPlate\(vec2 uv, sampler2D tex, vec4 rect, float seed\)/);
+assert.match(moduleText, /vec4 hexLogo\(vec2 uv\)/);
+assert.match(moduleText, /uStyleSeed/);
+assert.match(moduleText, /function glitchUpdateLyrics\(clock\)/);
+assert.match(moduleText, /function glitchDrawPlate\(/);
+assert.match(moduleText, /nyanTownLyricItems\(\)/);
+assert.match(moduleText, /lyricLetterSpacingPx\(/);
+assert.match(moduleText, /new THREE\.CanvasTexture\(mainCanvas\)/);
 
 // Audio wiring: bands reach the source uniforms, the composite bloom reacts to bass.
 assert.match(moduleText, /u\.uBass\.value = bands\[1\]/);

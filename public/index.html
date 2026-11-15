@@ -1373,8 +1373,14 @@
         <div class="fx-slider"><label>音频撕裂联动</label><input id="fx-glitchaudioTear" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('audioTear', this.value)"><output></output></div>
         <div class="fx-slider"><label>音频溢光联动</label><input id="fx-glitchaudioBloom" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('audioBloom', this.value)"><output></output></div>
         <div class="fx-slider"><label>鼓点脉冲</label><input id="fx-glitchbeatPulse" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('beatPulse', this.value)"><output></output></div>
+        <div class="fx-slider"><label>中心图标尺寸</label><input id="fx-glitchlogoSize" type="range" min="0.5" max="2" step="0.01" oninput="setGlitchTuning('logoSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词故障强度</label><input id="fx-glitchlyricGlitch" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('lyricGlitch', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词字号</label><input id="fx-glitchlyricSize" type="range" min="0.5" max="1.6" step="0.01" oninput="setGlitchTuning('lyricSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>风格切换秒数</label><input id="fx-glitchstyleCycle" type="range" min="2" max="20" step="0.1" oninput="setGlitchTuning('styleCycle', this.value)"><output></output></div>
         <div class="fx-toggle-grid">
           <div class="fx-toggle" id="t-glitchbloomOn" onclick="toggleGlitchTuning('bloomOn')"><span>溢光</span><span class="dot"></span></div>
+          <div class="fx-toggle" id="t-glitchlogoOn" onclick="toggleGlitchTuning('logoOn')"><span>中心图标</span><span class="dot"></span></div>
+          <div class="fx-toggle" id="t-glitchlyricOn" onclick="toggleGlitchTuning('lyricOn')"><span>歌词</span><span class="dot"></span></div>
         </div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetGlitchTuning()">恢复故障艺术默认</button></div>
       </div>

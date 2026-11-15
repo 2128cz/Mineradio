@@ -45,5 +45,8 @@ CHANGES FROM THE SUPPLIED FRAGMENT
 - Every constant is a knob; the source/presentation uniforms are listed in GLITCH_SCHEMA and are
   also the audio connection points (audioDrive, audioGlitch, audioTear, audioBloom, beatPulse read
   the 8-band audio frame and the beat pulse).
-- The app's particle and lyric layers are suppressed: the reference presentation is the whole
-  picture.
+- The app's particle layer is suppressed (the reference presentation is the whole picture). An
+  original centre hexagon logo and glitched lyric plates were added on top of the presentation: the
+  current lyric and its translation are rasterised to canvas textures and run through the same
+  fault primitives (screen-space block shift, moving tear band, chromatic split, scanline), with the
+  split fringes taking the logo's style hue. They are not part of the reference.

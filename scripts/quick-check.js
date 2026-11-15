@@ -2483,7 +2483,7 @@ function runGlitchArtPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 23) fail(`the glitch knob schema must be complete (found ${schema.size})`);
+  if (schema.size < 29) fail(`the glitch knob schema must be complete (found ${schema.size})`);
   for (const [key, spec] of schema) {
     if (spec.kind === 'bool') {
       const id = 't-glitch' + key;

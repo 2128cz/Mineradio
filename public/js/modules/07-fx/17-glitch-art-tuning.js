@@ -35,6 +35,7 @@ function glitchArtTuningFormat(key) {
   var value = glitchArtTuning[key];
   if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(value));
+  if (spec.kind === 'sec') return Math.round(value * 10) / 10 + 's';
   return Math.round(value * 100) + '%';
 }
 

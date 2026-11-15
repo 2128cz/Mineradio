@@ -40,7 +40,14 @@ var GLITCH_SCHEMA = {
   audioGlitch: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   audioTear: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   audioBloom: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  beatPulse: { def: 0.4, min: 0, max: 1, kind: 'ratio', rebuild: 'live' }
+  beatPulse: { def: 0.4, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  // ---- centre logo + glitched lyrics (the app's lyric text around the hexagon)
+  logoOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  logoSize: { def: 1, min: 0.5, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricOn: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
+  lyricGlitch: { def: 0.6, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  lyricSize: { def: 1, min: 0.5, max: 1.6, kind: 'ratio', rebuild: 'live' },
+  styleCycle: { def: 6, min: 2, max: 20, kind: 'sec', rebuild: 'live' }
 };
 
 var GLITCH_SOURCE_FS = `
@@ -153,6 +160,7 @@ void main() {
 var GLITCH_COMPOSITE_FS = `
 precision highp float;
 uniform vec3 iResolution;
+uniform float iTime;
 uniform sampler2D iChannel0;
 uniform sampler2D iChannel1;
 uniform vec2 uLowRes;
@@ -164,7 +172,35 @@ uniform float uGamma;
 uniform float uVigStrength;
 uniform float uVigScale;
 uniform float uVigExponent;
+uniform sampler2D uLyricMain;
+uniform sampler2D uLyricSub;
+uniform vec4 uMainRect;
+uniform vec4 uSubRect;
+uniform float uLyricOn;
+uniform float uLyricGlitch;
+uniform float uHasSub;
+uniform float uLogoOn;
+uniform float uLogoSize;
+uniform float uStyleHue;
+uniform float uBeat;
+uniform float uBass;
+uniform float uAspect;
+uniform float uStyleSeed;
 const float kRoot2 = 1.41421356237;
+const float kTau = 6.28318530718;
+
+float glitchHash(float n) {
+  vec3 p3 = fract(vec3(n) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float glitchHash2(vec2 p, float seed) {
+  return glitchHash(p.x * 127.1 + p.y * 311.7 + seed * 17.0);
+}
+vec3 glitchHsv(float h, float s, float v) {
+  vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
+}
 
 float Vignette(vec2 fragCoord) {
   vec2 uv = fragCoord / iResolution.xy;
@@ -175,7 +211,63 @@ float Vignette(vec2 fragCoord) {
   return mix(1.0, max(0.0, 1.0 - pow(dist * uVigScale, uVigExponent)), uVigStrength);
 }
 
+// Hexagon logo: a dark plate, a neon outline with a hashed horizontal tear, an inner rotating ring
+// and a scanline wash. The style hue comes from the same phase that seeds the lyric glitch, so the
+// words and the icon read as one picture.
+vec4 hexLogo(vec2 uv) {
+  vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
+  p /= max(0.2, uLogoSize);
+  float ang = iTime * 0.16;
+  p = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * p;
+  vec2 cell = floor(uv * vec2(90.0, 60.0));
+  float h = glitchHash2(cell, uStyleSeed * 1.3 + 3.0);
+  float tear = (h - 0.5) * 0.05 * uLyricGlitch;
+  float dA = max(abs(p.x), dot(abs(p), normalize(vec2(1.0, 1.7320508)))) - 0.135;
+  vec2 pt = p + vec2(tear, 0.0);
+  float dB = max(abs(pt.x), dot(abs(pt), normalize(vec2(1.0, 1.7320508)))) - 0.135;
+  float inside = smoothstep(0.006, -0.006, dA);
+  float ringA = smoothstep(0.006, 0.001, abs(dA));
+  float ringB = smoothstep(0.006, 0.001, abs(dB));
+  float inner = max(abs(p.x), dot(abs(p), normalize(vec2(1.0, 1.7320508)))) - 0.082;
+  float ringI = smoothstep(0.004, 0.0008, abs(inner));
+  vec3 hueA = glitchHsv(uStyleHue, 0.82, 1.0);
+  vec3 hueB = glitchHsv(fract(uStyleHue + 0.45), 0.82, 1.0);
+  vec3 col = vec3(0.025, 0.02, 0.045) * inside;
+  col += hueA * ringA * (1.1 + uBeat * 1.2);
+  col += hueB * ringB * 0.55;
+  col += hueB * ringI * 0.6;
+  float scan = 1.0 - 0.16 * inside * (0.5 + 0.5 * sin(uv.y * 1300.0 + iTime * 4.0));
+  col *= scan;
+  float alpha = max(inside * 0.62, max(ringA, max(ringB, ringI)) * 0.95);
+  return vec4(col, alpha);
+}
+
+// Glitched lyric plate: the canvas text is sampled through a screen-space block shift, a moving
+// tear band and a chromatic split whose fringes take the logo's style hue.
+vec4 lyricPlate(vec2 uv, sampler2D tex, vec4 rect, float seed) {
+  vec2 cell = floor(uv * vec2(150.0, 90.0) / max(1.0, uLyricGlitch * 1.5 + 0.5));
+  float h = glitchHash2(cell, seed);
+  float pick = glitchHash2(cell + 13.7, seed);
+  float bandY = fract(iTime * 0.19 + seed * 0.13);
+  float band = smoothstep(0.03, 0.0, abs(uv.y - bandY)) * (0.5 + uBass);
+  vec2 shift = vec2((h - 0.5) * 0.05 * uLyricGlitch + (pick - 0.5) * 0.10 * band, 0.0);
+  vec2 tuv = (uv + shift - rect.xy) / rect.zw;
+  float inside = step(0.0, tuv.x) * step(tuv.x, 1.0) * step(0.0, tuv.y) * step(tuv.y, 1.0);
+  tuv = clamp(tuv, 0.0, 1.0);
+  vec2 off = vec2(0.0035 * (0.5 + uLyricGlitch), 0.0);
+  vec4 c0 = texture2D(tex, tuv);
+  float aR = texture2D(tex, clamp(tuv + off, 0.0, 1.0)).a;
+  float aB = texture2D(tex, clamp(tuv - off, 0.0, 1.0)).a;
+  vec3 fringe = glitchHsv(fract(uStyleHue + 0.5), 0.9, 1.0);
+  vec3 col = c0.rgb;
+  col += fringe * max(0.0, aR - aB) * uLyricGlitch * 1.4;
+  col += vec3(1.0, 0.25, 0.55) * max(0.0, aB - aR) * uLyricGlitch * 0.9;
+  float scan = 1.0 - 0.14 * (0.5 + 0.5 * sin(uv.y * 950.0 + iTime * 5.0));
+  return vec4(col * scan, max(c0.a, max(aR, aB) * 0.7) * inside);
+}
+
 void mainImage(out vec4 rgba, vec2 xy) {
+  vec2 uv = xy / iResolution.xy;
   vec3 rgb = vec3(0.0);
   if (uBloomOn > 0.5) rgb = texture2D(iChannel0, xy / iResolution.xy).xyz * uBloomStrength;
   vec2 cell = floor(xy / max(1.0, uDs));
@@ -184,7 +276,24 @@ void mainImage(out vec4 rgba, vec2 xy) {
   rgb = clamp(rgb, 0.0, 1.0);
   rgb = pow(rgb, vec3(uGamma));
   rgb = mix(vec3(uLift), vec3(1.0 - uLift), rgb);
-  rgb *= Vignette(xy);
+  float vig = Vignette(xy);
+  rgb *= vig;
+  if (uLogoOn > 0.5) {
+    vec4 logo = hexLogo(uv);
+    logo.rgb *= vig;
+    rgb = mix(rgb, logo.rgb, logo.a);
+  }
+  if (uLyricOn > 0.5) {
+    float phase = uStyleSeed;
+    vec4 main = lyricPlate(uv, uLyricMain, uMainRect, phase * 2.7 + 1.0);
+    main.rgb *= vig;
+    rgb = mix(rgb, main.rgb, main.a);
+    if (uHasSub > 0.5) {
+      vec4 sub = lyricPlate(uv, uLyricSub, uSubRect, phase * 2.7 + 5.0);
+      sub.rgb *= vig;
+      rgb = mix(rgb, sub.rgb, sub.a);
+    }
+  }
   rgba = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 
@@ -218,7 +327,13 @@ var glitchState = {
   blurMat: null,
   compositeMat: null,
   passes: null,
-  frames: 0
+  frames: 0,
+  mainCanvas: null,
+  subCanvas: null,
+  mainTex: null,
+  subTex: null,
+  mainKey: '',
+  subKey: ''
 };
 
 function glitchClamp(value, min, max) {
@@ -270,6 +385,129 @@ function glitchBandValues(frame) {
   return out;
 }
 
+
+// ---------------------------------------------------------------- lyric plates + centre logo
+// The text is a canvas texture; the composite glitches it in screen space, which is what lets the
+// same fault effect run over type. Timeline/font/colour helpers are the app's (shared with the
+// town preset), so the console's lyric settings keep working here.
+
+function glitchLyricItems() {
+  if (typeof nyanTownLyricItems === 'function') { try { return nyanTownLyricItems(); } catch (_) {} }
+  return [];
+}
+function glitchLyricSung(items, t) {
+  if (typeof nyanTownLyricSungIndex === 'function') { try { return nyanTownLyricSungIndex(items, t); } catch (_) {} }
+  return -1;
+}
+function glitchLyricPalette() {
+  if (typeof nyanTownLyricPalette === 'function') { try { return nyanTownLyricPalette(); } catch (_) {} }
+  return { primary: '#d6f8ff', highlight: '#eef7ff', context: '#9cffdf', glow: '#9cffdf', signature: 'default' };
+}
+function glitchLyricFontCss(px) {
+  if (typeof nyanTownLyricFontCss === 'function') { try { return nyanTownLyricFontCss(px); } catch (_) {} }
+  return '900 ' + px.toFixed(1) + 'px sans-serif';
+}
+function glitchTranslationShown() {
+  if (typeof nyanTownLyricTranslationShown === 'function') { try { return !!nyanTownLyricTranslationShown(); } catch (_) {} }
+  return false;
+}
+function glitchLyricSpacing(px) {
+  if (typeof lyricLetterSpacingPx === 'function') { try { return Number(lyricLetterSpacingPx(px)) || 0; } catch (_) {} }
+  return 0;
+}
+
+function glitchDrawPlate(canvas, text, fontPx, color, glow) {
+  if (!canvas || !text) return false;
+  var ctx = canvas.getContext('2d');
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  var size = fontPx;
+  var font = glitchLyricFontCss(size);
+  ctx.font = font;
+  var spacing = glitchLyricSpacing(size);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
+  var width = ctx.measureText(text).width || 0;
+  var limit = w * 0.94;
+  if (width > limit && width > 0) {
+    size *= limit / width;
+    font = glitchLyricFontCss(size);
+    ctx.font = font;
+    spacing = glitchLyricSpacing(size);
+    if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(4, 2, 12, 0.72)';
+  ctx.lineWidth = Math.max(1, size * 0.06);
+  ctx.strokeText(text, w / 2, h / 2);
+  ctx.shadowColor = glow;
+  ctx.shadowBlur = size * 0.32;
+  ctx.fillStyle = color;
+  ctx.fillText(text, w / 2, h / 2);
+  ctx.shadowBlur = 0;
+  ctx.fillText(text, w / 2, h / 2);
+  return true;
+}
+
+function glitchUpdateLyrics(clock) {
+  var cu = glitchState.compositeMat && glitchState.compositeMat.uniforms;
+  if (!cu || !glitchState.mainTex) return;
+  var items = glitchLyricItems();
+  var t = clock;
+  if (typeof getAdjustedLyricPlaybackTime === 'function') {
+    var adjusted = Number(getAdjustedLyricPlaybackTime(clock));
+    if (isFinite(adjusted)) t = adjusted;
+  }
+  var sung = glitchLyricSung(items, t);
+  var item = (sung >= 0 && items[sung]) ? items[sung] : null;
+  var palette = glitchLyricPalette();
+  var subText = (item && glitchTranslationShown()) ? String(item.sub || '') : '';
+  if (item) {
+    var mainKey = palette.signature + '|' + item.text;
+    if (glitchState.mainKey !== mainKey) {
+      glitchDrawPlate(glitchState.mainCanvas, item.text, 118, palette.highlight, palette.glow);
+      glitchState.mainKey = mainKey;
+      glitchState.mainTex.needsUpdate = true;
+    }
+  } else if (glitchState.mainKey !== '') {
+    glitchState.mainCanvas.getContext('2d').clearRect(0, 0, glitchState.mainCanvas.width, glitchState.mainCanvas.height);
+    glitchState.mainKey = '';
+    glitchState.mainTex.needsUpdate = true;
+  }
+  var subKey = palette.signature + '|' + subText;
+  if (glitchState.subKey !== subKey) {
+    if (subText) glitchDrawPlate(glitchState.subCanvas, subText, 54, palette.context, palette.glow);
+    else glitchState.subCanvas.getContext('2d').clearRect(0, 0, glitchState.subCanvas.width, glitchState.subCanvas.height);
+    glitchState.subKey = subKey;
+    glitchState.subTex.needsUpdate = true;
+  }
+  cu.uHasSub.value = subText ? 1 : 0;
+}
+
+// One phase drives the logo's hue and the lyric glitch seed: the two move through styles together.
+function glitchUpdateStyle(clock) {
+  var cu = glitchState.compositeMat && glitchState.compositeMat.uniforms;
+  if (!cu) return;
+  var cycle = Math.max(2, glitchParam('styleCycle'));
+  var seed = Math.floor(clock / cycle);
+  cu.uStyleSeed.value = seed;
+  cu.uStyleHue.value = (glitchParam('hue') + seed * 0.137) % 1;
+  cu.uLyricOn.value = glitchParam('lyricOn') > 0 ? 1 : 0;
+  cu.uLogoOn.value = glitchParam('logoOn') > 0 ? 1 : 0;
+  cu.uLogoSize.value = glitchParam('logoSize');
+  var aspect = cu.uAspect.value || 1.78;
+  var scale = glitchParam('lyricSize');
+  var mainW = Math.min(1.35, 0.92 * scale);
+  var mainH = mainW * aspect / (1536 / 224);
+  var mainY = Math.min(0.64, 0.97 - mainH);
+  var subW = Math.min(1.1, 0.62 * scale);
+  var subH = subW * aspect / (1024 / 112);
+  var subY = Math.max(0.03, Math.min(0.16, 0.33 - subH));
+  cu.uMainRect.value.set(0.5 - mainW / 2, mainY, mainW, mainH);
+  cu.uSubRect.value.set(0.5 - subW / 2, subY, subW, subH);
+}
+
 // The whole audio wiring is here: bands -> the source uniforms, the spectrum -> the 64-bin texture,
 // and the master drive knobs. Nothing else in the preset reads audio.
 function glitchFeedAudio(frame) {
@@ -289,6 +527,9 @@ function glitchFeedAudio(frame) {
   var cu = glitchState.compositeMat && glitchState.compositeMat.uniforms;
   if (cu) {
     cu.uBloomStrength.value = glitchParam('bloomStrength') * (1 + glitchParam('audioBloom') * bands[1] * drive);
+    cu.uBass.value = bands[1];
+    cu.uBeat.value = glitchClamp(beat, 0, 1) * glitchParam('beatPulse');
+    cu.uLyricGlitch.value = glitchParam('lyricGlitch') * (0.65 + 0.7 * bands[6] * drive);
   }
 }
 
@@ -306,6 +547,20 @@ function glitchMakePass(material, geometry) {
 function glitchBuildScene() {
   if (glitchState.built) return true;
   try {
+    var mainCanvas = document.createElement('canvas');
+    mainCanvas.width = 1536;
+    mainCanvas.height = 224;
+    var subCanvas = document.createElement('canvas');
+    subCanvas.width = 1024;
+    subCanvas.height = 112;
+    var mainTex = new THREE.CanvasTexture(mainCanvas);
+    mainTex.minFilter = THREE.LinearFilter;
+    mainTex.magFilter = THREE.LinearFilter;
+    mainTex.generateMipmaps = false;
+    var subTex = new THREE.CanvasTexture(subCanvas);
+    subTex.minFilter = THREE.LinearFilter;
+    subTex.magFilter = THREE.LinearFilter;
+    subTex.generateMipmaps = false;
     var geometry = new THREE.PlaneGeometry(2, 2);
     var sourceMat = new THREE.ShaderMaterial({
       uniforms: {
@@ -356,7 +611,22 @@ function glitchBuildScene() {
         uGamma: { value: 0.8 },
         uVigStrength: { value: 0.5 },
         uVigScale: { value: 0.6 },
-        uVigExponent: { value: 3 }
+        uVigExponent: { value: 3 },
+        iTime: { value: 0 },
+        uLyricMain: { value: mainTex },
+        uLyricSub: { value: subTex },
+        uMainRect: { value: new THREE.Vector4(0, 0.64, 0.92, 0.24) },
+        uSubRect: { value: new THREE.Vector4(0, 0.14, 0.62, 0.12) },
+        uLyricOn: { value: 1 },
+        uLyricGlitch: { value: 0.6 },
+        uHasSub: { value: 0 },
+        uLogoOn: { value: 1 },
+        uLogoSize: { value: 1 },
+        uStyleHue: { value: 0.85 },
+        uStyleSeed: { value: 0 },
+        uBeat: { value: 0 },
+        uBass: { value: 0 },
+        uAspect: { value: 1.78 }
       },
       vertexShader: GLITCH_QUAD_VS,
       fragmentShader: GLITCH_COMPOSITE_FS,
@@ -367,6 +637,12 @@ function glitchBuildScene() {
     glitchState.sourceMat = sourceMat;
     glitchState.blurMat = blurMat;
     glitchState.compositeMat = compositeMat;
+    glitchState.mainCanvas = mainCanvas;
+    glitchState.subCanvas = subCanvas;
+    glitchState.mainTex = mainTex;
+    glitchState.subTex = subTex;
+    glitchState.mainKey = '';
+    glitchState.subKey = '';
     glitchState.passes = {
       source: glitchMakePass(sourceMat, geometry),
       blur: glitchMakePass(blurMat, geometry),
@@ -416,6 +692,7 @@ function glitchAlignPassSize() {
   glitchState.bloomH = bloomH;
   glitchState.sourceMat.uniforms.iResolution.value.set(lowW, lowH, 1);
   glitchState.compositeMat.uniforms.iResolution.value.set(w, h, 1);
+  glitchState.compositeMat.uniforms.uAspect.value = w / h;
   glitchState.compositeMat.uniforms.uLowRes.value.set(lowW, lowH);
   glitchState.compositeMat.uniforms.iChannel0.value = glitchState.bloomB.texture;
   glitchState.compositeMat.uniforms.iChannel1.value = glitchState.lowRt.texture;
@@ -453,7 +730,10 @@ function glitchUpdateLayer(now, dt, sonicFrame) {
   var clock = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? Number(audio.currentTime) : 0;
   glitchState.sourceMat.uniforms.iTime.value = clock;
   glitchState.sourceMat.uniforms.iFrame.value = glitchState.frames | 0;
+  glitchState.compositeMat.uniforms.iTime.value = clock;
   glitchFeedAudio(sonicFrame);
+  glitchUpdateStyle(clock);
+  glitchUpdateLyrics(clock);
   glitchState.frames++;
   void now;
   void dt;
@@ -497,6 +777,8 @@ function glitchDisposeScene() {
   if (glitchState.blurMat) glitchState.blurMat.dispose();
   if (glitchState.compositeMat) glitchState.compositeMat.dispose();
   if (glitchState.geometry) glitchState.geometry.dispose();
+  if (glitchState.mainTex) glitchState.mainTex.dispose();
+  if (glitchState.subTex) glitchState.subTex.dispose();
   glitchState.built = false;
   glitchState.lowRt = null;
   glitchState.bloomA = null;
@@ -510,6 +792,12 @@ function glitchDisposeScene() {
   glitchState.compositeMat = null;
   glitchState.passes = null;
   glitchState.geometry = null;
+  glitchState.mainCanvas = null;
+  glitchState.subCanvas = null;
+  glitchState.mainTex = null;
+  glitchState.subTex = null;
+  glitchState.mainKey = '';
+  glitchState.subKey = '';
   glitchState.frames = 0;
 }
 

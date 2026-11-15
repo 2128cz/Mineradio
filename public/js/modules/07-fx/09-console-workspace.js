@@ -361,6 +361,12 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-glitchaudioTear', '音频撕裂联动', '故障 艺术 音频 撕裂 联动 低频'),
         fxConsoleItem('fx-glitchaudioBloom', '音频溢光联动', '故障 艺术 音频 溢光 联动'),
         fxConsoleItem('fx-glitchbeatPulse', '鼓点脉冲', '故障 艺术 鼓点 脉冲 节拍'),
+        fxConsoleItem('fx-glitchlogoSize', '中心图标尺寸', '故障 艺术 六边形 图标 尺寸'),
+        fxConsoleItem('fx-glitchlyricGlitch', '歌词故障强度', '故障 艺术 歌词 字体 故障 错位'),
+        fxConsoleItem('fx-glitchlyricSize', '歌词字号', '故障 艺术 歌词 字号 大小'),
+        fxConsoleItem('fx-glitchstyleCycle', '风格切换秒数', '故障 艺术 风格 切换 周期 流动'),
+        fxConsoleItem('t-glitchlogoOn', '中心图标', '故障 艺术 六边形 图标 开关'),
+        fxConsoleItem('t-glitchlyricOn', '歌词', '故障 艺术 歌词 开关'),
         fxConsoleItem('t-glitchbloomOn', '溢光', '故障 艺术 溢光 开关'),
         fxConsoleItem({ selector: '.fx-glitch-tuning .fx-actions' }, '恢复故障艺术默认', '故障 艺术 重置 还原 默认')
       ] },
