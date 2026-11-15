@@ -436,7 +436,7 @@ graph LR
 | §4.2 的分层规模数字 | 2026-10-18 快照 | `node scripts/dev-module-graph.js` 重跑 |
 | 预设 7 与 8 同名「音域回响」 | 靠 `nameHtml` 区分（Sonic-Topography / Wallpaper Engine） | 任何按 name 建索引的地方都会撞名，用 index |
 | Spotify | server 路由与主进程 OAuth 仍在，UI/IPC 被守卫强制为零 | 不要"补回"；要恢复必须连守卫一起改 |
-| 两个歌词译文控件不在 `index.html` 里 | 由 `ensureFxRangeControl` 运行期创建（`07-fx/05-fx-panel-performance.js`） | 加控件前先确认是不是运行期生成，否则会以为漏了 |
+| 两个歌词译文控件不在 `index.html` 里 | ~~由 `ensureFxRangeControl` 运行期创建~~ **已消除**：`fx-lyrictranslationscale` / `fx-lyrictranslationopacity` 改成 `index.html` 里的静态行，`ensureFxRangeControl` 连同它的两个调用一起删除；`dev-feature-index.js` 的运行期控件扫描保留，再有人引入会被它数出来 | 加控件前先确认不是运行期生成 |
 | 总门的已知脏项 | 内测版本钉死、部分壁纸探针指向已删窗口、一个探针硬编码 `D:\Steam` | 见 §9 表末行，改动前确认是不是历史包袱 |
 
 ## 13.1 冗余与复用审查
@@ -449,7 +449,7 @@ graph LR
 | 容器选择器两份 | ~~`fxConsoleResolveBlock` 认 17 类容器；`fxPanelControlBlockById` 认 6 类~~ | 同一控件"搬进分组"与"按 id 隐藏"可能认到不同宿主 | **部分合并**：公共的 4 类（`.fx-slider/.lyric-color-row/.fx-seg/.sonic-audio-monitor`）抽成 `FX_CONTROL_ROW_SELECTOR`（`07-fx/05-fx-panel-performance.js`），两侧各自追加自己的额外容器（控制台另有 13 类、隐藏另有 `.fx-toggle-grid/.fx-section-label`）。两者回答的是不同问题（搬哪块 vs 隐哪块），**不强行统一**。改前后实机隐藏数逐字相同（预设 7/8/15 → 11/31/42），控制台行数 8/32/48/12/16/6/11 不变 |
 | 播放源知识散在四处 | ~~`MUSIC_SEARCH_PROVIDER_ORDER`、`SEARCH_HISTORY_MODES`、`searchModeProvider`、`searchProviderUrl`~~ | 加一家要改 4 处，漏一处就"搜得到但不出现"或反之 | **已合并**：`05-playback/07-search.js` 的 `SEARCH_PROVIDERS` 一张表（key + 搜索路由），历史分桶、合并顺序、模式判定、请求路由全部由它派生；`dev-feature-index.js --check` 另查每个路由在 `server.js` 里真有处理分支。改前后实机读数逐字相同。`platformMeta` / `platformStatus` / `/api/platform/capabilities` 仍是三处（跨主进程与 server），未合并 |
 | 首页遗留轨道仍在渲染 | `#home-tile-row` 标了 `aria-hidden`，但 `renderHomeTiles()` 仍被 `loadHomeDiscover` 调用，`handleHomeTileClick` 只被它自己用 | 每轮首页刷新白算一次 DOM；代码读起来像活功能 | 待定：删掉，或改造成正式区块——需要先定首页要不要这一排 |
-| 运行期创建的控件 | `ensureFxRangeControl` 建了 `fx-lyrictranslationscale` / `fx-lyrictranslationopacity`，`index.html` 里查不到 | 加控件前 grep 不到会以为漏了；也是第二条注册路径 | 已在 §13 记录；`dev-feature-index.js` 已把这类 id 当合法（通过解析创建者调用点，而不是白名单） |
+| 运行期创建的控件 | ~~`ensureFxRangeControl` 建了 `fx-lyrictranslationscale` / `fx-lyrictranslationopacity`，`index.html` 里查不到~~ | 加控件前 grep 不到会以为漏了；也是第二条注册路径 | **已消除**：两行改为静态，创建函数删除；扫描器保留（现在报 0 个） |
 | 三份 per-preset clamp | `pvTuningClamp` / `haloTuningClamp` / `bhTuningClamp` 形状相同，各绑自己的 schema | 复制粘贴一处改三处 | 收益小、要动三个稳定文件，暂不动；要抽就抽 `makeTuningClamp(schema)` |
 
 顺带记录**不是**冗余的三处，避免以后误合并：
@@ -477,5 +477,6 @@ graph LR
 | 2026-11-12 | 控件形状检查（bool⇔`.fx-toggle`，数值⇔range+`<output>`）接进 `--check`；补 §11.1 / §11.2 / §13.1 | `--check` 覆盖 PV 7 + 环 31 + 黑洞 47 = 85 个键，rc=0；变异（把某个数值控件的 `type="range"` 改掉）后判红 |
 | 2026-11-12 | 播放源搜索配置合并为 `SEARCH_PROVIDERS` 一张表，另加"路由必须在 server.js 里存在"的检查 | 改前后实机读数逐字相同（`tmp/search-tables-before.json` vs `after.json`：history/order/mode/六个 URL 全同）；变异（把 kugou 路由改成 `/api/kugou/search-v2`）→ `--check` rc=1 并点名 |
 | 2026-11-12 | 控制台/面板的容器选择器抽公共常量 `FX_CONTROL_ROW_SELECTOR` | 改前后实机逐字相同：预设 7/8/15 的 `.fx-sonic-hidden` 计数 11/31/42，控制台行数 8/32/48/12/16/6/11 |
+| 2026-11-12 | 两条运行期创建的歌词译文滑条改为 `index.html` 静态行，删除 `ensureFxRangeControl` | 改前后实机读数逐字相同（`allSliders:195`、两个控件的 value/min/max/step/output 全同）；索引报告里"运行期创建"由 2 变 0 |
 
 

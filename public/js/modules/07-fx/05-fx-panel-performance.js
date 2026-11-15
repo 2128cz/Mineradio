@@ -701,32 +701,6 @@ function moveToggleToGrid(toggleId, grid) {
   if (!node || !grid || node.parentNode === grid) return;
   grid.appendChild(node);
 }
-function ensureFxRangeControl(anchorId, id, label, min, max, step) {
-  var existing = document.getElementById(id);
-  if (existing) {
-    existing.min = String(min);
-    existing.max = String(max);
-    existing.step = String(step);
-    return;
-  }
-  var anchor = fxControlBlock(anchorId);
-  if (!anchor || !anchor.parentNode) return;
-  var block = document.createElement('div');
-  block.className = 'fx-slider';
-  var lab = document.createElement('label');
-  lab.textContent = label;
-  var input = document.createElement('input');
-  input.id = id;
-  input.type = 'range';
-  input.min = String(min);
-  input.max = String(max);
-  input.step = String(step);
-  var output = document.createElement('output');
-  block.appendChild(lab);
-  block.appendChild(input);
-  block.appendChild(output);
-  anchor.parentNode.insertBefore(block, anchor.nextSibling);
-}
 function ensureLyricPrimaryControls() {
   var body = document.querySelector('#fx-lyric-fold .fx-fold-body');
   if (!body) return;
@@ -780,8 +754,6 @@ function relabelFxPanelControls() {
   var title = document.querySelector('#fx-panel .fx-title');
   if (title) title.textContent = '视觉控制台';
   ensureLyricPrimaryControls();
-  ensureFxRangeControl('fx-lyrictranslationgap', 'fx-lyrictranslationscale', '译文字号', 0.46, 1.12, 0.01);
-  ensureFxRangeControl('fx-lyrictranslationscale', 'fx-lyrictranslationopacity', '译文透明', 0.20, 1, 0.01);
   applyBackgroundMediaHint();
   var overlayGrid = document.getElementById('t-cinema');
   overlayGrid = overlayGrid && overlayGrid.closest('.fx-toggle-grid');
