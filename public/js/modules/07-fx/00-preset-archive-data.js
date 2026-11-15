@@ -19,6 +19,7 @@ var presetMeta = [
 { name: '日本霓虹', nameHtml: '日本霓虹 <span class="pc-name-en">NEON FUJI</span>', desc: '合成波公路 · 歌词驶来', premiumVisual: true, accent: '#ff4fd8', accent2: '#39e6ff' },
 { name: '调音台', nameHtml: '调音台 <span class="pc-name-en">MIXER DESK</span>', desc: '模块走带 · 歌词上屏', premiumVisual: true, accent: '#ffb156', accent2: '#57f0d0' },
 { name: '彩虹猫小镇', nameHtml: '彩虹猫小镇 <span class="pc-name-en">NYAN TOWN</span>', desc: '分形小镇 · 彩虹猫掠过', premiumVisual: true, accent: '#ff4fd8', accent2: '#ffe94a' },
+  { name: '故障艺术', nameHtml: '故障艺术 <span class="pc-name-en">GLITCH ART</span>', desc: '像素损坏 · 数据撕裂', premiumVisual: true, accent: '#ff2bd6', accent2: '#39ffd0' },
 ];
 var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 14c3-2 5-2 8 0s5 2 8 0M3 10c3-2 5-2 8 0s5 2 8 0M3 18c3-2 5-2 8 0s5 2 8 0"/></svg>',
@@ -40,8 +41,9 @@ var presetIcons = [
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="10" r="4"/><path d="M2 15h20M2 19h20M6 15v4M12 15v4M18 15v4"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="7" cy="12" r="2"/><path d="M12 9v6M16 9v6M20 9v6"/></svg>',
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17c2-3.2 4.6-3.2 6.6 0s4.6 3.2 6.6 0 2.6-2.6 3.8-2"/><path d="M4 12c2-2.6 4.6-2.6 6.6 0s4.6 2.6 6.6 0"/><path d="M14 9V6.5l2-1.8 2 1.8V9"/><circle cx="15.6" cy="7.4" r=".7" fill="currentColor" stroke="none"/><path d="M13 9h5"/></svg>',
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 5h8v4H3zM13 5h8v7h-8zM3 11h5v8H3zM10 14h4v5h-4zM16 15h5v4h-5z" opacity=".9"/><path d="M2 20.5h20" opacity=".5"/><path d="M6 3v2M18 3v2M9 21v2M15 21v2"/></svg>',
 ];
-var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 6, 7, 8, 5, 4, 2, 1, 3];
+var presetDisplayOrder = [0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 6, 7, 8, 5, 4, 2, 1, 3];
 var lyricColorPresets = [
   { name: '雾蓝', color: '#a9b8c8' },
   { name: '银蓝', color: '#9db8cf' },

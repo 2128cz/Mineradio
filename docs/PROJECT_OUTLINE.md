@@ -346,7 +346,7 @@ graph LR
 | 功能 | UI 入口 | 状态 / 存储 | 主文件 | 扩展点 |
 |---|---|---|---|---|
 | 视觉控制台 | `#fx-panel`、`#fx-fab`、`#fx-console-search`、`#fx-panel-tabs` | 布局写在代码里（`FX_CONSOLE_LAYOUT`）；卡片状态随 fx 存档 | `07-fx/09-console-workspace.js`、`07-fx/07-bindings-shelf-immersive.js` | `FX_CONSOLE_LAYOUT` |
-| 视觉预设（18 张） | `#preset-grid` | `fx.preset` + 存档 | `07-fx/04-preset-grid-uniforms.js` | `presetMeta` + `setPreset` 钩子 |
+| 视觉预设（19 张） | `#preset-grid` | `fx.preset` + 存档 | `07-fx/04-preset-grid-uniforms.js` | `presetMeta` + `setPreset` 钩子 |
 | 用户存档 / 短码 | `#user-archive-grid` | MR2 存档与分享短码 | `07-fx/00-preset-archive-data.js` | `normalizeFxArchiveSnapshot`、`USER_FX_SHARE_KEYS`（**只能末尾追加**） |
 | 搜索 | `#search-input`、`#search-mode-tabs`、`#search-results` | 搜索历史 | `05-playback/07-search.js` + `server.js` 的 `/api/*/search` | `SEARCH_PROVIDERS`（一张表派生顺序/分桶/模式/路由） |
 | 搜索分页 | `#search-results` 底部哨兵 | — | 同上（IntersectionObserver，首批 18，每批 +14，上限 180） | `loadNextMusicSearchPage` |
@@ -369,6 +369,7 @@ graph LR
 | 歌词抓取与解析 | — | — | `06-lyrics/00-lyrics-fetch-parse.js` | `parseLyricText` / `parseYrcText` |
 | 歌词渲染：舞台 | `#stage-lyrics` | fx 存档 | `02-visual/14-stage-lyrics-rendering.js` | 接管掩码的 `stageLyrics` 通道 |
 | 歌词渲染：预设内 | `#pv-layer`、`#halo-layer`、`#halo-canvas`（黑洞、彩虹猫小镇在其场景内） | — | `02-visual/17`、`18`、`19`、`23` | 各自 `registerVisualTakeoverOwner`；23 的歌词相机逐帧复刻场景 `path()/move()` 姿态，单行板按天空仰角摆放 |
+| 预设 19 故障艺术 | 控制台「故障艺术」组（`.fx-glitch-tuning`） | `mineradio-glitch-art-tuning-v1` | `02-visual/24-glitch-art-preset.js` + `07-fx/17-glitch-art-tuning.js` | 源→可分离溢光→低分辨率合成；`applyGlitchArtPresetNow` / `glitchUpdateLayer` / `glitchRenderFrame` |
 | 3D 歌单架 | 控制台「歌单架」tab 的 `#shelf-*` | fx 存档 | `04-shelf/01-manager-core.js` | 同一份 `FX_CONSOLE_LAYOUT` |
 | 手势 | `#gesture-hud` | 摄像头权限 | `10-shell/00-gesture-control.js` | — |
 | 全局快捷键 | `#hotkey-modal` | 主进程注册 | `07-fx/06-hotkeys.js` + `HOTKEY_ACTIONS`（8 个动作） | 新增动作要同时接本地与全局 |

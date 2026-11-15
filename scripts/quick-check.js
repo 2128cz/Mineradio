@@ -2421,6 +2421,113 @@ function runNyanTownPresetCheck() {
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Nyan town wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);
 }
+function runGlitchArtPresetCheck() {
+  logStep('Glitch art preset (lfscD7 presentation components, audio-wired knobs)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '24-glitch-art-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '17-glitch-art-tuning.js');
+  const licensePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '24-glitch-art-preset.LICENSE.txt');
+  const testPath = path.join(appRoot, 'tests', 'glitch-art.test.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/24-glitch-art-preset.js is missing; preset 19 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/17-glitch-art-tuning.js is missing; the glitch preset would be unadjustable');
+  if (!fs.existsSync(licensePath)) fail('24-glitch-art-preset.LICENSE.txt is missing; the reference needs its attribution/status');
+  if (!fs.existsSync(testPath)) fail('tests/glitch-art.test.js is missing');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const licenseText = fs.readFileSync(licensePath, 'utf8');
+  const noticeText = fs.readFileSync(path.join(appRoot, 'NOTICE.md'), 'utf8');
+  const portsText = fs.readFileSync(path.join(appRoot, 'docs', 'THIRD_PARTY_PORTS.md'), 'utf8');
+  const index = Number((text.match(/GLITCH_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 19) fail(`GLITCH_PRESET_INDEX must be 19 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/24-glitch-art-preset.js'") < 0) {
+    fail('24-glitch-art-preset.js must be listed in index-loader.js');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/17-glitch-art-tuning.js'") < 0) {
+    fail('17-glitch-art-tuning.js must be listed in index-loader.js');
+  }
+  if (!/故障艺术/.test(archiveText) || !/GLITCH ART/.test(archiveText)) fail('the glitch preset must be a labelled, selectable card');
+  if (!/applyGlitchArtPresetNow\(prev, p\)/.test(gridText)) fail('selecting preset 19 must build the pipeline and leaving it must release it');
+  if (!/glitchUpdateLayer\(now, dt, sonicAudioFrame\)/.test(loopText)) fail('the main loop must step the glitch layer with the audio frame');
+  if (!/glitchRenderFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the glitch pass');
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'glitch-art'/.test(ownerBlock)) fail('the glitch preset must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the glitch preset must take ${layer} over: the reference is the whole picture`);
+  }
+  // The supplied presentation fragment's components and constants.
+  for (const [pattern, why] of [
+    [/float Vignette\(vec2 fragCoord\)/, 'the reference Vignette has to be kept'],
+    [/pow\(dist \* uVigScale, uVigExponent\)/, 'the vignette constants must stay knobs, not literals'],
+    [/texture2D\(iChannel1, \(cell \+ 0\.5\) \/ uLowRes\)\.xyz \* 0\.6/, 'the downsampled composite keeps its 0.6 weight'],
+    [/pow\(rgb, vec3\(uGamma\)\)/, 'the reference gamma curve has to survive'],
+    [/mix\(vec3\(uLift\), vec3\(1\.0 - uLift\), rgb\)/, 'the reference lift has to survive'],
+    [/for \(int i = -6; i <= 6; i\+\+\)/, 'the separable bloom needs its kernel'],
+    [/uniforms\.uDir\.value\.set\(1, 0\)/, 'the bloom needs a horizontal pass'],
+    [/uniforms\.uDir\.value\.set\(0, 1\)/, 'the bloom needs a vertical pass'],
+    [/float frameSeed = floor\(float\(iFrame\) \* 0\.1667\)/, 'the block layout has to be quantised, not per-frame white noise'],
+    [/function glitchDisposeScene\(/, 'leaving the preset has to release its render targets'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if (text.indexOf('uint ') >= 0) fail('the source must stay GLSL1: no uint/bit ops (the PCG wrapper would not compile)');
+  // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
+  const schema = new Map();
+  const schemaBlock = (text.match(/var GLITCH_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(schemaBlock))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 23) fail(`the glitch knob schema must be complete (found ${schema.size})`);
+  for (const [key, spec] of schema) {
+    if (spec.kind === 'bool') {
+      const id = 't-glitch' + key;
+      if (!htmlText.includes('id="' + id + '"')) fail(`the switch ${id} has no toggle in index.html`);
+      if (!htmlText.includes(`toggleGlitchTuning('${key}')`)) fail(`the switch ${id} must call toggleGlitchTuning('${key}')`);
+      if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the switch ${key} must be listed in the console 故障艺术 group`);
+      continue;
+    }
+    const id = 'fx-glitch' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setGlitchTuning('${key}', this.value)`)) fail(`the slider ${id} must call setGlitchTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 故障艺术 group`);
+  }
+  if (!/key: 'glitch'/.test(consoleText) || !/title: '故障艺术'/.test(consoleText)) {
+    fail('the visual console needs a 故障艺术 group in the 动效 tab');
+  }
+  if (!/presets: \[GLITCH_PRESET_INDEX\]/.test(consoleText)) fail('the 故障艺术 group has to carry presets: [GLITCH_PRESET_INDEX]');
+  if (!/mineradio-glitch-art-tuning-v1/.test(tuningText) || !/function bindGlitchTuningResetButtons\(/.test(tuningText)) {
+    fail('the glitch knobs need their own store and one reset button per row');
+  }
+  // Attribution and the honest licence status. The page returned 403, so the fragment in the request
+  // is the only supplied source.
+  for (const [body, name] of [[licenseText, 'LICENSE sidecar'], [noticeText, 'NOTICE.md'], [portsText, 'THIRD_PARTY_PORTS.md']]) {
+    if (!/lfscD7/.test(body)) fail(name + ' has to name the reference (Shadertoy view lfscD7)');
+    if (!/UNVERIFIED|unverified|待核实/.test(body)) fail(name + ' has to mark the licence unverified');
+  }
+  const result = spawnSync(process.execPath, ['--test', testPath], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail('the glitch art component test failed: ' + rel(testPath));
+  }
+  process.stdout.write(result.stdout || '');
+  console.log(`[OK] Glitch art wired: preset ${index}, reference presentation components, ${schema.size} knobs (licence unverified).`);
+}
 function runFeatureIndexCheck() {
   logStep('Feature index (preset and console registries still match the code)');
   const script = path.join(appRoot, 'scripts', 'dev-feature-index.js');
@@ -5743,10 +5850,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 18/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 19/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -8130,6 +8237,7 @@ async function main() {
   runNeonFujiPresetCheck();
   runMixerDeskPresetCheck();
   runNyanTownPresetCheck();
+  runGlitchArtPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

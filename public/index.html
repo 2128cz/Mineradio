@@ -1349,6 +1349,35 @@
         </div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNyanTownTuning()">恢复彩虹猫小镇默认</button></div>
       </div>
+      <!-- 故障艺术 (preset 19)：参考 lfscD7 的展示层；源/布隆/降采样/色阶/晕影拆成旋钮。 -->
+      <div class="fx-glitch-tuning">
+        <div class="fx-slider"><label>块尺寸</label><input id="fx-glitchblockSize" type="range" min="2" max="40" step="1" oninput="setGlitchTuning('blockSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>块位移</label><input id="fx-glitchglitchShift" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('glitchShift', this.value)"><output></output></div>
+        <div class="fx-slider"><label>撕裂强度</label><input id="fx-glitchtearAmount" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('tearAmount', this.value)"><output></output></div>
+        <div class="fx-slider"><label>撕裂速度</label><input id="fx-glitchtearSpeed" type="range" min="0" max="3" step="0.01" oninput="setGlitchTuning('tearSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>色散分离</label><input id="fx-glitchrgbSplit" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('rgbSplit', this.value)"><output></output></div>
+        <div class="fx-slider"><label>扫描线</label><input id="fx-glitchscanline" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('scanline', this.value)"><output></output></div>
+        <div class="fx-slider"><label>噪点</label><input id="fx-glitchgrain" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('grain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>主色相</label><input id="fx-glitchhue" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('hue', this.value)"><output></output></div>
+        <div class="fx-slider"><label>溢光强度</label><input id="fx-glitchbloomStrength" type="range" min="0" max="2" step="0.01" oninput="setGlitchTuning('bloomStrength', this.value)"><output></output></div>
+        <div class="fx-slider"><label>溢光半径</label><input id="fx-glitchbloomRadius" type="range" min="0.5" max="8" step="0.1" oninput="setGlitchTuning('bloomRadius', this.value)"><output></output></div>
+        <div class="fx-slider"><label>提亮下限</label><input id="fx-glitchlift" type="range" min="0" max="0.5" step="0.01" oninput="setGlitchTuning('lift', this.value)"><output></output></div>
+        <div class="fx-slider"><label>伽马</label><input id="fx-glitchgamma" type="range" min="0.4" max="1.5" step="0.01" oninput="setGlitchTuning('gamma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>晕影强度</label><input id="fx-glitchvignetteStrength" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('vignetteStrength', this.value)"><output></output></div>
+        <div class="fx-slider"><label>晕影范围</label><input id="fx-glitchvignetteScale" type="range" min="0" max="1.5" step="0.01" oninput="setGlitchTuning('vignetteScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>晕影衰减</label><input id="fx-glitchvignetteExponent" type="range" min="1" max="8" step="0.1" oninput="setGlitchTuning('vignetteExponent', this.value)"><output></output></div>
+        <div class="fx-slider"><label>降采样倍率</label><input id="fx-glitchdownsample" type="range" min="1" max="8" step="1" oninput="setGlitchTuning('downsample', this.value)"><output></output></div>
+        <div class="fx-slider"><label>渲染分辨率</label><input id="fx-glitchrenderScale" type="range" min="0.5" max="1" step="0.01" oninput="setGlitchTuning('renderScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频驱动强度</label><input id="fx-glitchaudioDrive" type="range" min="0" max="3" step="0.01" oninput="setGlitchTuning('audioDrive', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频故障联动</label><input id="fx-glitchaudioGlitch" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('audioGlitch', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频撕裂联动</label><input id="fx-glitchaudioTear" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('audioTear', this.value)"><output></output></div>
+        <div class="fx-slider"><label>音频溢光联动</label><input id="fx-glitchaudioBloom" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('audioBloom', this.value)"><output></output></div>
+        <div class="fx-slider"><label>鼓点脉冲</label><input id="fx-glitchbeatPulse" type="range" min="0" max="1" step="0.01" oninput="setGlitchTuning('beatPulse', this.value)"><output></output></div>
+        <div class="fx-toggle-grid">
+          <div class="fx-toggle" id="t-glitchbloomOn" onclick="toggleGlitchTuning('bloomOn')"><span>溢光</span><span class="dot"></span></div>
+        </div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetGlitchTuning()">恢复故障艺术默认</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

@@ -1,0 +1,49 @@
+Visual preset 19「故障艺术」(GLITCH ART) — reference-based components, licence UNVERIFIED
+===========================================================================================
+
+POSTURE
+-------
+This build contains components derived from a Shadertoy fault-art shader. Nothing containing this
+preset may be distributed until the author confirms the terms.
+
+REFERENCE
+---------
+Shadertoy view "lfscD7" — https://www.shadertoy.com/view/lfscD7
+The page returned 403 from this machine, so only the presentation fragment supplied by the requester
+is authoritative. It is the part containing Vignette(), the bloom call, the texelFetch composite of
+a downsampled screen channel, the saturate/pow/lift curve and the vignette multiply. That fragment is
+kept in Shadertoy shape in public/js/modules/02-visual/24-glitch-art-preset.js
+(GLITCH_COMPOSITE_FS), with its #defines lifted to uniforms whose defaults equal the literals:
+
+  kVignetteStrength 0.5, kVignetteScale 0.6, kVignetteExponent 3.0, bloom weight 0.6,
+  pow 0.8, mix(0.1, 0.9).
+
+The rest of the reference (the source image, PCG seeding, SeparableBlurUp, SetGlobals, the buffer
+setup) was not supplied and is reimplemented as separate components against the same contracts:
+
+  - the corrupted-signal source (blocks + tear band + channel split + scanline + grain),
+  - a separable bloom (horizontal pass then vertical pass, 13 taps),
+  - the low-res composite (nearest texel sample of the downsampled source).
+
+The integer PCG wrapper is replaced by a GLSL1 float hash: the source has to compile in WebGL1,
+where uint/bit ops are not available. The hash keeps the contract the reference needs (a stable word
+per block cell, quantised over a few frames).
+
+LICENCE STATUS
+--------------
+UNVERIFIED. Shadertoy's default licence is CC BY-NC-SA 3.0 (non-commercial, share-alike), which is
+not compatible with this repository's GPL-3.0-only distribution. The page could not be read, so the
+author and the licence header are unknown. Do not publish a build containing this preset (or a
+screenshot of it) until the terms are confirmed and this file is updated.
+
+CHANGES FROM THE SUPPLIED FRAGMENT
+----------------------------------
+- `texelFetch(iChannel1, ivec2(xy)/kScreenDownsample, 0)` becomes a nearest texture2D sample at the
+  centre of the matching low-res texel (uLowRes is that texture's size; the cell is clamped).
+- `SeparableBlurUp(...)` is the separate two-pass bloom outlined above; the composite then fetches
+  the finished bloom once.
+- Every constant is a knob; the source/presentation uniforms are listed in GLITCH_SCHEMA and are
+  also the audio connection points (audioDrive, audioGlitch, audioTear, audioBloom, beatPulse read
+  the 8-band audio frame and the beat pulse).
+- The app's particle and lyric layers are suppressed: the reference presentation is the whole
+  picture.
