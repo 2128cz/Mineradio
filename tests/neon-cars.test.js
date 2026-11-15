@@ -74,7 +74,7 @@ const neonLyricPalette = () => ({ main: '#ffe6fa', glow: '#ff4fd8' });
 
 const names = ['neonLineText', 'neonBeatGrid', 'neonEntranceAt', 'neonSizeTravel', 'neonFadeTravel',
   'neonExitTravel', 'neonLineClock', 'neonActiveLines', 'neonClamp01', 'neonMakeCar', 'neonRasterCar',
-  'neonPlaceCar', 'neonCarPulse', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
+  'neonPlaceCar', 'neonCarPulse', 'neonShakeOffset', 'neonRetireTrails', 'neonSpawnTrail', 'neonAgeTrails', 'neonStepCars', 'neonDisposeCar'];
 const run = new Function(
   'THREE', 'document', 'lyricsLines', 'audio', 'currentBeatMap', 'rtBeat', 'beatPulse', 'smoothBass',
   'neonState', 'neonParam', 'neonLyricPalette', 'NEON_TRAIL_MAX',
@@ -233,6 +233,22 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   assert.ok(hit.h > calm.h, 'a beat has to scale the glyphs up a little, in place');
   assert.ok(hit.d === calm.d, 'and it must not move the line closer - the travel belongs to the clock');
   assert.ok(base.bodyMat.color.rgb[0] > 1, 'a beat has to lift the brightness above the steady state');
+
+  // The pulse amounts are knobs, not constants.
+  assert.ok(Math.abs(hit.h / calm.h - (1 + 0.8 * defaults.beatScale)) < 1e-6, 'the size pulse has to use beatScale');
+
+  // The camera shake follows the same envelope, and the shader offset travels with it.
+  const still = run.neonShakeOffset(0, 0.3, defaults.camShake, defaults.camShakeRate);
+  assert.strictEqual(still.amp, 0, 'no beat, no shake');
+  assert.strictEqual(still.uvX, 0);
+  const hitShake = run.neonShakeOffset(0.8, 0.3, defaults.camShake, defaults.camShakeRate);
+  assert.ok(hitShake.amp > 0, 'a beat has to shake the view');
+  assert.ok(hitShake.uvX !== 0 || hitShake.uvY !== 0, 'and the offset has to reach the shader');
+  assert.ok(Math.abs(hitShake.lookX) <= 10 * 0.02 * hitShake.amp + 1e-9, 'the look target moves with the shake');
+  const movedOn = run.neonShakeOffset(0.8, 0.4, defaults.camShake, defaults.camShakeRate);
+  assert.notStrictEqual(movedOn.uvX, hitShake.uvX, 'the shake has to wobble over time');
+  const offShake = run.neonShakeOffset(0.8, 0.3, 0, defaults.camShakeRate);
+  assert.strictEqual(offShake.amp, 0, 'amplitude 0 has to turn the shake off');
 }
 
 // ---------------------------------------------------------------- 6) a fast song must not eat lines

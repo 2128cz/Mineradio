@@ -258,6 +258,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-neonpaletteSat', '色彩饱和', '日本霓虹 调色 饱和 鲜艳 灰度'),
         fxConsoleItem('fx-neonpaletteWarm', '冷暖偏移', '日本霓虹 调色 冷暖 红蓝 偏移'),
         fxConsoleItem('fx-neoncamFov', '视锥角度', '日本霓虹 相机 视锥 视野 焦距 透视'),
+        fxConsoleItem('fx-neoncamShake', '镜头跟拍震动', '日本霓虹 相机 鼓点 震动 摇晃 跟拍'),
+        fxConsoleItem('fx-neoncamShakeRate', '震动频率', '日本霓虹 相机 震动 频率 快慢'),
         fxConsoleItem('fx-neoncarSize', '歌词终了字号', '日本霓虹 歌词 字号 车 到达 屏高 占比'),
         fxConsoleItem('fx-neoncarDepthNear', '歌词近端距离', '日本霓虹 歌词 近端 距离 视距 到达'),
         fxConsoleItem('fx-neoncarDepthFar', '歌词远端距离', '日本霓虹 歌词 远端 距离 地平线 出发'),
@@ -275,6 +277,11 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-neontrailOpacity', '拖影透明度', '日本霓虹 歌词 拖影 透明度 淡'),
         fxConsoleItem('fx-neonlightBand', '光带强度', '日本霓虹 歌词 光带 车道 辉光'),
         fxConsoleItem('fx-neonbeatKick', '节奏推进', '日本霓虹 歌词 鼓点 节拍 推进 放大 高亮 光带'),
+        fxConsoleItem('fx-neonbeatScale', '拍点缩放量', '日本霓虹 歌词 鼓点 缩放 放大 幅度'),
+        fxConsoleItem('fx-neonbeatGlow', '拍点亮度量', '日本霓虹 歌词 鼓点 亮度 高亮 百分比'),
+        fxConsoleItem('fx-neonbeatAttack', '拍点起速', '日本霓虹 鼓点 起速 攻击 上升 快'),
+        fxConsoleItem('fx-neonbeatRelease', '拍点回落', '日本霓虹 鼓点 回落 衰减 释放 慢'),
+        fxConsoleItem('fx-neonbeatScene', '场景跟拍量', '日本霓虹 场景 网格 太阳 雪线 跟拍 强度'),
         fxConsoleItem({ selector: '.fx-neon-tuning .fx-actions' }, '恢复日本霓虹默认', '日本霓虹 重置 还原 默认')
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

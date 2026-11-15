@@ -53,6 +53,8 @@ var NEON_TUNING_SCHEMA = {
   paletteWarm: { def: 0, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   // ---- our camera (the reference has none; it sits still and looks down the road)
   camFov: { def: 52, min: 25, max: 90, kind: 'deg', rebuild: 'live' },
+  camShake: { def: 0.6, min: 0, max: 2, kind: 'unit', rebuild: 'live' },
+  camShakeRate: { def: 1.0, min: 0.1, max: 4, kind: 'ratio', rebuild: 'live' },
   // ---- our addition: the lyric cars. A line enters on a beat, rides from the horizon through
   // the lens, and leaves the frame only once it is too big to read - it never slides off the
   // bottom. carSize is the size at the line's own timestamp.
@@ -74,7 +76,14 @@ var NEON_TUNING_SCHEMA = {
   trailLife: { def: 0.95, min: 0.1, max: 2, kind: 'sec', rebuild: 'live' },
   trailOpacity: { def: 0.13, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lightBand: { def: 1.23, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
-  beatKick: { def: 2, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
+  beatKick: { def: 2, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  // ---- the beat's own shape, all live: how far the pulse is allowed to go, how fast it arrives
+  // and leaves, and how much of it the scene behind the text takes.
+  beatScale: { def: 0.12, min: 0, max: 0.6, kind: 'unit', rebuild: 'live' },
+  beatGlow: { def: 0.45, min: 0, max: 1.5, kind: 'unit', rebuild: 'live' },
+  beatAttack: { def: 22, min: 4, max: 60, kind: 'count', rebuild: 'live' },
+  beatRelease: { def: 7, min: 1, max: 30, kind: 'count', rebuild: 'live' },
+  beatScene: { def: 1.0, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
 };
 
 // The reference's fixed palette, in the order the composition uses it.
@@ -175,6 +184,7 @@ var NEON_SCENE_FS = [
   // The beat reaches the scene itself: the neon lines, the sun's bloom, the horizon haze and the
   // cloud outlines all lift on it. Zero is the untouched reference frame (the bench renders it so).
   'uniform float uBeat;',
+  'uniform vec2 uShake;',
   '',
   // ---- ported from the reference (see tests/fixtures/neon-fuji-reference.glsl).
   // The expressions are the reference's; only its literals became uniforms, so a default-valued
@@ -243,6 +253,7 @@ var NEON_SCENE_FS = [
   // the horizon tint added (not mixed), the clouds last, then the fog and the battery desaturation.
   'void mainImage(out vec4 fragColor, in vec2 fragCoord) {',
   '  vec2 uv = (2.0 * fragCoord.xy - iResolution.xy) / iResolution.y;',
+  '  uv += uShake;',
   '  float battery = uBattery;',
   '  float fog = smoothstep(0.1, -0.02, abs(uv.y - uHorizon));',
   '  vec3 col = uSkyColor;',
@@ -336,6 +347,7 @@ function neonBuildScene() {
         uCloudColor: { value: new THREE.Color() },
         uFogGain: { value: 0 },
         uBeat: { value: 0 },
+        uShake: { value: new THREE.Vector2(0, 0) },
       },
       vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.999999, 1.0); }',
       fragmentShader: NEON_SCENE_FS,
@@ -618,9 +630,9 @@ function neonPlaceCar(car, t, opacityScale, pulse) {
   var after = Math.max(0, tt - 1);
   var yNdc = horizon - neonParam('carDrop') * Math.min(1, tt) + neonParam('carRise') * after * after;
   // The beat's punch: the line does not move, the glyphs swell in place and their neon brightens
-  // for the length of the pulse.
+  // for the length of the pulse. Both amounts are knobs.
   var pv = Math.max(0, Number(pulse) || 0);
-  var worldH = Math.max(0.0001, size * 2 * d * tanHalf) * (1 + pv * 0.12);
+  var worldH = Math.max(0.0001, size * 2 * d * tanHalf) * (1 + pv * Math.max(0, neonParam('beatScale')));
   var worldW = worldH * Math.max(1, car.aspect);
   var yWorld = yNdc * d * tanHalf;
   // Fades: in over the first tenth of the run, out from carExitSize over carFadeTravel. The fade
@@ -629,7 +641,7 @@ function neonPlaceCar(car, t, opacityScale, pulse) {
   var fadeStart = neonFadeTravel();
   var fadeSpan = Math.max(0.05, neonExitTravel() - fadeStart);
   var fade = 1 - neonClamp01((tt - fadeStart) / fadeSpan);
-  var bright = fade <= 0 ? 0 : Math.min(1.6, fade * (1 + pv * 0.45));
+  var bright = fade <= 0 ? 0 : Math.min(1.6, fade * (1 + pv * Math.max(0, neonParam('beatGlow'))));
   car.body.visible = true;
   car.body.position.set(0, yWorld, -d);
   car.body.scale.set(worldW, worldH, 1);
@@ -696,12 +708,14 @@ function neonAgeTrails(car, nowSec, trailLife, trailOpacity, beat, capacity) {
 }
 
 // The beat is an animation, not a second clock: the line does not travel further, its glyphs
-// punch in place. A fast attack and a slower release make one beat read as a pop rather than as
-// a wobble; beatKick is the amount of that pop and 0 turns it off.
+// punch in place. The attack/release rates are knobs (fast in, slow out reads as a pop; equal
+// rates read as a breathing), beatKick is the amount and 0 turns it off.
 function neonCarPulse(car, beat, kick, dt) {
   var target = Math.min(1.5, Math.max(0, Number(beat) || 0) * Math.max(0, Number(kick) || 0));
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
-  var rate = target > (car.pulse || 0) ? 22 : 7;
+  var attack = Math.max(1, neonParam('beatAttack'));
+  var release = Math.max(0.5, neonParam('beatRelease'));
+  var rate = target > (car.pulse || 0) ? attack : release;
   var k = 1 - Math.exp(-rate * step);
   car.pulse = (car.pulse || 0) + (target - (car.pulse || 0)) * k;
   return car.pulse;
@@ -856,17 +870,33 @@ function neonFeedUniforms(u, nowSec) {
   neonPaletteColor(u.uCloudColor.value, NEON_PALETTE.cloud);
 }
 
-function neonUpdateCamera() {
-  if (typeof camera === 'undefined' || !camera) return;
-  if (typeof freeCamera !== 'undefined' && freeCamera && (freeCamera.active || freeCamera.resetTween)) return;
+// The view shakes with the beat: the envelope decides how hard, camShakeRate how fast it wobbles,
+// and the same offset is handed to the shader (uShake) so the neon scene moves with the text
+// instead of staying nailed to the screen.
+function neonShakeOffset(beat, timeSec, amp, rate) {
+  var a = Math.max(0, Number(beat) || 0) * Math.max(0, Number(amp) || 0);
+  var t = Number(timeSec) || 0;
+  var w = Math.max(0.1, Number(rate) || 0) * 9;
+  var ax = Math.sin(t * w) * a * 0.02;
+  var ay = Math.cos(t * w * 0.83) * a * 0.02;
+  return { lookX: ax * 10, lookY: ay * 10, uvX: ax, uvY: ay, amp: a };
+}
+
+function neonUpdateCamera(nowSec, beat) {
+  var rest = { lookX: 0, lookY: 0, uvX: 0, uvY: 0, amp: 0 };
+  if (typeof camera === 'undefined' || !camera) return rest;
+  if (typeof freeCamera !== 'undefined' && freeCamera && (freeCamera.active || freeCamera.resetTween)) return rest;
   var fov = neonParam('camFov');
   if (Math.abs(camera.fov - fov) > 1e-4) {
     camera.fov = fov;
     camera.updateProjectionMatrix();
   }
-  // The road's vanishing point is the origin; the eye sits a little above it and looks slightly down.
+  var shake = neonShakeOffset(beat, nowSec, neonParam('camShake'), neonParam('camShakeRate'));
+  // The road's vanishing point is the origin; the eye sits a little above it and looks slightly
+  // down, and the look target carries the shake so the whole lens turns with the beat.
   camera.position.set(0, 0, 0);
-  if (camera.lookAt) camera.lookAt(0, 0, -10);
+  if (camera.lookAt) camera.lookAt(shake.lookX, shake.lookY, -10);
+  return shake;
 }
 
 function neonClamp01(v) {
@@ -878,22 +908,32 @@ function updateNeonLayer(now, dt) {
   if (!neonPresetIsActive()) return false;
   var startedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   if (!neonState.built && !neonBuildScene()) return false;
+  var nowSec = (Number(now) || 0) / 1000;
+  var beatNow = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
   // The pose is written here rather than in the loop's camera section: this preset owns the lens
-  // while it is active, and the write still happens before the frame is rendered.
-  neonUpdateCamera();
+  // while it is active, and the write still happens before the frame is rendered. The returned
+  // offset is the same shake the background takes, so picture and text move together.
+  var shake = neonUpdateCamera(nowSec, beatNow);
   var step = Math.max(0, Math.min(0.1, Number(dt) || 0));
   var mat = neonState.quadMat;
   if (mat) {
-    neonFeedUniforms(mat.uniforms, (Number(now) || 0) / 1000);
+    neonFeedUniforms(mat.uniforms, nowSec);
     if (typeof renderer !== 'undefined' && renderer && renderer.domElement) {
       // The drawing buffer is already in device pixels; r128's getDrawingBufferSize wants a
       // Vector2 and throws on a plain object, which is what an earlier version did every frame.
       var el = renderer.domElement;
       mat.uniforms.iResolution.value = shadertoyUvUniforms(Math.max(1, el.width), Math.max(1, el.height)).value;
     }
+    if (mat.uniforms.uShake && mat.uniforms.uShake.value && mat.uniforms.uShake.value.set) {
+      mat.uniforms.uShake.value.set(shake.uvX || 0, shake.uvY || 0);
+    }
   }
-  var boost = neonStepCars((Number(now) || 0) / 1000, step);
-  if (mat) mat.uniforms.uBeat.value = neonClamp01(boost - 1);
+  var boost = neonStepCars(nowSec, step);
+  if (mat) {
+    // beatScene scales how much of the beat the neon scene behind the text takes; 0 leaves it still.
+    var sceneBeat = neonClamp01(boost - 1) * Math.max(0, neonParam('beatScene'));
+    mat.uniforms.uBeat.value = Math.min(1.5, sceneBeat);
+  }
   neonState.frames++;
   neonState.lastCostMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - startedAt;
   return true;

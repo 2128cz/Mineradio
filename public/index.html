@@ -1263,6 +1263,8 @@
         <div class="fx-slider"><label>色彩饱和</label><input id="fx-neonpaletteSat" type="range" min="-1" max="1" step="0.01" oninput="setNeonTuning('paletteSat', this.value)"><output></output></div>
         <div class="fx-slider"><label>冷暖偏移</label><input id="fx-neonpaletteWarm" type="range" min="-1" max="1" step="0.01" oninput="setNeonTuning('paletteWarm', this.value)"><output></output></div>
         <div class="fx-slider"><label>视锥角度</label><input id="fx-neoncamFov" type="range" min="25" max="90" step="1" oninput="setNeonTuning('camFov', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头跟拍震动</label><input id="fx-neoncamShake" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('camShake', this.value)"><output></output></div>
+        <div class="fx-slider"><label>震动频率</label><input id="fx-neoncamShakeRate" type="range" min="0.1" max="4" step="0.05" oninput="setNeonTuning('camShakeRate', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词终了字号（屏高占比）</label><input id="fx-neoncarSize" type="range" min="0.02" max="0.4" step="0.01" oninput="setNeonTuning('carSize', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词近端距离</label><input id="fx-neoncarDepthNear" type="range" min="1" max="40" step="0.5" oninput="setNeonTuning('carDepthNear', this.value)"><output></output></div>
         <div class="fx-slider"><label>歌词远端距离</label><input id="fx-neoncarDepthFar" type="range" min="20" max="400" step="1" oninput="setNeonTuning('carDepthFar', this.value)"><output></output></div>
@@ -1282,6 +1284,11 @@
         <div class="fx-slider"><label>拖影透明度</label><input id="fx-neontrailOpacity" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('trailOpacity', this.value)"><output></output></div>
         <div class="fx-slider"><label>光带强度</label><input id="fx-neonlightBand" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('lightBand', this.value)"><output></output></div>
         <div class="fx-slider"><label>节奏推进（放大/高亮）</label><input id="fx-neonbeatKick" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatKick', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点缩放量</label><input id="fx-neonbeatScale" type="range" min="0" max="0.6" step="0.01" oninput="setNeonTuning('beatScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点亮度量</label><input id="fx-neonbeatGlow" type="range" min="0" max="1.5" step="0.01" oninput="setNeonTuning('beatGlow', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点起速</label><input id="fx-neonbeatAttack" type="range" min="4" max="60" step="1" oninput="setNeonTuning('beatAttack', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拍点回落</label><input id="fx-neonbeatRelease" type="range" min="1" max="30" step="1" oninput="setNeonTuning('beatRelease', this.value)"><output></output></div>
+        <div class="fx-slider"><label>场景跟拍量</label><input id="fx-neonbeatScene" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatScene', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNeonTuning()">恢复日本霓虹默认</button></div>
       </div>
     </div>

@@ -1984,6 +1984,9 @@ function runNeonFujiPresetCheck() {
     [/carApproach: \{ def: 2\.4,/, 'the approach time has to be its own knob'],
     [/carAccel: \{ def: 0\.9,/, 'the accelerating run has to exist and default on'],
     [/beatSync: \{ def: 1,/, 'the beat-synced entrance has to default on'],
+    [/beatScale: \{ def: 0\.12,/, 'the beat scale amount has to default to the tuned value'],
+    [/beatScene: \{ def: 1\.0,/, 'the scene beat amount has to default on'],
+    [/camShake: \{ def: 0\.6,/, 'the camera shake has to default on'],
     [/trailCount: \{ def: 24, min: 0, max: 48,/, 'the afterimage pool has to default to the tuned depth and allow a large count'],
     [/var NEON_TRAIL_MAX = 48;/, 'the pool ceiling has to match the knob ceiling'],
   ]) {
@@ -2013,10 +2016,12 @@ function runNeonFujiPresetCheck() {
     [/if \(neonAgeTrails\(car, nowSec, trailLife, trailOpacity, beat, trailCount\) === 0\) \{/, 'a departed line has to survive until its last stamp expires'],
     [/for \(var back = 0; back < 9; back\+\+\)/, 'the window has to reach back past the previous line: fast songs advance several lines while one is still flying'],
     [/function neonCarPulse\(/, 'the beat has to be an in-place animation with one owner'],
-    [/var rate = target > \(car\.pulse \|\| 0\) \? 22 : 7;/, 'the pulse needs a fast attack and a slower release'],
+    [/var attack = Math\.max\(1, neonParam\('beatAttack'\)\);/, 'the pulse attack has to be a knob'],
+    [/var release = Math\.max\(0\.5, neonParam\('beatRelease'\)\);/, 'the pulse release has to be a knob'],
+    [/var rate = target > \(car\.pulse \|\| 0\) \? attack : release;/, 'the pulse needs a fast attack and a slower release'],
     [/var pulse = neonCarPulse\(car, beat, neonParam\('beatKick'\), step\);/, 'each car has to animate on its own pulse instead of advancing its travel'],
-    [/\* \(1 \+ pv \* 0\.12\);/, 'a beat has to scale the glyphs in place'],
-    [/var bright = fade <= 0 \? 0 : Math\.min\(1\.6, fade \* \(1 \+ pv \* 0\.45\)\);/, 'a beat has to raise the brightness for the length of the pulse'],
+    [/\(1 \+ pv \* Math\.max\(0, neonParam\('beatScale'\)\)\);/, 'a beat has to scale the glyphs in place, by a knob'],
+    [/pv \* Math\.max\(0, neonParam\('beatGlow'\)\)/, 'a beat has to raise the brightness for the length of the pulse, by a knob'],
     [/uniform float uBeat;/, 'the scene needs the beat too, or only the text flashes'],
     [/\(1\.0 \+ uBeat \* 0\.45\)/, 'the grid lines have to flash with the beat'],
     [/\(1\.0 \+ uBeat \* 0\.5\)/, 'the sun bloom has to flash with the beat'],
@@ -2025,6 +2030,13 @@ function runNeonFujiPresetCheck() {
     [/uFujiBright \* \(1\.0 \+ uBeat \* 0\.25\)/, 'the mountain has to flash with the beat'],
     [/uSnowColor \* \(1\.0 \+ uBeat \* 0\.4\)/, 'the snow line has to flash with the beat'],
     [/step\(0\.0, fujiVal\)\) \* \(1\.0 \+ uBeat \* 0\.25\)/, 'the horizon tint has to flash with the beat'],
+    [/function neonShakeOffset\(/, 'the beat shake has to be its own function, so it can be judged'],
+    [/neonParam\('camShake'\), neonParam\('camShakeRate'\)/, 'the shake amplitude and rate have to be knobs'],
+    [/camera\.lookAt\(shake\.lookX, shake\.lookY, -10\);/, 'the shake has to turn the lens, not only the text'],
+    [/mat\.uniforms\.uShake\.value\.set\(shake\.uvX \|\| 0, shake\.uvY \|\| 0\);/, 'the scene has to take the same shake as the lens'],
+    [/uniform vec2 uShake;/, 'the fragment needs the camera shake uniform'],
+    [/uv \+= uShake;/, 'the fragment has to apply the camera shake to every sample'],
+    [/neonParam\('beatScene'\)/, 'how much of the beat the scene takes has to be a knob'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2032,7 +2044,7 @@ function runNeonFujiPresetCheck() {
   // function was not the one the bench and the probes were reading; a duplicate must fail here.
   for (const name of ['neonMakeCar', 'neonRasterCar', 'neonStepCars', 'neonPlaceCar', 'neonDisposeScene',
     'neonDisposeCar', 'neonActiveLines', 'neonBeatGrid', 'neonEntranceAt', 'neonSpawnTrail',
-    'neonAgeTrails', 'neonSizeTravel', 'neonFadeTravel']) {
+    'neonAgeTrails', 'neonSizeTravel', 'neonFadeTravel', 'neonShakeOffset']) {
     const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
     if (count !== 1) fail(`${name} must be declared exactly once (found ${count}): the later declaration wins and the earlier one is dead`);
   }
