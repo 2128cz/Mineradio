@@ -26,6 +26,8 @@ const bhModulePath = modulePath('BLACKHOLE_MODULE_PATH', 'public/js/modules/02-v
 const bhTuningPath = modulePath('BLACKHOLE_TUNING_PATH', 'public/js/modules/07-fx/12-blackhole-tuning.js');
 const neonModulePath = modulePath('NEON_MODULE_PATH', 'public/js/modules/02-visual/21-neon-fuji-preset.js');
 const neonTuningPath = modulePath('NEON_TUNING_PATH', 'public/js/modules/07-fx/14-neon-tuning.js');
+const mixerModulePath = modulePath('MIXER_MODULE_PATH', 'public/js/modules/02-visual/22-mixer-desk-preset.js');
+const mixerTuningPath = modulePath('MIXER_TUNING_PATH', 'public/js/modules/07-fx/15-mixer-tuning.js');
 const fxPanelPath = modulePath('FX_PANEL_PATH', 'public/js/modules/07-fx/05-fx-panel-performance.js');
 const fxDefaultsPath = modulePath('FX_DEFAULTS_PATH', 'public/js/modules/00-state/04-fx-defaults.js');
 
@@ -49,12 +51,15 @@ const bhModuleText = fs.readFileSync(bhModulePath, 'utf8');
 const bhTuningText = fs.readFileSync(bhTuningPath, 'utf8');
 const neonModuleText = fs.readFileSync(neonModulePath, 'utf8');
 const neonTuningText = fs.readFileSync(neonTuningPath, 'utf8');
+const mixerModuleText = fs.readFileSync(mixerModulePath, 'utf8');
+const mixerTuningText = fs.readFileSync(mixerTuningPath, 'utf8');
 const haloTuningText = fs.readFileSync(haloTuningPath, 'utf8');
 const fxPanelText = fs.readFileSync(fxPanelPath, 'utf8');
 const schemaText = between(haloModuleText, 'var HALO_TUNING_SCHEMA = {', '};', 'HALO_TUNING_SCHEMA');
 const pvFieldsText = between(pvTuningText, 'var PV_TUNING_FIELDS = {', '};', 'PV_TUNING_FIELDS');
 const bhSchemaText = between(bhModuleText, 'var BH_TUNING_SCHEMA = {', '};', 'BH_TUNING_SCHEMA');
 const neonSchemaText = between(neonModuleText, 'var NEON_TUNING_SCHEMA = {', '};', 'NEON_TUNING_SCHEMA');
+const mixerSchemaText = between(mixerModuleText, 'var MIXER_TUNING_SCHEMA = {', '};', 'MIXER_TUNING_SCHEMA');
 const defaultsText = between(fs.readFileSync(fxDefaultsPath, 'utf8'), 'var fxDefaults = {', '};', 'fxDefaults');
 const panelText = [
   slice(fxPanelText, 'ensureFxSliderResetButton'),
@@ -176,18 +181,22 @@ const schema = vm.runInNewContext('(function () {' + schemaText + 'return HALO_T
 const pvFields = vm.runInNewContext('(function () {' + pvFieldsText + 'return PV_TUNING_FIELDS;})()');
 const bhSchema = vm.runInNewContext('(function () {' + bhSchemaText + 'return BH_TUNING_SCHEMA;})()');
 const neonSchema = vm.runInNewContext('(function () {' + neonSchemaText + 'return NEON_TUNING_SCHEMA;})()');
+const mixerSchema = vm.runInNewContext('(function () {' + mixerSchemaText + 'return MIXER_TUNING_SCHEMA;})()');
 const fxDefaults = vm.runInNewContext('(function () {' + defaultsText + 'return fxDefaults;})()');
 const haloKeys = Object.keys(schema).filter(function (key) { return schema[key].kind !== 'bool'; });
 const haloBools = Object.keys(schema).filter(function (key) { return schema[key].kind === 'bool'; });
 const pvKeys = Object.keys(pvFields).filter(function (key) { return pvFields[key].kind !== 'bool'; });
 const bhKeys = Object.keys(bhSchema).filter(function (key) { return bhSchema[key].kind !== 'bool'; });
 const neonKeys = Object.keys(neonSchema).filter(function (key) { return neonSchema[key].kind !== 'bool'; });
+const mixerKeys = Object.keys(mixerSchema).filter(function (key) { return mixerSchema[key].kind !== 'bool'; });
 
 haloKeys.forEach(function (key) { dom.sliderRow('fx-halo' + key); });
 haloBools.forEach(function (key) { dom.toggleRow('t-halo' + key); });
 pvKeys.forEach(function (key) { dom.sliderRow('fx-pv' + key); });
 bhKeys.forEach(function (key) { dom.sliderRow('fx-bh' + key); });
 neonKeys.forEach(function (key) { dom.sliderRow('fx-neon' + key); });
+mixerKeys.forEach(function (key) { dom.sliderRow('fx-mixer' + key); });
+dom.toggleRow('t-mixerflowLock');
 dom.toggleRow('t-pvunify');
 // A bool knob is a switch, so its slider id does not exist in the app. Build the row anyway:
 // then the thing that keeps a reset button off a switch is the binder's own skip, and a binder
@@ -223,11 +232,12 @@ const sandbox = {
 // The rows are already in the DOM when the modules run, so a button can only appear through
 // the modules' own init path: a binder nobody calls leaves its rows bare and fails here.
 const api = vm.runInNewContext(
-  [schemaText, bhSchemaText, neonSchemaText, defaultsText, panelText, pvTuningText, bhTuningText, haloTuningText, neonTuningText].join(NL + NL)
+  [schemaText, bhSchemaText, neonSchemaText, mixerSchemaText, defaultsText, panelText, pvTuningText, bhTuningText, haloTuningText, neonTuningText, mixerTuningText].join(NL + NL)
     + NL + ';({ setHaloTuning: setHaloTuning, setPvTuning: setPvTuning, haloTuning: haloTuning, pvTuning: pvTuning,'
     + ' haloTuningFormat: haloTuningFormat, pvTuningFormat: pvTuningFormat,'
     + ' ensureFxSliderResetButton: ensureFxSliderResetButton, setBlackHoleTuning: setBlackHoleTuning, blackHoleTuning: blackHoleTuning,'
-    + ' setNeonTuning: setNeonTuning, neonTuning: neonTuning, neonTuningFormat: neonTuningFormat })',
+    + ' setNeonTuning: setNeonTuning, neonTuning: neonTuning, neonTuningFormat: neonTuningFormat,'
+    + ' setMixerTuning: setMixerTuning, mixerTuning: mixerTuning, mixerTuningFormat: mixerTuningFormat })',
   sandbox
 );
 
@@ -243,7 +253,8 @@ const sliderGroups = [
   { keys: haloKeys, specs: schema, prefix: 'fx-halo', store: 'mineradio-halo-tuning-v1', storeKey: 'haloTuning', label: 'ring knobs' },
   { keys: pvKeys, specs: pvFields, prefix: 'fx-pv', store: 'mineradio-pv-tuning-v1', storeKey: 'pvTuning', label: 'PV dials' },
   { keys: bhKeys, specs: bhSchema, prefix: 'fx-bh', store: 'mineradio-blackhole-tuning-v1', storeKey: 'blackHoleTuning', label: 'black hole dials' },
-  { keys: neonKeys, specs: neonSchema, prefix: 'fx-neon', store: 'mineradio-neon-tuning-v2', storeKey: 'neonTuning', label: 'neon road dials' }
+  { keys: neonKeys, specs: neonSchema, prefix: 'fx-neon', store: 'mineradio-neon-tuning-v2', storeKey: 'neonTuning', label: 'neon road dials' },
+  { keys: mixerKeys, specs: mixerSchema, prefix: 'fx-mixer', store: 'mineradio-mixer-tuning-v2', storeKey: 'mixerTuning', label: 'mixer desk dials' }
 ];
 const sliderRows = sliderGroups.reduce(function (sum, group) { return sum + group.keys.length; }, 0);
 
@@ -396,6 +407,34 @@ console.log('rows: ' + (sliderRows + haloBools.length + pvBools.length + 2)
     restored += 1;
   });
   console.log('neon road dials restored by their own button: ' + restored + '/' + neonKeys.length);
+}
+
+// ------------------------------------------- the mixer desk's dials, same contract, its own store
+{
+  let restored = 0;
+  mixerKeys.forEach(function (key, index) {
+    const spec = mixerSchema[key];
+    const id = 'fx-mixer' + key;
+    api.setMixerTuning(key, offDefault(spec));
+    const neighbour = mixerKeys[(index + 1) % mixerKeys.length];
+    const neighbourMoved = offDefault(mixerSchema[neighbour]);
+    if (neighbour !== key) api.setMixerTuning(neighbour, neighbourMoved);
+    const before = Object.assign({}, api.mixerTuning);
+    dom.click(buttonsOf(id)[0]);
+    assert.strictEqual(api.mixerTuning[key], spec.def, key + ': its own button must put it back on ' + spec.def);
+    const changed = Object.keys(api.mixerTuning).filter(function (one) { return api.mixerTuning[one] !== before[one]; });
+    assert.deepStrictEqual(changed, [key], key + ': one button must move one dial, moved ' + changed.join(', '));
+    if (neighbour !== key) {
+      assert.strictEqual(api.mixerTuning[neighbour], neighbourMoved,
+        key + ': its button must leave the neighbour ' + neighbour + ' where the user put it');
+    }
+    assert.strictEqual(storedValue('mineradio-mixer-tuning-v2', key), spec.def, key + ': the reset must persist');
+    assert.strictEqual(dom.byId.get(id).value, String(spec.def), key + ': the slider must be written back');
+    assert.strictEqual(rowOf(id).querySelector('output').textContent, api.mixerTuningFormat(key),
+      key + ': the read-out must be refreshed with the knob');
+    restored += 1;
+  });
+  console.log('mixer desk dials restored by their own button: ' + restored + '/' + mixerKeys.length);
 }
 
 // --------------------------- the app's own sliders still reset through fxDefaults (two arguments)

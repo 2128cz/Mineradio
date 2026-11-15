@@ -1116,7 +1116,8 @@ function runHaloPresetCheck() {
   // was really the claim "the ring is the newest preset" and stopped being true on purpose.
   const declaredIndexes = {};
   ['00-state/00-core-stores.js', '02-visual/01-float-skull-backcover.js', '02-visual/17-pv-preset.js',
-    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js', '02-visual/21-neon-fuji-preset.js'].forEach(function (rel) {
+    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js', '02-visual/21-neon-fuji-preset.js',
+    '02-visual/22-mixer-desk-preset.js'].forEach(function (rel) {
     const text = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', rel), 'utf8');
     const re = /\b([A-Z][A-Z0-9_]*_PRESET_INDEX) = (\d+)/g;
     let found;
@@ -2132,6 +2133,157 @@ function runNeonFujiPresetCheck() {
   }
   process.stdout.write(cars.stdout || '');
   console.log(`[OK] Neon Fuji wired: preset ${index}, ported fragment, ${schema.size} knobs, lyric cars by 1/depth.`);
+}
+
+// Preset 17「调音台」: an original raymarched desk. There is deliberately no reference fixture and no
+// pixel-diff arm - the licence decision was "decouple and redesign or do not ship it", so this arm
+// also asserts that no reference-specific identifier (and no fixture or fidelity bench) exists.
+function runMixerDeskPresetCheck() {
+  logStep('Mixer desk preset (original raymarch, lyric panels, knobs, no reference source)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '22-mixer-desk-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '15-mixer-tuning.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/22-mixer-desk-preset.js is missing; preset 17 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/15-mixer-tuning.js is missing; the desk would have knobs without a store');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const index = Number((text.match(/MIXER_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 17) fail(`MIXER_PRESET_INDEX must be 17 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/22-mixer-desk-preset.js'") < 0) {
+    fail('22-mixer-desk-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/15-mixer-tuning.js'") < 0) {
+    fail('15-mixer-tuning.js must be listed in index-loader.js; without it the desk has no knobs');
+  }
+  if (!/调音台/.test(archiveText) || !/MIXER DESK/.test(archiveText)) fail('the desk must be a labelled, selectable card');
+  // The licence arm: no reference identifiers, no fixture, no reference pixel bench.
+  for (const [haystack, name] of [[text, 'module'], [tuningText, 'store'], [consoleText, 'console'], [htmlText, 'index.html']]) {
+    if (/dogrid|pcg3d|lofir|kaosspad|0b5vr|\b808\b|cs2GWD|shadertoy\.com\/view/i.test(haystack)) {
+      fail('the ' + name + ' still carries a reference-specific identifier; this preset is an original scene, not a port');
+    }
+  }
+  if (fs.existsSync(path.join(appRoot, 'tests', 'fixtures', 'mixer-desk-reference.glsl'))) {
+    fail('a reference fixture for the mixer desk must not exist: the scene is original, not a port');
+  }
+  for (const f of fs.readdirSync(path.join(appRoot, 'scripts'))) {
+    if (/mixer.*fidelity/i.test(f)) fail('a reference fidelity bench for the mixer desk must not exist: ' + f);
+  }
+  if (!/Original scene/.test(text) || !/no reference source was used/.test(text)) {
+    fail('the module header has to state that the scene is original and no reference source was used');
+  }
+  // The scene: own helpers, own composition, the three parts, and the panel sampling through textures.
+  for (const [pattern, why] of [
+    [/shadertoyFragment\(/, 'the fragment has to go through the shipped Shadertoy driver'],
+    [/channels: 3/, 'the scene needs exactly three channels: level table, glyph atlas, panel metadata'],
+    [/float mdRepeat1\(float x, float period\)/, 'the LED row uses its own repeat helper'],
+    [/float mdSmin\(float a, float b, float k\)/, 'the smooth-union helper has to exist'],
+    [/float mixerDeck\(vec3 p\)/, 'the desk has to be its own SDF function'],
+    [/vec2 mixerBays\(vec3 p\)/, 'the bays have to be their own SDF function'],
+    [/vec2 mixerPanels\(vec3 p\)/, 'the lyric panels have to be their own SDF function'],
+    [/float mixerMarch\(vec3 ro, vec3 rd, out float hitId\)/, 'the ray march has to return the loop count and the material id'],
+    [/q = p\.z - uFlow|p\.z - uFlow/, 'the conveyor has to be driven by the flow uniform'],
+    [/texture2D\(iChannel2, vec2\(\(float\(i\) \+ 0\.5\) \/ 8\.0, 0\.5\)\)/, 'the panels have to read their metadata from the texture'],
+    [/meta\.xy \+ uv \/ MIXER_ATLAS/, 'the glyph atlas has to be sampled with the per-panel cell'],
+    [/uPanelBase \+ float\(i\)/, 'the panel slot has to know which lyric group it carries'],
+    [/uCarousel - g/, 'the panel position has to come from the same carousel as the desk'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  if ((text.match(/void mainImage\(/g) || []).length !== 1) fail('the fragment must declare mainImage exactly once');
+  // The schedule and the pass each own their logic exactly once.
+  for (const name of ['mixerSplitGroups', 'mixerGroupPlan', 'mixerCarouselAt', 'mixerPanelZ', 'mixerPanelLift',
+    'mixerPanelAlpha', 'mixerBandValues', 'mixerWriteLevelTable', 'mixerRasterCell', 'mixerSyncPlan',
+    'mixerAdvanceCarousel', 'mixerUpdateLevels', 'mixerSyncPanels', 'mixerFeedCamera', 'mixerFeedUniforms',
+    'mixerBuildScene', 'mixerAlignPassSize', 'renderMixerDeskFrame', 'mixerDisposeScene', 'mixerDeskStatus',
+    'applyMixerPresetNow', 'updateMixerDeskLayer']) {
+    const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
+    if (count !== 1) fail(name + ' must be declared exactly once (found ' + count + ')');
+  }
+  const constInt = Number((text.match(/var MIXER_PANELS = (\d+);/) || [])[1]);
+  const atlasCols = Number((text.match(/var MIXER_ATLAS_COLS = (\d+);/) || [])[1]);
+  const atlasRows = Number((text.match(/var MIXER_ATLAS_ROWS = (\d+);/) || [])[1]);
+  const marchMax = Number((text.match(/var MIXER_MARCH_MAX = (\d+);/) || [])[1]);
+  if (constInt !== 8) fail('MIXER_PANELS must be 8');
+  if (atlasCols !== 4 || atlasRows !== 4) fail('the glyph atlas is a 4x4 grid');
+  if (!/const int MIXER_PANELS = 8;/.test(text) || !/const vec2 MIXER_ATLAS = vec2\(4\.0, 4\.0\);/.test(text)) {
+    fail('the GLSL panel loop and atlas grid have to match the JS constants');
+  }
+  if (marchMax !== 160 || !/for \(int i = 0; i < 160; i\+\+\)/.test(text)) {
+    fail('the march loop bound has to be the MIXER_MARCH_MAX literal (160)');
+  }
+  // Hooks, takeover and status.
+  if (!/applyMixerPresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the desk and leaving it must release it');
+  if (!/updateMixerDeskLayer\(now, dt, sonicAudioFrame\)/.test(loopText)) fail('the main loop must step the desk with the audio frame');
+  if (!/renderMixerDeskFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the desk pass');
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'mixer-desk'/.test(ownerBlock)) fail('the desk must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the desk must take ${layer} over: the lyrics live on its own panels`);
+  }
+  for (const field of ['carousel:', 'panels:', 'planGroups:', 'atlasUploads:', 'snapCount:', 'passScale:']) {
+    if (text.indexOf(field) < 0) fail('mixerDeskStatus() has to report ' + field);
+  }
+  // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(text))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 25) fail(`the desk knob schema must be complete (found ${schema.size})`);
+  const ahead = schema.get('panelAhead');
+  const behind = schema.get('panelBehind');
+  if (!ahead || !behind || 1 + ahead.max + behind.max > 8) {
+    fail('the panel pool has to fit MIXER_PANELS: 1 + panelAhead.max + panelBehind.max <= 8');
+  }
+  const steps = schema.get('marchSteps');
+  if (!steps || steps.max !== marchMax) fail('marchSteps.max has to match MIXER_MARCH_MAX');
+  for (const [key, spec] of schema) {
+    if (spec.kind === 'bool') {
+      const id = 't-mixer' + key;
+      if (!htmlText.includes('id="' + id + '"')) fail(`the switch ${id} is missing from index.html`);
+      if (!htmlText.includes(`toggleMixerTuning('${key}')`)) fail(`the switch ${id} must call toggleMixerTuning('${key}')`);
+      if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the switch ${key} must be listed in the console 调音台 group`);
+      continue;
+    }
+    const id = 'fx-mixer' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setMixerTuning('${key}', this.value)`)) fail(`the slider ${id} must call setMixerTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 调音台 group`);
+  }
+  if (!/key: 'mixer'/.test(consoleText) || !/title: '调音台'/.test(consoleText)) {
+    fail('the visual console needs a 调音台 group in the 动效 tab');
+  }
+  if (!/presets: \[MIXER_PRESET_INDEX\]/.test(consoleText)) fail('the 调音台 group has to carry presets: [MIXER_PRESET_INDEX]');
+  if (!/mineradio-mixer-tuning-v2/.test(tuningText) || !/function bindMixerTuningResetButtons\(/.test(tuningText)) {
+    fail('the desk knobs need their own store and one reset button per row');
+  }
+  for (const testName of ['mixer-desk-schedule.test.js', 'mixer-level-table.test.js']) {
+    const testFile = path.join(appRoot, 'tests', testName);
+    if (!fs.existsSync(testFile)) { fail('tests/' + testName + ' is missing'); continue; }
+    const result = spawnSync(process.execPath, ['--test', testFile], { cwd: appRoot, encoding: 'utf8' });
+    if (result.status !== 0) {
+      process.stdout.write(result.stdout || '');
+      process.stderr.write(result.stderr || '');
+      fail('the mixer desk regression failed: ' + rel(testFile));
+    }
+    process.stdout.write(result.stdout || '');
+  }
+  console.log(`[OK] Mixer desk wired: preset ${index}, original raymarch, ${schema.size} knobs, lyric panels on the conveyor.`);
 }
 
 function runFeatureIndexCheck() {
@@ -5456,10 +5608,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 16/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 17/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -7841,6 +7993,7 @@ async function main() {
   runHaloPresetCheck();
   runBlackHolePresetCheck();
   runNeonFujiPresetCheck();
+  runMixerDeskPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();
