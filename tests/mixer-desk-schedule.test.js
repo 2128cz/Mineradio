@@ -87,7 +87,7 @@ const opts = {
 
 // 3) panel placement and the look of the hand-over
 {
-  const pitch = defaults.bayPitch;
+  const pitch = defaults.panelSpacing;
   const zRead = 0.15;
   assert.equal(run.mixerPanelZ(4, 4, pitch, zRead), zRead, 'a panel reaches the reading position when the carousel equals its group');
   assert.ok(run.mixerPanelZ(5, 4, pitch, zRead) < run.mixerPanelZ(4, 4, pitch, zRead), 'groups ahead sit further away');

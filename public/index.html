@@ -1291,16 +1291,14 @@
         <div class="fx-slider"><label>场景跟拍量</label><input id="fx-neonbeatScene" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatScene', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNeonTuning()">恢复日本霓虹默认</button></div>
       </div>
-      <!-- 调音台 (preset 17) 自己的旋钮。歌词在 3D 屏里，这些控制台面、走带、屏幕和步进。 -->
+      <!-- 调音台 (preset 17) 自己的旋钮：整屏是可平铺的模块墙，歌词屏也嵌在墙里。 -->
       <div class="fx-mixer-tuning">
-        <div class="fx-slider"><label>镜头高度</label><input id="fx-mixercamEyeY" type="range" min="0.55" max="1.55" step="0.01" oninput="setMixerTuning('camEyeY', this.value)"><output></output></div>
-        <div class="fx-slider"><label>镜头俯角</label><input id="fx-mixercamPitch" type="range" min="-34" max="-2" step="1" oninput="setMixerTuning('camPitch', this.value)"><output></output></div>
-        <div class="fx-slider"><label>镜头呼吸幅度</label><input id="fx-mixercamSway" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('camSway', this.value)"><output></output></div>
-        <div class="fx-slider"><label>视锥角度</label><input id="fx-mixercamFov" type="range" min="30" max="80" step="1" oninput="setMixerTuning('camFov', this.value)"><output></output></div>
+        <div class="fx-slider"><label>画面缩放</label><input id="fx-mixerviewZoom" type="range" min="1.5" max="10" step="0.01" oninput="setMixerTuning('viewZoom', this.value)"><output></output></div>
+        <div class="fx-slider"><label>画面垂直</label><input id="fx-mixerviewPanY" type="range" min="-1.5" max="1.5" step="0.01" oninput="setMixerTuning('viewPanY', this.value)"><output></output></div>
+        <div class="fx-slider"><label>镜头呼吸</label><input id="fx-mixercamSway" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('camSway', this.value)"><output></output></div>
         <div class="fx-slider"><label>走带速度</label><input id="fx-mixerflowSpeed" type="range" min="0" max="3" step="0.01" oninput="setMixerTuning('flowSpeed', this.value)"><output></output></div>
-        <div class="fx-slider"><label>模块槽间距</label><input id="fx-mixerbayPitch" type="range" min="0.6" max="2" step="0.01" oninput="setMixerTuning('bayPitch', this.value)"><output></output></div>
-        <div class="fx-slider"><label>台面宽度</label><input id="fx-mixerdeskWidth" type="range" min="1.6" max="4.2" step="0.01" oninput="setMixerTuning('deskWidth', this.value)"><output></output></div>
-        <div class="fx-slider"><label>模块密度</label><input id="fx-mixerbayDetail" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('bayDetail', this.value)"><output></output></div>
+        <div class="fx-slider"><label>模块尺寸</label><input id="fx-mixertileSize" type="range" min="1.2" max="3.5" step="0.01" oninput="setMixerTuning('tileSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>屏间距</label><input id="fx-mixerpanelSpacing" type="range" min="2.2" max="8" step="0.01" oninput="setMixerTuning('panelSpacing', this.value)"><output></output></div>
         <div class="fx-slider"><label>模块自发光</label><input id="fx-mixermoduleGlow" type="range" min="0" max="2.5" step="0.01" oninput="setMixerTuning('moduleGlow', this.value)"><output></output></div>
         <div class="fx-slider"><label>电平表增益</label><input id="fx-mixermeterGain" type="range" min="0" max="2.5" step="0.01" oninput="setMixerTuning('meterGain', this.value)"><output></output></div>
         <div class="fx-slider"><label>推子动作速度</label><input id="fx-mixerfaderSpeed" type="range" min="0" max="4" step="0.01" oninput="setMixerTuning('faderSpeed', this.value)"><output></output></div>
@@ -1308,17 +1306,14 @@
         <div class="fx-slider"><label>每屏字数</label><input id="fx-mixercharsPerPanel" type="range" min="1" max="6" step="1" oninput="setMixerTuning('charsPerPanel', this.value)"><output></output></div>
         <div class="fx-slider"><label>前方屏数</label><input id="fx-mixerpanelAhead" type="range" min="1" max="5" step="1" oninput="setMixerTuning('panelAhead', this.value)"><output></output></div>
         <div class="fx-slider"><label>身后屏数</label><input id="fx-mixerpanelBehind" type="range" min="0" max="2" step="1" oninput="setMixerTuning('panelBehind', this.value)"><output></output></div>
-        <div class="fx-slider"><label>抬起高度</label><input id="fx-mixerpanelLift" type="range" min="0" max="0.6" step="0.01" oninput="setMixerTuning('panelLift', this.value)"><output></output></div>
+        <div class="fx-slider"><label>抬起幅度</label><input id="fx-mixerpanelLift" type="range" min="0" max="1" step="0.01" oninput="setMixerTuning('panelLift', this.value)"><output></output></div>
         <div class="fx-slider"><label>每屏最短停留</label><input id="fx-mixerpanelMinGap" type="range" min="0.1" max="1.5" step="0.01" oninput="setMixerTuning('panelMinGap', this.value)"><output></output></div>
         <div class="fx-slider"><label>走带缓入</label><input id="fx-mixerpanelGlide" type="range" min="0" max="1" step="0.01" oninput="setMixerTuning('panelGlide', this.value)"><output></output></div>
         <div class="fx-slider"><label>屏幕亮度</label><input id="fx-mixerpanelAlpha" type="range" min="0" max="1" step="0.01" oninput="setMixerTuning('panelAlpha', this.value)"><output></output></div>
         <div class="fx-slider"><label>每句最多分屏</label><input id="fx-mixermaxGroupsPerLine" type="range" min="2" max="24" step="1" oninput="setMixerTuning('maxGroupsPerLine', this.value)"><output></output></div>
         <div class="fx-slider"><label>鼓点闪量</label><input id="fx-mixerbeatGlow" type="range" min="0" max="2" step="0.01" oninput="setMixerTuning('beatGlow', this.value)"><output></output></div>
         <div class="fx-slider"><label>电平平滑</label><input id="fx-mixeraudioSmooth" type="range" min="0" max="0.95" step="0.01" oninput="setMixerTuning('audioSmooth', this.value)"><output></output></div>
-        <div class="fx-slider"><label>光线步数</label><input id="fx-mixermarchSteps" type="range" min="24" max="160" step="1" oninput="setMixerTuning('marchSteps', this.value)"><output></output></div>
-        <div class="fx-slider"><label>阴影步数</label><input id="fx-mixershadowSteps" type="range" min="0" max="32" step="1" oninput="setMixerTuning('shadowSteps', this.value)"><output></output></div>
         <div class="fx-slider"><label>渲染分辨率</label><input id="fx-mixerrenderScale" type="range" min="0.5" max="1" step="0.01" oninput="setMixerTuning('renderScale', this.value)"><output></output></div>
-        <div class="fx-slider"><label>最远距离</label><input id="fx-mixermaxDist" type="range" min="5" max="16" step="0.1" oninput="setMixerTuning('maxDist', this.value)"><output></output></div>
         <div class="fx-slider"><label>曝光</label><input id="fx-mixerexposure" type="range" min="0.4" max="2" step="0.01" oninput="setMixerTuning('exposure', this.value)"><output></output></div>
         <div class="fx-slider"><label>暗角</label><input id="fx-mixervignette" type="range" min="0" max="1" step="0.01" oninput="setMixerTuning('vignette', this.value)"><output></output></div>
         <div class="fx-toggle-grid">

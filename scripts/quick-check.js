@@ -2139,7 +2139,7 @@ function runNeonFujiPresetCheck() {
 // pixel-diff arm - the licence decision was "decouple and redesign or do not ship it", so this arm
 // also asserts that no reference-specific identifier (and no fixture or fidelity bench) exists.
 function runMixerDeskPresetCheck() {
-  logStep('Mixer desk preset (original raymarch, lyric panels, knobs, no reference source)');
+  logStep('Mixer desk preset (original tiled wall, lyric panels, knobs, no reference source)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '22-mixer-desk-preset.js');
   const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '15-mixer-tuning.js');
   if (!fs.existsSync(modulePath)) fail('02-visual/22-mixer-desk-preset.js is missing; preset 17 would be an empty card');
@@ -2180,17 +2180,18 @@ function runMixerDeskPresetCheck() {
   for (const [pattern, why] of [
     [/shadertoyFragment\(/, 'the fragment has to go through the shipped Shadertoy driver'],
     [/channels: 3/, 'the scene needs exactly three channels: level table, glyph atlas, panel metadata'],
-    [/float mdRepeat1\(float x, float period\)/, 'the LED row uses its own repeat helper'],
-    [/float mdSmin\(float a, float b, float k\)/, 'the smooth-union helper has to exist'],
-    [/float mixerDeck\(vec3 p\)/, 'the desk has to be its own SDF function'],
-    [/vec2 mixerBays\(vec3 p\)/, 'the bays have to be their own SDF function'],
-    [/vec2 mixerPanels\(vec3 p\)/, 'the lyric panels have to be their own SDF function'],
-    [/float mixerMarch\(vec3 ro, vec3 rd, out float hitId\)/, 'the ray march has to return the loop count and the material id'],
-    [/q = p\.z - uFlow|p\.z - uFlow/, 'the conveyor has to be driven by the flow uniform'],
+    [/vec3 mModule\(vec2 q, vec2 halfSize, float id\)/, 'one module has to be its own function (face, border, controls)'],
+    [/vec3 mLyrics\(vec2 w, inout float mask\)/, 'the lyric panels have to be their own layer over the wall'],
+    [/vec3 mKnobs\(vec2 q, float h, float n\)/, 'knobs have to be a module type of their own'],
+    [/vec3 mFaders\(vec2 q, float h, float n\)/, 'faders have to be a module type of their own'],
+    [/vec2 macro = floor\(w \/ \(2\.0 \* S\)\)/, 'the wall has to tile in 2x2 macro blocks'],
+    [/float S = max\(0\.5, uTileSize\)/, 'the tile size has to come from its knob'],
+    [/uniform float uTileSize;/, 'the wall needs its tile size uniform'],
+    [/uniform float uViewZoom;/, 'the wall needs its zoom uniform'],
     [/texture2D\(iChannel2, vec2\(\(float\(i\) \+ 0\.5\) \/ 8\.0, 0\.5\)\)/, 'the panels have to read their metadata from the texture'],
     [/meta\.xy \+ uv \/ MIXER_ATLAS/, 'the glyph atlas has to be sampled with the per-panel cell'],
     [/uPanelBase \+ float\(i\)/, 'the panel slot has to know which lyric group it carries'],
-    [/uCarousel - g/, 'the panel position has to come from the same carousel as the desk'],
+    [/uPanelSpacing/, 'the panel spacing has to be a knob the shader reads'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2198,7 +2199,7 @@ function runMixerDeskPresetCheck() {
   // The schedule and the pass each own their logic exactly once.
   for (const name of ['mixerSplitGroups', 'mixerGroupPlan', 'mixerCarouselAt', 'mixerPanelZ', 'mixerPanelLift',
     'mixerPanelAlpha', 'mixerBandValues', 'mixerWriteLevelTable', 'mixerRasterCell', 'mixerSyncPlan',
-    'mixerAdvanceCarousel', 'mixerUpdateLevels', 'mixerSyncPanels', 'mixerFeedCamera', 'mixerFeedUniforms',
+    'mixerAdvanceCarousel', 'mixerUpdateLevels', 'mixerSyncPanels', 'mixerFeedUniforms',
     'mixerBuildScene', 'mixerAlignPassSize', 'renderMixerDeskFrame', 'mixerDisposeScene', 'mixerDeskStatus',
     'applyMixerPresetNow', 'updateMixerDeskLayer']) {
     const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
@@ -2207,14 +2208,10 @@ function runMixerDeskPresetCheck() {
   const constInt = Number((text.match(/var MIXER_PANELS = (\d+);/) || [])[1]);
   const atlasCols = Number((text.match(/var MIXER_ATLAS_COLS = (\d+);/) || [])[1]);
   const atlasRows = Number((text.match(/var MIXER_ATLAS_ROWS = (\d+);/) || [])[1]);
-  const marchMax = Number((text.match(/var MIXER_MARCH_MAX = (\d+);/) || [])[1]);
   if (constInt !== 8) fail('MIXER_PANELS must be 8');
   if (atlasCols !== 4 || atlasRows !== 4) fail('the glyph atlas is a 4x4 grid');
   if (!/const int MIXER_PANELS = 8;/.test(text) || !/const vec2 MIXER_ATLAS = vec2\(4\.0, 4\.0\);/.test(text)) {
     fail('the GLSL panel loop and atlas grid have to match the JS constants');
-  }
-  if (marchMax !== 160 || !/for \(int i = 0; i < 160; i\+\+\)/.test(text)) {
-    fail('the march loop bound has to be the MIXER_MARCH_MAX literal (160)');
   }
   // Hooks, takeover and status.
   if (!/applyMixerPresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the desk and leaving it must release it');
@@ -2235,14 +2232,12 @@ function runMixerDeskPresetCheck() {
   while ((found = schemaRe.exec(text))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 25) fail(`the desk knob schema must be complete (found ${schema.size})`);
+  if (schema.size < 20) fail(`the desk knob schema must be complete (found ${schema.size})`);
   const ahead = schema.get('panelAhead');
   const behind = schema.get('panelBehind');
   if (!ahead || !behind || 1 + ahead.max + behind.max > 8) {
     fail('the panel pool has to fit MIXER_PANELS: 1 + panelAhead.max + panelBehind.max <= 8');
   }
-  const steps = schema.get('marchSteps');
-  if (!steps || steps.max !== marchMax) fail('marchSteps.max has to match MIXER_MARCH_MAX');
   for (const [key, spec] of schema) {
     if (spec.kind === 'bool') {
       const id = 't-mixer' + key;
@@ -2269,7 +2264,7 @@ function runMixerDeskPresetCheck() {
     fail('the visual console needs a 调音台 group in the 动效 tab');
   }
   if (!/presets: \[MIXER_PRESET_INDEX\]/.test(consoleText)) fail('the 调音台 group has to carry presets: [MIXER_PRESET_INDEX]');
-  if (!/mineradio-mixer-tuning-v2/.test(tuningText) || !/function bindMixerTuningResetButtons\(/.test(tuningText)) {
+  if (!/mineradio-mixer-tuning-v3/.test(tuningText) || !/function bindMixerTuningResetButtons\(/.test(tuningText)) {
     fail('the desk knobs need their own store and one reset button per row');
   }
   for (const testName of ['mixer-desk-schedule.test.js', 'mixer-level-table.test.js']) {
@@ -2283,7 +2278,7 @@ function runMixerDeskPresetCheck() {
     }
     process.stdout.write(result.stdout || '');
   }
-  console.log(`[OK] Mixer desk wired: preset ${index}, original raymarch, ${schema.size} knobs, lyric panels on the conveyor.`);
+  console.log(`[OK] Mixer desk wired: preset ${index}, original tiled wall, ${schema.size} knobs, lyric panels on the conveyor.`);
 }
 
 function runFeatureIndexCheck() {
