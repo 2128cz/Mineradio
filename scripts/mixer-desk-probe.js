@@ -67,11 +67,11 @@ function getJson(port, p) {
   check(second.frames > first.frames, 'frames advance (' + first.frames + ' -> ' + second.frames + ')');
   check(second.error === '', 'no shader/status error (' + second.error + ')');
   check(second.built === true, 'the desk pass is built');
-  check(second.panels > 0, 'the panel pool is live (' + second.panels + ')');
-  check(second.atlasUploads > 0, 'the glyph atlas has been uploaded (' + second.atlasUploads + ')');
+  check(second.passScale > 0, 'the offscreen pass is sized (' + second.passScale + ')');
+  check(second.marchSteps > 0, 'the march step knob reaches the status (' + second.marchSteps + ')');
   const fps = Math.round(((second.frames - first.frames) / Math.max(1, secondAt - firstAt)) * 10000) / 10;
   console.log('[INFO] in-app fps ~' + fps + ' at ' + second.rt.join('x') + ' (renderScale ' + second.passScale + ')');
-  check(second.carousel >= first.carousel, 'the carousel is monotone (' + first.carousel + ' -> ' + second.carousel + ')');
+  check(second.marchSteps === first.marchSteps && second.shadowSteps === first.shadowSteps, 'the step knobs stay stable while playing');
   check(errors.length <= 1, 'window exceptions stay at the known Electron one (' + errors.length + ')');
   process.exit(failed ? 1 : 0);
 })().catch((err) => {

@@ -53,6 +53,14 @@ The combined application remains distributed under the repository's GNU GPL v3
 license. Preserve this notice and the corresponding source when redistributing
 modified builds.
 
+## Visual preset 17「调音台」(MIXER DESK) — reference port (licence unverified)
+
+- Reference: <https://www.shadertoy.com/view/cs2GWD> (author marker 0b5vr)
+- Landing file: 
+- Attribution sidecar: 
+
+The page was not reachable and the supplied source carried no licence header, so the licence is **UNVERIFIED**. At the requester's instruction the reference body is kept as written; the changes are limited to a handful of uniforms (camera pan/sway/roll/fov, grid scale, level gain, march/shadow steps, max distance), an opaque alpha so the post pass can copy the frame, and an audio-driven level table on iChannel0. Before distributing a build that contains this preset, confirm the author's licence and update this file, NOTICE.md and the sidecar.
+
 ## Qishui Passport Web QR authentication
 
 - Upstream: `Wx2yZx/Mineradio-Qishui-QR-Login`

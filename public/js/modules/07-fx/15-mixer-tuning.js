@@ -6,7 +6,7 @@
 // so the defaults have one home; this file is the store and the console bindings. It is not part
 // of `fx`: these values only mean something while the desk is on screen.
 
-var MIXER_TUNING_STORE_KEY = 'mineradio-mixer-tuning-v3';
+var MIXER_TUNING_STORE_KEY = 'mineradio-mixer-tuning-v5';
 
 function mixerTuningClamp(key, value) {
   var spec = MIXER_TUNING_SCHEMA[key];

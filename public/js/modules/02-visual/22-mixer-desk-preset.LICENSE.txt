@@ -1,0 +1,16 @@
+Reference: Shadertoy "cs2GWD"
+  https://www.shadertoy.com/view/cs2GWD
+  Author marker in the source: 0b5vr
+
+LICENCE STATUS: UNVERIFIED.
+  The Shadertoy page was not reachable when this port was made and the source as supplied carried
+  no licence header. The shader has been ported into 22-mixer-desk-preset.js at the requester's
+  instruction (the source was supplied by them). Do not distribute a build that contains this
+  port until the author's licence is confirmed and recorded here, in NOTICE.md and in
+  docs/THIRD_PARTY_PORTS.md.
+
+What was changed by the port:
+  - the reference body is kept as written; a few constants became uniforms: camera pan / sway /
+    roll / fov, grid cell scale, level gain, march steps, shadow steps, max distance;
+  - the fragment writes alpha 1.0 so the post pass can copy it;
+  - iChannel0 is fed an audio-driven level table (8 bands x 8 history steps).
