@@ -14,10 +14,11 @@ Licence: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
 
 Attribution for this build:
   - The scene in 21-neon-fuji-preset.js (a synthwave road with a striped sun, a
-    mountain silhouette and a scrolling perspective grid) is a reimplementation
-    written for Mineradio against the reference above. The GLSL in this
-    repository is not a copy of the reference source and was not derived from
-    it line by line; it reproduces the composition the reference is known for.
+    mountain silhouette and a scrolling perspective grid) is a port of the
+    reference above: its functions and composition order are kept line by line,
+    and the reference's literals became knobs whose defaults are those same
+    literals. The port is checked against the reference by pixel difference
+    (scripts/neon-fidelity-bench.js, fixture tests/fixtures/neon-fuji-reference.glsl).
   - The lyric cars (text approaching the lens with a trail and a light band) are
     original to this preset.
 

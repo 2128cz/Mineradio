@@ -1229,6 +1229,50 @@
         <div class="fx-slider"><label>歌词飘散</label><input id="fx-bhlyricDrift" type="range" min="0" max="1.5" step="0.05" oninput="setBlackHoleTuning('lyricDrift', this.value)"><output></output></div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetBlackHoleTuning()">恢复银河黑洞默认</button></div>
       </div>
+      <!-- 日本霓虹 (preset 16) 自己的旋钮。前两组来自参考 shader 的常量，默认值就是参考值；
+           第三组是我们加的歌词车。这些行由控制台搬到 动效 → 日本霓虹。 -->
+      <div class="fx-neon-tuning">
+        <div class="fx-slider"><label>电池亮度</label><input id="fx-neonbattery" type="range" min="0.2" max="1.2" step="0.01" oninput="setNeonTuning('battery', this.value)"><output></output></div>
+        <div class="fx-slider"><label>地平线位置</label><input id="fx-neonhorizon" type="range" min="-0.6" max="0.1" step="0.01" oninput="setNeonTuning('horizon', this.value)"><output></output></div>
+        <div class="fx-slider"><label>道路纵深</label><input id="fx-neonroadDepth" type="range" min="1" max="10" step="0.1" oninput="setNeonTuning('roadDepth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>道路扩散</label><input id="fx-neonroadSpread" type="range" min="0.2" max="3" step="0.01" oninput="setNeonTuning('roadSpread', this.value)"><output></output></div>
+        <div class="fx-slider"><label>网格尺度</label><input id="fx-neongridScale" type="range" min="0.002" max="0.05" step="0.001" oninput="setNeonTuning('gridScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>网格流速</label><input id="fx-neongridSpeed" type="range" min="0" max="12" step="0.1" oninput="setNeonTuning('gridSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>网格密度</label><input id="fx-neongridDensity" type="range" min="1" max="12" step="0.1" oninput="setNeonTuning('gridDensity', this.value)"><output></output></div>
+        <div class="fx-slider"><label>网格辉光</label><input id="fx-neongridBloom" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('gridBloom', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳水平</label><input id="fx-neonsunX" type="range" min="-2" max="2" step="0.01" oninput="setNeonTuning('sunX', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳垂直</label><input id="fx-neonsunY" type="range" min="-2" max="2" step="0.01" oninput="setNeonTuning('sunY', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳半径</label><input id="fx-neonsunRadius" type="range" min="0.05" max="0.6" step="0.01" oninput="setNeonTuning('sunRadius', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳条纹</label><input id="fx-neonsunStripes" type="range" min="10" max="300" step="1" oninput="setNeonTuning('sunStripes', this.value)"><output></output></div>
+        <div class="fx-slider"><label>太阳光晕</label><input id="fx-neonsunBloom" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('sunBloom', this.value)"><output></output></div>
+        <div class="fx-slider"><label>富士水平</label><input id="fx-neonfujiX" type="range" min="-2" max="2" step="0.01" oninput="setNeonTuning('fujiX', this.value)"><output></output></div>
+        <div class="fx-slider"><label>富士垂直</label><input id="fx-neonfujiY" type="range" min="-2" max="2" step="0.01" oninput="setNeonTuning('fujiY', this.value)"><output></output></div>
+        <div class="fx-slider"><label>富士宽度</label><input id="fx-neonfujiWidth" type="range" min="0.5" max="4" step="0.01" oninput="setNeonTuning('fujiWidth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>山体底宽</label><input id="fx-neonfujiBase" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('fujiBase', this.value)"><output></output></div>
+        <div class="fx-slider"><label>山体高度</label><input id="fx-neonfujiHeight" type="range" min="0.1" max="2" step="0.01" oninput="setNeonTuning('fujiHeight', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雪线频率</label><input id="fx-neonsnowFreq" type="range" min="0" max="60" step="1" oninput="setNeonTuning('snowFreq', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雪线流速</label><input id="fx-neonsnowSpeed" type="range" min="0" max="8" step="0.1" oninput="setNeonTuning('snowSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雪线振幅</label><input id="fx-neonsnowAmp" type="range" min="0" max="0.2" step="0.005" oninput="setNeonTuning('snowAmp', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雪线高度</label><input id="fx-neonsnowLevel" type="range" min="-0.5" max="0.6" step="0.01" oninput="setNeonTuning('snowLevel', this.value)"><output></output></div>
+        <div class="fx-toggle-grid">
+          <div class="fx-toggle" id="t-neoncloudOn" onclick="toggleNeonTuning('cloudOn')"><span>云层</span><span class="dot"></span></div>
+        </div>
+        <div class="fx-slider"><label>云层速度</label><input id="fx-neoncloudSpeed" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('cloudSpeed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>云层粗细</label><input id="fx-neoncloudWidth" type="range" min="0.02" max="0.2" step="0.005" oninput="setNeonTuning('cloudWidth', this.value)"><output></output></div>
+        <div class="fx-slider"><label>雾光强度</label><input id="fx-neonfogGain" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('fogGain', this.value)"><output></output></div>
+        <div class="fx-slider"><label>色彩饱和</label><input id="fx-neonpaletteSat" type="range" min="-1" max="1" step="0.01" oninput="setNeonTuning('paletteSat', this.value)"><output></output></div>
+        <div class="fx-slider"><label>冷暖偏移</label><input id="fx-neonpaletteWarm" type="range" min="-1" max="1" step="0.01" oninput="setNeonTuning('paletteWarm', this.value)"><output></output></div>
+        <div class="fx-slider"><label>视锥角度</label><input id="fx-neoncamFov" type="range" min="25" max="90" step="1" oninput="setNeonTuning('camFov', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词终了字号（屏高占比）</label><input id="fx-neoncarSize" type="range" min="0.02" max="0.4" step="0.01" oninput="setNeonTuning('carSize', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词近端距离</label><input id="fx-neoncarDepthNear" type="range" min="1" max="40" step="0.5" oninput="setNeonTuning('carDepthNear', this.value)"><output></output></div>
+        <div class="fx-slider"><label>歌词下沉</label><input id="fx-neoncarDrop" type="range" min="0.05" max="0.8" step="0.01" oninput="setNeonTuning('carDrop', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影份数</label><input id="fx-neontrailCount" type="range" min="0" max="12" step="1" oninput="setNeonTuning('trailCount', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影间隔</label><input id="fx-neontrailGap" type="range" min="0.01" max="0.2" step="0.005" oninput="setNeonTuning('trailGap', this.value)"><output></output></div>
+        <div class="fx-slider"><label>拖影透明度</label><input id="fx-neontrailOpacity" type="range" min="0" max="1" step="0.01" oninput="setNeonTuning('trailOpacity', this.value)"><output></output></div>
+        <div class="fx-slider"><label>光带强度</label><input id="fx-neonlightBand" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('lightBand', this.value)"><output></output></div>
+        <div class="fx-slider"><label>鼓点推进</label><input id="fx-neonbeatKick" type="range" min="0" max="2" step="0.01" oninput="setNeonTuning('beatKick', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetNeonTuning()">恢复日本霓虹默认</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

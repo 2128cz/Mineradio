@@ -2,11 +2,13 @@
 
 // 预设 16「日本霓虹」(NEON FUJI).
 //
-// The scene reproduces the look of "Cyber Fuji 2020" by kaiware007
+// The scene is a port of "Cyber Fuji 2020" by kaiware007
 // (https://www.shadertoy.com/view/Wt33Wf, 2020-01-28), whose sun and grid functions are
-// Copyright (c) Jan Mróz (jaszunio15), licensed CC BY 3.0. The GLSL here is written for this
-// project against that reference - it is not a copy of the original source. Attribution travels
-// with the build: see 21-neon-fuji-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
+// Copyright (c) Jan Mróz (jaszunio15), licensed CC BY 3.0. Its functions and composition order
+// are kept; its literals are the defaults of the knobs in NEON_TUNING_SCHEMA, and the pixel bench
+// (scripts/neon-fidelity-bench.js) checks the result against the reference fixture. Attribution
+// travels with the build: see 21-neon-fuji-preset.LICENSE.txt, NOTICE.md and
+// docs/THIRD_PARTY_PORTS.md.
 //
 // What this preset adds on top of the reference is the lyrics: each line is a neon car that drives
 // in from the vanishing point - a bright core, a stretched afterimage behind it, and a sweeping
@@ -50,7 +52,6 @@ var NEON_TUNING_SCHEMA = {
   paletteSat: { def: 0, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   paletteWarm: { def: 0, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   // ---- our camera (the reference has none; it sits still and looks down the road)
-  camHeight: { def: 1.0, min: -2, max: 6, kind: 'unit', rebuild: 'live' },
   camFov: { def: 52, min: 25, max: 90, kind: 'deg', rebuild: 'live' },
   // ---- our addition: the lyric cars
   carSize: { def: 0.10, min: 0.02, max: 0.4, kind: 'ratio', rebuild: 'live' },
@@ -58,10 +59,8 @@ var NEON_TUNING_SCHEMA = {
   carDrop: { def: 0.34, min: 0.05, max: 0.8, kind: 'ratio', rebuild: 'live' },
   trailCount: { def: 5, min: 0, max: 12, kind: 'count', rebuild: 'live' },
   trailGap: { def: 0.055, min: 0.01, max: 0.2, kind: 'ratio', rebuild: 'live' },
-  trailLength: { def: 1.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
   trailOpacity: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   lightBand: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
-  carGlow: { def: 1.2, min: 0, max: 3, kind: 'ratio', rebuild: 'live' },
   beatKick: { def: 0.5, min: 0, max: 2, kind: 'ratio', rebuild: 'live' }
 };
 
@@ -109,9 +108,6 @@ function neonParam(key) {
 function neonPresetIsActive() {
   return typeof fx !== 'undefined' && !!fx && Number(fx.preset) === NEON_PRESET_INDEX;
 }
-
-var NEON_FAR_Z = -90;
-var NEON_NEAR_Z = -7;
 
 var neonState = {
   built: false, group: null, quad: null, quadMat: null, bgScene: null, bgCamera: null,
@@ -534,78 +530,13 @@ function neonStepCars(nowSec, dt) {
   return boost;
 }
 
-function neonMakeCar() {
-  var group = new THREE.Group();
-  var canvas = document.createElement('canvas');
-  canvas.width = 8; canvas.height = 8;
-  var tex = new THREE.CanvasTexture(canvas);
-  if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
-  var bodyMat = new THREE.MeshBasicMaterial({
-    map: tex, transparent: true, depthWrite: false, toneMapped: false,
-    blending: THREE.AdditiveBlending
-  });
-  var body = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bodyMat);
-  body.frustumCulled = false;
-  var trailMat = new THREE.MeshBasicMaterial({
-    map: tex, transparent: true, opacity: 0, depthWrite: false, toneMapped: false,
-    blending: THREE.AdditiveBlending
-  });
-  var trail = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), trailMat);
-  trail.frustumCulled = false;
-  // The band under the car: a wide, faint plane that reads as the light the car drags over the road.
-  var bandMat = new THREE.MeshBasicMaterial({
-    color: 0xff4fd8, transparent: true, opacity: 0, depthWrite: false, toneMapped: false,
-    blending: THREE.AdditiveBlending
-  });
-  var band = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bandMat);
-  band.frustumCulled = false;
-  group.add(trail);
-  group.add(band);
-  group.add(body);
-  neonState.group.add(group);
-  return {
-    group: group, canvas: canvas, texture: tex, body: body, bodyMat: bodyMat,
-    trail: trail, trailMat: trailMat, band: band, bandMat: bandMat,
-    text: '', aspect: 4, width: 1, height: 0.25
-  };
-}
-
-function neonRasterCar(car, text) {
-  if (!car || car.text === text) return;
-  car.text = text;
-  var pal = neonLyricPalette();
-  var px = 72;
-  var canvas = car.canvas;
-  var ctx = canvas.getContext('2d');
-  var font = '600 ' + px + 'px "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif';
-  ctx.font = font;
-  var width = Math.max(64, Math.ceil(ctx.measureText(text || ' ').width + px * 0.6));
-  var height = Math.ceil(px * 1.5);
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-    ctx = canvas.getContext('2d');
-  }
-  ctx.clearRect(0, 0, width, height);
-  ctx.font = font;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = px * 0.55;
-  ctx.fillStyle = pal.glow;
-  ctx.fillText(text || '', width / 2, height / 2);
-  ctx.shadowBlur = px * 0.18;
-  ctx.fillStyle = pal.main;
-  ctx.fillText(text || '', width / 2, height / 2);
-  car.texture.needsUpdate = true;
-  car.aspect = width / height;
-}
-
 function neonDisposeScene() {
   if (!neonState.group) return;
   neonState.cars.forEach(function (car) {
     if (car.texture) car.texture.dispose();
-    [car.body, car.trail, car.band].forEach(function (mesh) {
+    var meshes = [car.body, car.band];
+    (car.trails || []).forEach(function (slot) { meshes.push(slot.mesh); });
+    meshes.forEach(function (mesh) {
       if (mesh && mesh.geometry) mesh.geometry.dispose();
       if (mesh && mesh.material) mesh.material.dispose();
     });
@@ -678,48 +609,6 @@ function neonUpdateCamera() {
   // The road's vanishing point is the origin; the eye sits a little above it and looks slightly down.
   camera.position.set(0, 0, 0);
   if (camera.lookAt) camera.lookAt(0, 0, -10);
-}
-
-function neonStepCars(nowSec, dt) {
-  var lines = neonActiveLines();
-  while (neonState.cars.length < lines.length) neonState.cars.push(neonMakeCar());
-  while (neonState.cars.length > lines.length) {
-    var extra = neonState.cars.pop();
-    if (extra.texture) extra.texture.dispose();
-    neonState.group.remove(extra.group);
-  }
-  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0;
-  var kick = (typeof smoothBass !== 'undefined' && isFinite(smoothBass)) ? Number(smoothBass) : 0;
-  var boost = 1 + neonParam('beatKick') * (beat * 0.6 + kick * 0.4);
-  for (var i = 0; i < lines.length; i++) {
-    var car = neonState.cars[i];
-    var line = lines[i];
-    neonRasterCar(car, line.text);
-    // 0 at the line's start (far away), 1 when it ends (passing the lens). The car is on the road
-    // the whole time, so its depth is what moves - not its screen position.
-    var span = Math.max(0.2, line.end - line.start);
-    var t = neonClamp01((nowSec - line.start) / span);
-    var z = NEON_FAR_Z + (NEON_NEAR_Z - NEON_FAR_Z) * t;
-    var size = neonParam('carSize') * (line.current ? 1 : 0.72);
-    var height = Math.max(0.05, size * 0.55);
-    var width = height * Math.max(1, car.aspect);
-    var ride = neonParam('carRideHeight');
-    car.group.visible = true;
-    car.group.position.set(0, ride, z);
-    car.body.scale.set(width, height, 1);
-    car.bodyMat.opacity = 0.55 + 0.45 * (line.current ? 1 : 0.6);
-    // The afterimage sits behind the car on the road and fades with distance from it.
-    var trailLen = neonParam('trailLength') * Math.max(0.3, size);
-    car.trail.position.set(0, 0, -trailLen);
-    car.trail.scale.set(width * 0.9, height * 0.55, 1);
-    car.trailMat.opacity = neonClamp01(neonParam('trailOpacity') * (0.4 + 0.6 * t));
-    // The light band: a wide, thin glow under the car that flashes on the beat.
-    car.band.position.set(0, -height * 0.62, 0);
-    car.band.scale.set(width * 1.5, Math.max(0.02, height * 0.13), 1);
-    car.bandMat.opacity = neonClamp01(neonParam('lightBand') * (0.25 + 0.75 * beat) * boost);
-    car.bandMat.color.setRGB(1.0, 0.35, 0.85);
-  }
-  return boost;
 }
 
 function neonClamp01(v) {

@@ -38,6 +38,7 @@ function parseArgs(argv) {
     maxPixel: Number(get('maxPixel') || DEFAULT_MAX_PIXEL),
     mutate: get('mutate'),
     out: get('out'),
+    timing: argv.includes('--timing'),
     markdown: argv.includes('--markdown')
   };
 }
@@ -159,7 +160,45 @@ const PAGE_RUN = String.raw`async function (opts) {
     a.canvas.remove();
     b.canvas.remove();
   }
-  return { ok: true, results };
+  // Optional: how long one full frame of the port costs on this GPU. gl.finish() after every draw
+  // keeps the timer on the GPU work itself instead of on command submission.
+  let timing = null;
+  if (opts.timing) {
+    const tw = opts.timingSize[0], th = opts.timingSize[1];
+    const c = makeCanvas(tw, th);
+    const p = compile(c.gl, opts.portFrag, true);
+    if (!p.ok) return { ok: false, error: 'port failed to compile (timing): ' + p.log };
+    const gl = c.gl;
+    gl.viewport(0, 0, tw, th);
+    gl.useProgram(p.program);
+    gl.uniform3f(gl.getUniformLocation(p.program, 'iResolution'), tw, th, 1);
+    gl.uniform4f(gl.getUniformLocation(p.program, 'iMouse'), 0, 0, 0, 0);
+    for (const [name, value] of Object.entries(Object.assign({}, U, C))) {
+      const loc = gl.getUniformLocation(p.program, name);
+      if (!loc) continue;
+      if (Array.isArray(value)) gl.uniform3f(loc, value[0], value[1], value[2]);
+      else gl.uniform1f(loc, value);
+    }
+    const timeLoc = gl.getUniformLocation(p.program, 'iTime');
+    const samples = [];
+    for (let f = 0; f < 90; f++) {
+      gl.uniform1f(timeLoc, f * 0.016);
+      const t0 = performance.now();
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.finish();
+      const dt = performance.now() - t0;
+      if (f >= 10) samples.push(dt);
+    }
+    samples.sort((a, b) => a - b);
+    const pick = (q) => samples[Math.min(samples.length - 1, Math.floor(samples.length * q))];
+    timing = {
+      size: tw + 'x' + th, frames: samples.length,
+      median: Math.round(pick(0.5) * 100) / 100,
+      p95: Math.round(pick(0.95) * 100) / 100
+    };
+    c.canvas.remove();
+  }
+  return { ok: true, results, timing };
 }`;
 
 function prepare(appRoot) {
@@ -222,6 +261,7 @@ async function main() {
   const res = await win.webContents.executeJavaScript(
     '(' + PAGE_RUN + ')(' + JSON.stringify({
       sizes: args.sizes, times: args.times,
+      timing: args.timing, timingSize: [1280, 720],
       refFrag: await win.webContents.executeJavaScript('window.__refSrc'),
       portFrag: mutated
     }) + ')', true);
@@ -251,11 +291,15 @@ async function main() {
     app.exit(1);
     return;
   }
+  if (res.timing) {
+    console.log('neon-fidelity: one frame at ' + res.timing.size + '  median=' + res.timing.median
+      + 'ms  p95=' + res.timing.p95 + 'ms  (' + res.timing.frames + ' frames, gl.finish per draw)');
+  }
   const pass = worstMean <= args.maxDiff && worstMax <= args.maxPixel;
   console.log('neon-fidelity: worst mean ' + worstMean + ' (limit ' + args.maxDiff
     + '), worst pixel ' + worstMax + ' (limit ' + args.maxPixel + ')');
   const out = args.out ? path.resolve(appRoot, args.out) : path.join(scratch.dir, 'result.json');
-  fs.writeFileSync(out, JSON.stringify({ mutate: args.mutate || null, maxDiff: args.maxDiff, maxPixel: args.maxPixel, worstMean, worstMax, results: res.results }, null, 2), 'utf8');
+  fs.writeFileSync(out, JSON.stringify({ mutate: args.mutate || null, maxDiff: args.maxDiff, maxPixel: args.maxPixel, worstMean, worstMax, timing: res.timing || null, results: res.results }, null, 2), 'utf8');
   console.log('neon-fidelity: ' + (pass ? 'PASS' : 'FAIL') + ' -> ' + out);
   win.destroy();
   app.exit(pass ? 0 : 1);

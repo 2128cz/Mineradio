@@ -105,6 +105,7 @@
     'js/modules/07-fx/10-pv-tuning.js',
     'js/modules/07-fx/11-halo-tuning.js',
     'js/modules/07-fx/12-blackhole-tuning.js',
+    'js/modules/07-fx/14-neon-tuning.js',
     'js/modules/08-account/00-update-preview.js',
     'js/modules/08-account/00-login-easter-egg.js',
     'js/modules/08-account/01-login-modal-utils.js',

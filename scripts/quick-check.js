@@ -1116,7 +1116,7 @@ function runHaloPresetCheck() {
   // was really the claim "the ring is the newest preset" and stopped being true on purpose.
   const declaredIndexes = {};
   ['00-state/00-core-stores.js', '02-visual/01-float-skull-backcover.js', '02-visual/17-pv-preset.js',
-    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js'].forEach(function (rel) {
+    '02-visual/18-halo-ring-preset.js', '02-visual/19-galaxy-blackhole-preset.js', '02-visual/21-neon-fuji-preset.js'].forEach(function (rel) {
     const text = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', rel), 'utf8');
     const re = /\b([A-Z][A-Z0-9_]*_PRESET_INDEX) = (\d+)/g;
     let found;
@@ -1920,6 +1920,170 @@ function runBlackHolePresetCheck() {
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Galactic black hole wired: preset ${index}, scene->target->quad lens, ${schema.size} knobs, lyric flight from the sides.`);
+}
+
+// The Japanese neon road (preset 16): the Cyber Fuji shader ported function by function, the
+// reference's literals as the knob defaults (the pixel bench judges that), and lyric rows that
+// ride the road - position and size both 1/depth, the afterimage as copies of the same text.
+function runNeonFujiPresetCheck() {
+  logStep('Neon Fuji preset (ported shader, reference defaults, perspective lyric cars, knobs)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '21-neon-fuji-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '14-neon-tuning.js');
+  const fixturePath = path.join(appRoot, 'tests', 'fixtures', 'neon-fuji-reference.glsl');
+  const portTest = path.join(appRoot, 'tests', 'neon-port.test.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/21-neon-fuji-preset.js is missing; preset 16 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/14-neon-tuning.js is missing; the road would have knobs without a store');
+  if (!fs.existsSync(fixturePath)) fail('tests/fixtures/neon-fuji-reference.glsl is missing; there is nothing left to compare the port against');
+  if (!fs.existsSync(portTest)) fail('tests/neon-port.test.js is missing; the port would only be judged by eye');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const index = Number((text.match(/NEON_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 16) fail(`NEON_PRESET_INDEX must be 16 (found ${index}) and is never renumbered`);
+  if (loaderText.indexOf("'js/modules/02-visual/21-neon-fuji-preset.js'") < 0) {
+    fail('21-neon-fuji-preset.js must be listed in index-loader.js; a module that is never loaded is dead code');
+  }
+  if (loaderText.indexOf("'js/modules/07-fx/14-neon-tuning.js'") < 0) {
+    fail('14-neon-tuning.js must be listed in index-loader.js; without it the road has no knobs');
+  }
+  if (loaderText.indexOf("'js/modules/02-visual/20-shadertoy-driver.js'") < 0) {
+    fail('the Shadertoy driver must be loaded, or the ported fragment cannot compile');
+  }
+  if (!/日本霓虹/.test(archiveText) || !/NEON FUJI/.test(archiveText)) {
+    fail('the neon road must be a labelled, selectable card');
+  }
+  // The ported composition, by its own expressions: these are the ones a "looks close enough"
+  // rewrite drops first, and the ones the pixel bench would then have nothing to protect.
+  for (const [pattern, why] of [
+    [/uRoadDepth \/ \(abs\(uv\.y - uHorizon\) \+ 0\.05\)/, 'the road has to keep the reference 3/(|dy|+0.05) perspective'],
+    [/smoothstep\(uSunRadius, uSunRadius - 0\.01, length\(uv\)\)/, 'the sun disc has to keep the reference falloff'],
+    [/pow\(uv\.y \* uv\.y, 2\.1\)/, 'the mountain width has to keep the reference power'],
+    [/float opSmoothUnion\(float d1, float d2, float k\)/, 'the cloud union has to be the reference SDF helper'],
+    [/float sdCloud\(in vec2 p, in vec2 a1, in vec2 b1, in vec2 a2, in vec2 b2, float w\)/, 'the cloud has to be the reference SDF'],
+    [/col \+= fog \* fog \* fog \* uFogGain;/, 'the fog has to be added after the composition, with its reference cube'],
+    [/col = mix\(vec3\(col\.r, col\.r, col\.r\) \* 0\.5, col, battery \* 0\.7\);/, 'the battery desaturation has to stay the last step'],
+    [/mainImage\(c, gl_FragCoord\.xy\)/, 'the fragment needs its Shadertoy entry point'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  // The defaults are the reference's own literals; neon-port.test.js pins all of them against the
+  // fixture, and this arm pins the few the picture is least forgiving about.
+  for (const [literal, why] of [
+    [/battery: \{ def: 1\.0,/, 'battery must default to the reference 1.0'],
+    [/horizon: \{ def: -0\.2,/, 'the horizon must default to the reference -0.2'],
+    [/sunRadius: \{ def: 0\.3,/, 'the sun radius must default to the reference 0.3'],
+    [/sunStripes: \{ def: 100,/, 'the stripe count must default to the reference 100'],
+    [/fujiWidth: \{ def: 1\.75,/, 'the mountain width must default to the reference 1.75'],
+    [/cloudWidth: \{ def: 0\.075,/, 'the cloud width must default to the reference 0.075'],
+  ]) {
+    if (!literal.test(text)) fail(why);
+  }
+  // The lyrics ride the road: one t drives both the distance and the screen size, so the motion
+  // reads as perspective; and the afterimage is copies of the same text, not a shader smear.
+  for (const [pattern, why] of [
+    [/var d = Math\.min\(400, near \/ tt\);/, 'the car distance has to be 1/t'],
+    [/neonParam\('carSize'\) \* tt \* 2 \* d \* tanHalf/, 'the car size has to be 1/depth, so it grows from zero at the horizon'],
+    [/car\.body\.position\.set\(0, yWorld, -d\);/, 'the car has to be placed on the road by that depth'],
+    [/var tk = t - \(k \+ 1\) \* trailGap;/, 'the afterimage has to be earlier points on the same road'],
+    [/\(car\.trails \|\| \[\]\)\.forEach\(/, 'leaving the preset has to dispose the afterimage copies'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  // One declaration each. The linear-depth set once shadowed the perspective one, so the shipped
+  // function was not the one the bench and the probes were reading; a duplicate must fail here.
+  for (const name of ['neonMakeCar', 'neonRasterCar', 'neonStepCars', 'neonPlaceCar', 'neonDisposeScene']) {
+    const count = (text.match(new RegExp('function ' + name + '\\(', 'g')) || []).length;
+    if (count !== 1) fail(`${name} must be declared exactly once (found ${count}): the later declaration wins and the earlier one is dead`);
+  }
+  if (!/new THREE\.CanvasTexture\(canvas\)/.test(text)) fail('the afterimage copies have to share one rasterised text texture');
+  if (!/applyNeonPresetNow\(prev, p\)/.test(gridText)) fail('selecting the preset must build the scene and leaving it must release it');
+  if (!/updateNeonLayer\(now, dt\)/.test(loopText)) fail('the main loop must step the neon road, or nothing moves');
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'neon-layer'/.test(ownerBlock)) fail('the preset must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the neon layer must take ${layer} over: only one render stream may output`);
+  }
+  if (!/cars: neonState\.cars\.length/.test(text) || !/frames: neonState\.frames/.test(text)) {
+    fail('neonStatus() must report the cars and frames, or the preset cannot be read back live');
+  }
+  // Knobs: one row per schema entry, each in a .fx-slider row (which carries the per-field reset),
+  // and a console group listing them all. The bool is one of the console's switches.
+  const schema = new Map();
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(text))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 30) fail(`the neon knob schema must be complete (found ${schema.size})`);
+  for (const [key, spec] of schema) {
+    if (spec.kind === 'bool') {
+      const id = 't-neon' + key;
+      if (!htmlText.includes('id="' + id + '"')) fail(`the switch ${id} is missing from index.html`);
+      if (!htmlText.includes(`toggleNeonTuning('${key}')`)) fail(`the switch ${id} must call toggleNeonTuning('${key}')`);
+      if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the switch ${key} must be listed in the console 日本霓虹 group`);
+      continue;
+    }
+    const id = 'fx-neon' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setNeonTuning('${key}', this.value)`)) fail(`the slider ${id} must call setNeonTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console 日本霓虹 group`);
+  }
+  if (!/key: 'neon'/.test(consoleText) || !/title: '日本霓虹'/.test(consoleText)) {
+    fail('the visual console needs a 日本霓虹 group in the 动效 tab');
+  }
+  if (!/presets: \[NEON_PRESET_INDEX\]/.test(consoleText)) {
+    fail("the 日本霓虹 group has to carry presets: [NEON_PRESET_INDEX], or it shows while another preset is playing");
+  }
+  if (!/mineradio-neon-tuning-v1/.test(tuningText) || !/function bindNeonTuningResetButtons\(/.test(tuningText)) {
+    fail('the neon knobs need their own store and one reset button per row');
+  }
+  for (const doc of ['NOTICE.md', path.join('docs', 'THIRD_PARTY_PORTS.md'),
+    path.join('public', 'js', 'modules', '02-visual', '21-neon-fuji-preset.LICENSE.txt')]) {
+    const body = fs.readFileSync(path.join(appRoot, doc), 'utf8');
+    if (!/Cyber Fuji 2020/.test(body) || !/kaiware007/.test(body) || !/CC BY 3\.0/.test(body)) {
+      fail(`${doc} must keep the reference attribution: Cyber Fuji 2020 / kaiware007 / CC BY 3.0`);
+    }
+  }
+  const result = spawnSync(process.execPath, ['--test', portTest], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`the neon port regression failed: ${rel(portTest)}`);
+  }
+  process.stdout.write(result.stdout || '');
+  const roadTest = path.join(appRoot, 'tests', 'neon-road-placement.test.js');
+  if (!fs.existsSync(roadTest)) fail('tests/neon-road-placement.test.js is missing; the camera-space size would only be checked by shape');
+  const road = spawnSync(process.execPath, ['--test', roadTest], { cwd: appRoot, encoding: 'utf8' });
+  if (road.status !== 0) {
+    process.stdout.write(road.stdout || '');
+    process.stderr.write(road.stderr || '');
+    fail(`the neon road regression failed: ${rel(roadTest)}`);
+  }
+  process.stdout.write(road.stdout || '');
+  const carsTest = path.join(appRoot, 'tests', 'neon-cars.test.js');
+  if (!fs.existsSync(carsTest)) fail('tests/neon-cars.test.js is missing; "two lyric lines make two cars" would only be checked by eye');
+  const cars = spawnSync(process.execPath, ['--test', carsTest], { cwd: appRoot, encoding: 'utf8' });
+  if (cars.status !== 0) {
+    process.stdout.write(cars.stdout || '');
+    process.stderr.write(cars.stderr || '');
+    fail(`the neon car regression failed: ${rel(carsTest)}`);
+  }
+  process.stdout.write(cars.stdout || '');
+  console.log(`[OK] Neon Fuji wired: preset ${index}, ported fragment, ${schema.size} knobs, lyric cars by 1/depth.`);
 }
 
 function runFeatureIndexCheck() {
@@ -7628,6 +7792,7 @@ async function main() {
   runBeatTempoCeilingCheck();
   runHaloPresetCheck();
   runBlackHolePresetCheck();
+  runNeonFujiPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();
