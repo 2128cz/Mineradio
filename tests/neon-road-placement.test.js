@@ -52,6 +52,7 @@ const arrival = place(1);
 assert.ok(Math.abs(arrival.screenFraction - defaults.carSize) < 1e-9,
   `t=1 must be the standard size (got ${arrival.screenFraction}, want ${defaults.carSize})`);
 assert.ok(Math.abs(arrival.yNdc - arrivalY) < 1e-9, `t=1 must sit carDrop below the horizon (got ${arrival.yNdc})`);
+assert.ok(Math.abs(arrival.yNdc) < 0.12, 'the readable pass has to be near the middle of the screen, not at the bottom');
 assert.equal(arrival.d, near);
 assert.equal(arrival.z, -near);
 assert.ok(Math.abs(arrival.fade - 1) < 1e-9 && Math.abs(arrival.opacity - 1) < 1e-9, 'arrival is fully lit and opaque');

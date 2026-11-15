@@ -85,34 +85,37 @@ const run = new Function(
 function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
 
 // ---------------------------------------------------------------- 1) entrance timing
-// carLead 2.4s before t=10 would be 7.6; the 0.5s grid behind it is 7.5, so the line enters on a
-// beat and still lands exactly on its own timestamp. The travel is (elapsed share)^(1+accel),
-// so at the midpoint of the lead it is far from halfway in - the run accelerates.
+// carLead is -1s: the readable pass (t=1) is one second AFTER line 10 starts, i.e. halfway
+// through a two-second line. The approach is 2.4s, so the entrance is 8.6s, snapped back to 8.5
+// on the 0.5s beat grid. The travel is (share)^(1+accel), so it hangs far away, then whips in.
 {
-  const far = at(7.4);
-  assert.equal(far.length, 0, 'before the beat the next line is not on the road yet');
-  const entering = at(8.75);
+  const far = at(8.4);
+  assert.equal(far.length, 0, 'before the entrance beat the next line is not on the road yet');
+  const entering = at(9.75);
   assert.equal(entering.length, 1, 'the line enters while it is still far away');
   assert.equal(entering[0].current, true);
-  assert.ok(Math.abs(entering[0].enterAt - 7.5) < 1e-9, 'the entrance must snap back onto the beat grid');
+  assert.ok(Math.abs(entering[0].enterAt - 8.5) < 1e-9, 'the entrance must snap back onto the beat grid');
+  assert.ok(Math.abs(entering[0].arrivalAt - 11) < 1e-9, 'the readable pass is the line start plus the offset');
   const half = Math.pow(0.5, 1 + defaults.carAccel);
   assert.ok(Math.abs(entering[0].travel - half) < 1e-9,
-    `half the lead is only ${half} of the travel with accel ${defaults.carAccel}`);
-  assert.ok(entering[0].travel < 0.35, 'the text hangs far away through the first half of the lead');
+    `half the approach is only ${half} of the travel with accel ${defaults.carAccel}`);
+  assert.ok(entering[0].travel < 0.35, 'the text hangs far away through the first half of the approach');
 }
 {
-  const arrival = at(10);
-  assert.equal(arrival[0].travel, 1, 'arrival is the line timestamp, t=1');
-  const past = at(11.2);
-  assert.ok(past[0].travel > 2, 'after its timestamp the line keeps coming, and accelerates');
-  assert.equal(past.length, 2, 'the next line is already on the road by then');
-  assert.equal(past[1].current, false);
+  const middle = at(11);
+  assert.equal(middle[0].travel, 1, 'halfway through the sung line the text is at the readable pass, t=1');
+  const lineEnd = at(12);
+  const faceT = run.neonFadeTravel();
+  assert.ok(Math.abs(lineEnd[0].travel - faceT) < 1e-9,
+    'at the end of the line the text has reached the face (the fade starts)');
+  assert.equal(lineEnd.length, 2, 'the next line is already on the road by then');
+  assert.equal(lineEnd[0].current, false, 'the finished line is now the one leaving the lens');
+  assert.equal(lineEnd[1].current, true, 'and the next line is the sung one');
 }
 {
   const gone = at(12.5);
   const keys = gone.map((line) => line.key);
-  assert.equal(gone.length, 2, 'the line past its life is gone, the next two remain');
-  assert.ok(gone.every((line) => line.travel < run.neonExitTravel()), 'nothing visible has passed the end of the fade');
+  assert.equal(gone.length, 1, 'the line past its life is gone; the next one is still approaching');
   assert.ok(!keys.some((key) => Math.abs(Number(key.slice(1)) - 10) < 1e-6), 'the first line must be gone');
 }
 {
@@ -193,7 +196,7 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   // Walk frame by frame past the end of the first line. Its text goes away, but the stamps it left
   // behind are still fading - the car has to stay as a ghost until the last one expires.
   let now = audio.currentTime;
-  for (; now < 11.55; now += 0.07) {
+  for (; now < 12.5; now += 0.07) {
     audio.currentTime = now;
     run.neonStepCars(now, 0.07);
   }
@@ -201,7 +204,7 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
   assert.ok(ghost, 'the car must survive its line while its projections are still fading');
   assert.equal(ghost.body.visible, false, 'the text itself is gone');
   assert.ok(ghost.trails.some((slot) => slot.bornAt >= 0), 'the stamps are still there');
-  for (let f = 0; f < 12; f++) {
+  for (let f = 0; f < 14; f++) {
     now += 0.07;
     audio.currentTime = now;
     run.neonStepCars(now, 0.07);
@@ -210,6 +213,6 @@ function at(now) { audio.currentTime = now; return run.neonActiveLines(); }
     'once the last stamp expires the ghost car is disposed');
 }
 
-console.log('OK neon-cars: beat-snapped entrance at 7.5s, accel ' + defaults.carAccel
-  + ' (half lead -> t=' + Math.pow(0.5, 1 + defaults.carAccel).toFixed(2) + '), '
+console.log('OK neon-cars: readable pass at the middle of the line (arrival t=1 at 11s), accel '
+  + defaults.carAccel + ' (half approach -> t=' + Math.pow(0.5, 1 + defaults.carAccel).toFixed(2) + '), '
   + neonState.cars.length + ' car(s), fade ends at t=' + run.neonExitTravel().toFixed(2));

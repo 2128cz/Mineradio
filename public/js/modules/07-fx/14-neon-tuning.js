@@ -8,7 +8,8 @@
 // renders with exactly this parameter set, so a default here that drifts from the reference would
 // show up there rather than in someone's eyes.
 
-var NEON_TUNING_STORE_KEY = 'mineradio-neon-tuning-v1';
+var NEON_TUNING_STORE_KEY = 'mineradio-neon-tuning-v2';
+var NEON_TUNING_LEGACY_KEY = 'mineradio-neon-tuning-v1';
 
 function neonTuningClamp(key, value) {
   var spec = NEON_TUNING_SCHEMA[key];
@@ -17,10 +18,26 @@ function neonTuningClamp(key, value) {
   return Math.min(spec.max, Math.max(spec.min, next));
 }
 
+// v1's carLead was "how long the approach is"; v2's is a signed arrival offset. Carry the old
+// number over to carApproach so his tuning survives the change instead of being reinterpreted as
+// "arrive 2.4 s early", and start the offset on the new readable-pass default.
+function neonTuningMigrate(saved) {
+  if (!saved || saved.__model === 2) return saved;
+  var legacyLead = Number(saved.carLead);
+  if (isFinite(legacyLead) && legacyLead > 0 && saved.carApproach === undefined) saved.carApproach = legacyLead;
+  saved.carLead = NEON_TUNING_SCHEMA.carLead.def;
+  saved.__model = 2;
+  return saved;
+}
+
 var neonTuning = (function () {
   var out = {};
   var saved = null;
   try { saved = JSON.parse(window.localStorage.getItem(NEON_TUNING_STORE_KEY) || 'null'); } catch (_) {}
+  if (!saved) {
+    try { saved = JSON.parse(window.localStorage.getItem(NEON_TUNING_LEGACY_KEY) || 'null'); } catch (_) {}
+  }
+  saved = neonTuningMigrate(saved);
   Object.keys(NEON_TUNING_SCHEMA).forEach(function (key) {
     var raw = saved && saved[key] !== undefined ? saved[key] : NEON_TUNING_SCHEMA[key].def;
     var next = neonTuningClamp(key, raw);
@@ -121,6 +138,8 @@ function resetNeonTuning() {
 }
 
 function initNeonTuningControls() {
+  // Persist the migration once, so a v1 archive is not re-read (and re-migrated) every launch.
+  neonTuningSave();
   bindNeonTuningResetButtons();
   neonTuningSyncInputs();
 }

@@ -1980,9 +1980,12 @@ function runNeonFujiPresetCheck() {
     [/sunStripes: \{ def: 100,/, 'the stripe count must default to the reference 100'],
     [/fujiWidth: \{ def: 1\.75,/, 'the mountain width must default to the reference 1.75'],
     [/cloudWidth: \{ def: 0\.075,/, 'the cloud width must default to the reference 0.075'],
-    [/carLead: \{ def: 2\.4,/, 'the car lead has to exist and default to a visible approach'],
+    [/carLead: \{ def: -1\.0,/, 'the arrival offset has to default to a negative (late) pass so mid-line lands at the readable size'],
+    [/carApproach: \{ def: 2\.4,/, 'the approach time has to be its own knob'],
     [/carAccel: \{ def: 0\.9,/, 'the accelerating run has to exist and default on'],
     [/beatSync: \{ def: 1,/, 'the beat-synced entrance has to default on'],
+    [/trailCount: \{ def: 12, min: 0, max: 24,/, 'the afterimage pool has to be deep enough that a large count does not expire early'],
+    [/var NEON_TRAIL_MAX = 24;/, 'the pool ceiling has to match the knob ceiling'],
   ]) {
     if (!literal.test(text)) fail(why);
   }
@@ -1993,8 +1996,10 @@ function runNeonFujiPresetCheck() {
     [/function neonBeatGrid\(/, 'the entrance has to read the song tempo, not a fixed offset'],
     [/function neonEntranceAt\(startAt, lead, grid\)/, 'the entrance time has to be its own function, so a beat snap is testable'],
     [/Math\.floor\(\(enterAt - grid\.origin\) \/ grid\.step\) \* grid\.step/, 'the entrance has to snap back onto the beat grid'],
-    [/var p = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the line timestamp'],
-    [/Math\.pow\(p, 1 \+ Math\.max\(0, neonParam\('carAccel'\)\)\)/, 'the run has to accelerate instead of advancing linearly'],
+    [/var p = \(now - enterAt\) \/ dur;/, 'the travel clock has to run from the snapped entrance to the readable pass'],
+    [/var arrivalAt = start - arrivalOffset;/, 'the arrival offset must be signed, so a negative lead lands the pass after the line starts'],
+    [/Math\.pow\(p, accel\)/, 'the approach has to accelerate instead of advancing linearly'],
+    [/t = 1 \+ \(faceT - 1\) \* Math\.pow\(q, accel\);/, 'after the pass the run has to be aimed at the end of the line - the face at line end'],
     [/Math\.max\(0, tt - 1\)/, 'the path has to keep going after arrival'],
     [/neonParam\('carRise'\) \* after \* after/, 'the glyphs have to sweep up over the camera, not off the bottom'],
     [/var d = Math\.max\(near \* 0\.02, near \* Math\.pow\(ratio, 1 - tt\)\);/, 'the run has to be exponential in t so it keeps coming past the near plane'],
@@ -2065,7 +2070,7 @@ function runNeonFujiPresetCheck() {
   if (!/presets: \[NEON_PRESET_INDEX\]/.test(consoleText)) {
     fail("the 日本霓虹 group has to carry presets: [NEON_PRESET_INDEX], or it shows while another preset is playing");
   }
-  if (!/mineradio-neon-tuning-v1/.test(tuningText) || !/function bindNeonTuningResetButtons\(/.test(tuningText)) {
+  if (!/mineradio-neon-tuning-v2/.test(tuningText) || !/function bindNeonTuningResetButtons\(/.test(tuningText)) {
     fail('the neon knobs need their own store and one reset button per row');
   }
   for (const doc of ['NOTICE.md', path.join('docs', 'THIRD_PARTY_PORTS.md'),

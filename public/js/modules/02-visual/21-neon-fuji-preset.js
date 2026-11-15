@@ -59,14 +59,17 @@ var NEON_TUNING_SCHEMA = {
   carSize: { def: 0.10, min: 0.02, max: 0.4, kind: 'ratio', rebuild: 'live' },
   carDepthNear: { def: 6, min: 1, max: 40, kind: 'unit', rebuild: 'live' },
   carDepthFar: { def: 90, min: 20, max: 400, kind: 'unit', rebuild: 'live' },
-  carDrop: { def: 0.22, min: 0.02, max: 0.6, kind: 'ratio', rebuild: 'live' },
-  carLead: { def: 2.4, min: 0.4, max: 6, kind: 'sec', rebuild: 'live' },
+  // Negative = the readable pass sits that many seconds after the line starts, so a line sung for
+  // a while is already in the middle of the screen half way through; positive = before its line.
+  carLead: { def: -1.0, min: -3, max: 6, kind: 'sec', rebuild: 'live' },
+  carApproach: { def: 2.4, min: 0.4, max: 6, kind: 'sec', rebuild: 'live' },
+  carDrop: { def: -0.15, min: -0.6, max: 0.6, kind: 'ratio', rebuild: 'live' },
   carAccel: { def: 0.9, min: 0, max: 2.5, kind: 'ratio', rebuild: 'live' },
   carRise: { def: 0.9, min: 0, max: 3, kind: 'unit', rebuild: 'live' },
   carExitSize: { def: 0.9, min: 0.4, max: 3, kind: 'ratio', rebuild: 'live' },
   carFadeTravel: { def: 0.55, min: 0.1, max: 2, kind: 'unit', rebuild: 'live' },
   beatSync: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
-  trailCount: { def: 8, min: 0, max: 12, kind: 'count', rebuild: 'live' },
+  trailCount: { def: 12, min: 0, max: 24, kind: 'count', rebuild: 'live' },
   trailInterval: { def: 0.07, min: 0.02, max: 0.4, kind: 'sec', rebuild: 'live' },
   trailLife: { def: 0.6, min: 0.1, max: 2, kind: 'sec', rebuild: 'live' },
   trailOpacity: { def: 0.35, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
@@ -426,9 +429,12 @@ function neonActiveLines() {
   var lines = (typeof lyricsLines !== 'undefined' && lyricsLines) ? lyricsLines : null;
   if (!lines || !lines.length) return [];
   var now = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? audio.currentTime : 0;
-  var lead = neonParam('carLead');
+  var arrivalOffset = neonParam('carLead');
+  var approach = Math.max(0.4, neonParam('carApproach'));
+  var accel = 1 + Math.max(0, neonParam('carAccel'));
   var grid = neonParam('beatSync') > 0 ? neonBeatGrid() : { step: 0, origin: 0, source: 'sync off' };
   var exitT = neonExitTravel();
+  var faceT = neonFadeTravel();
   var idx = 0;
   for (var i = 0; i < lines.length; i++) {
     var at = neonLineClock(lines[i]);
@@ -441,19 +447,34 @@ function neonActiveLines() {
     var start = neonLineClock(line);
     if (!isFinite(start)) continue;
     var next = lines[idx + k + 1];
-    var end = next ? neonLineClock(next) : start + Math.max(0.6, Number(line.duration) || 4);
-    if (!isFinite(end) || end <= start) end = start + Math.max(0.6, Number(line.duration) || 4);
-    var enterAt = neonEntranceAt(start, lead, grid);
-    var dur = Math.max(0.35, start - enterAt);
-    // The run is not evenly spaced: p is the share of the lead time that has passed (1 at the
-    // line's timestamp) and the travel is its (1+accel) power, so the text hangs far away and then
-    // whips in - and keeps accelerating after arrival instead of coasting.
+    var nextStart = next ? neonLineClock(next) : NaN;
+    // The sung span is the line's own duration when the parser gave one; otherwise it runs until
+    // the next line. This is the "line is over" moment the run is aimed at.
+    var span = Number(line.duration) > 0.15 ? Number(line.duration)
+      : (isFinite(nextStart) && nextStart > start ? nextStart - start : 4);
+    var end = start + Math.max(0.6, span);
+    // The readable pass: t=1 when the text is carLead seconds before the line start; a negative
+    // lead puts it that many seconds AFTER the start, so the usual setting lands the middle of a
+    // sung line in the middle of the screen.
+    var arrivalAt = start - arrivalOffset;
+    var enterAt = neonEntranceAt(arrivalAt, approach, grid);
+    var dur = Math.max(0.35, arrivalAt - enterAt);
     var p = (now - enterAt) / dur;
-    var t = p > 0 ? Math.pow(p, 1 + Math.max(0, neonParam('carAccel'))) : p;
+    var t;
+    if (p <= 1) {
+      // The approach accelerates: p is the share of the lead and the travel is its power, so the
+      // line hangs far away and then whips in.
+      t = p > 0 ? Math.pow(p, accel) : p;
+    } else {
+      // After the readable pass the run is aimed at the end of the line: at line end it reaches the
+      // face (carExitSize), which is the moment only the middle of the glyphs still fits the frame.
+      var q = (now - arrivalAt) / Math.max(0.25, end - arrivalAt);
+      t = 1 + (faceT - 1) * Math.pow(q, accel);
+    }
     if (!(t > 0) || t >= exitT) continue;
     out.push({
       key: 'l' + start.toFixed(3), text: neonLineText(line), start: start, end: end,
-      enterAt: enterAt, travel: t, current: k === 0
+      enterAt: enterAt, arrivalAt: arrivalAt, travel: t, current: k === 0
     });
   }
   return out;
@@ -477,7 +498,7 @@ function neonLyricPalette() {
   return palette;
 }
 
-var NEON_TRAIL_MAX = 12;
+var NEON_TRAIL_MAX = 24;
 
 function neonMakeCar() {
   var group = new THREE.Group();
