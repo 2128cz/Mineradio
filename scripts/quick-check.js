@@ -2351,6 +2351,7 @@ function runNyanTownPresetCheck() {
     [/function nyanTownLyricFlight\(/, 'the flight has to be one pure helper so its timing can be checked'],
     [/function nyanTownScenePose\(/, 'the town camera needs a replicated pose, or the lyric plates cannot align with the view'],
     [/function nyanTownSkyPoint\(/, 'the sky-band placement has to be one pure helper'],
+    [/var lookGate = /, 'the band has to be gated by the view pitch, or it would hang in frame while looking down'],
     [/nyanTownApplyLyricCamera\(pose\)/, 'the lyric camera has to take the town pose every frame'],
     [/lyricFontCss\(/, 'the plates have to read the console font/weight, not a hard-coded face'],
     [/lyricLetterSpacingPx\(/, 'the plates have to honour the console letter spacing'],

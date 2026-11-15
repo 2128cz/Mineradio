@@ -44,7 +44,7 @@ var NYAN_TOWN_TUNING_SCHEMA = {
   // 0 keeps a whole line on one plate; >0 cuts it into that many characters per plate, each
   // taking its own sky lane so the pieces read as a stream instead of stacking on top of each other.
   lyricSplit: { def: 0, min: 0, max: 20, kind: 'count', rebuild: 'live' },
-  lyricSkyElev: { def: 36, min: 0, max: 65, kind: 'deg', rebuild: 'live' },
+  lyricSkyElev: { def: 18, min: 0, max: 40, kind: 'deg', rebuild: 'live' },
   lyricSize: { def: 1, min: 0.4, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricSpeed: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
   lyricLead: { def: 4.5, min: 0, max: 8, kind: 'sec', rebuild: 'live' },
@@ -857,7 +857,7 @@ function nyanTownLyricFlight(item, p, isCurrent, opts) {
   // The current line crosses a little slower and lower so it can be read while it is bright.
   var sweep = (isCurrent ? 34 : 46) * Math.max(0.15, spread);
   var azimuth = side * (sweep * 0.5 - sweep * t);
-  var lane = ((((idx * 37) % 100) / 100 - 0.5) * 3.4) * spread;
+  var lane = ((idx % 5) - 2) * 3.6 * spread;
   if (isCurrent) lane *= 0.35;
   var elevation = (Number(opts.elevation) || 0) + lane + (Number(opts.laneShift) || 0);
   var fadeIn = nyanTownClamp(t / 0.08, 0, 1);
@@ -910,20 +910,16 @@ function nyanTownScenePose(t, iTime, opts) {
   };
 }
 
-// Put a plate in the sky: the azimuth is measured around the camera's heading (so the band stays
-// in the part of the sky the town view faces), while the elevation is a true angle above the
-// world horizon — the band therefore enters and leaves the frame as the path camera raises its
-// head, and never hangs in front of the street.
+// Put a plate in the sky in the camera's own frame: the azimuth and elevation are angles around
+// the town view, so the band rides with the camera's movement instead of staying behind in world
+// space. Whether it is visible is left to the real depth test: when the view drops to the street,
+// the band's pixels sit behind the town and disappear; the sky only shows it while looking up.
 function nyanTownSkyPoint(pose, azimuth, elevation, distance) {
-  var fx = pose.forward[0], fz = pose.forward[2];
-  var fl = Math.sqrt(fx * fx + fz * fz) || 1;
-  var hx = fx / fl, hz = fz / fl;
-  var rx = -hz, rz = hx;
   var ce = Math.cos(elevation), se = Math.sin(elevation);
   var ca = Math.cos(azimuth), sa = Math.sin(azimuth);
-  var dx = (hx * ca + rx * sa) * ce;
-  var dy = se;
-  var dz = (hz * ca + rz * sa) * ce;
+  var dx = pose.forward[0] * ca * ce + pose.right[0] * sa * ce + pose.up[0] * se;
+  var dy = pose.forward[1] * ca * ce + pose.right[1] * sa * ce + pose.up[1] * se;
+  var dz = pose.forward[2] * ca * ce + pose.right[2] * sa * ce + pose.up[2] * se;
   var d = Math.max(0.01, Number(distance) || 1);
   return [pose.pos[0] + dx * d, pose.pos[1] + dy * d, pose.pos[2] + dz * d];
 }
@@ -1127,6 +1123,10 @@ function nyanTownUpdateLyrics(dt) {
   nyanTownApplyLyricCamera(pose);
   if (!nyanTownState.cameraInvQuat) nyanTownState.cameraInvQuat = new THREE.Quaternion();
   nyanTownState.cameraInvQuat.copy(nyanTownState.lyricCam.quaternion).invert();
+  // The band rides with the view, so it has to be gated by the view's own pitch: it fades in only
+  // while the town camera is looking up, and is gone (not just dimmed) when the street fills the frame.
+  var look = nyanTownClamp((pose.forward[1] - 0.02) / 0.16, 0, 1);
+  var lookGate = look * look * (3 - 2 * look);
   function plateIsCurrent(plate) { return plate.itemIndex === sung; }
   var rasterBudget = 2;
   for (var cr = 0; cr < rows.length && rasterBudget > 0; cr++) {
@@ -1182,7 +1182,7 @@ function nyanTownUpdateLyrics(dt) {
       spread: spread,
       roll: roll
     });
-    if (flight.alpha <= 0.001) {
+    if (flight.alpha <= 0.001 || lookGate <= 0.001) {
       piece.mesh.visible = false;
       piece.depthMesh.visible = false;
       continue;
@@ -1193,7 +1193,7 @@ function nyanTownUpdateLyrics(dt) {
     nyanTownFaceCamera(piece.mesh, nyanTownState.lyricCam, nyanTownState.cameraInvQuat);
     piece.mesh.rotateZ(flight.roll);
     piece.mesh.scale.set(width, height, 1);
-    piece.material.opacity = opacityKnob * flight.alpha;
+    piece.material.opacity = opacityKnob * flight.alpha * lookGate;
     piece.mesh.visible = true;
     piece.depthMesh.position.copy(piece.mesh.position);
     piece.depthMesh.quaternion.copy(piece.mesh.quaternion);
@@ -1446,7 +1446,8 @@ function nyanTownRenderLyricPasses() {
   var rows = nyanTownState.lyricRows;
   var any = false;
   for (var i = 0; i < rows.length; i++) if (rows[i].mesh.visible) { any = true; break; }
-  if (!any) return false;
+  // Clear even when nothing is live: a stale frame would otherwise sit in the targets and a probe
+  // (or a composite that reads them before the switch catches up) would still see old text.
   var clear = nyanTownState.clearColor || new THREE.Color();
   renderer.getClearColor(clear);
   var oldAlpha = renderer.getClearAlpha();

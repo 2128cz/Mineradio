@@ -207,15 +207,30 @@ assert.ok(Math.abs(pose.fovDeg - shaderFovDeg) < 1e-6, 'the reference fov is a h
 const intro = sandbox.nyanTownScenePose(0, 0, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
 assert.ok(intro.fovDeg < pose.fovDeg, 'the reference zooms out: iTime drives the intro fov, not the song clock');
 
-// Sky placement: elevation is measured above the world horizon (so the band leaves the frame when
-// the camera looks down), and every point rides on the camera's heading.
-const sky = sandbox.nyanTownSkyPoint(pose, 0, 30 * Math.PI / 180, 14);
-assert.ok(Math.abs(sky[1] - pose.pos[1] - Math.sin(30 * Math.PI / 180) * 14) < 1e-6,
-  'the elevation has to be a world angle above the horizon');
-const heading = [pose.forward[0], 0, pose.forward[2]];
-const hLen = Math.hypot(heading[0], heading[2]);
-assert.ok(Math.abs((sky[0] - pose.pos[0]) * heading[0] / hLen + (sky[2] - pose.pos[2]) * heading[2] / hLen
-  - Math.cos(30 * Math.PI / 180) * 14) < 1e-6, 'azimuth 0 sits over the camera heading');
+// Sky placement: the band lives in the camera's own frame, so its vertical angle is measured from
+// the view axis and it rides with the camera instead of staying behind in the world.
+const el = 18 * Math.PI / 180;
+const sky = sandbox.nyanTownSkyPoint(pose, 0, el, 14);
+for (let i = 0; i < 3; i++) {
+  const expected = pose.pos[i] + (pose.forward[i] * Math.cos(el) + pose.up[i] * Math.sin(el)) * 14;
+  assert.ok(Math.abs(sky[i] - expected) < 1e-9, 'azimuth 0 has to sit on the view axis, raised by the elevation');
+}
+const sidePoint = sandbox.nyanTownSkyPoint(pose, Math.PI / 2, 0, 14);
+for (let i = 0; i < 3; i++) {
+  assert.ok(Math.abs(sidePoint[i] - (pose.pos[i] + pose.right[i] * 14)) < 1e-9, 'azimuth 90 sits on the camera right axis');
+}
+const poseLater = sandbox.nyanTownScenePose(3.0, 10, { camSpeed: 1.5, aspect: 1.78, fov: 0.9, fovPump: 0.7 });
+function bandAngles(p) {
+  const s = sandbox.nyanTownSkyPoint(p, 0, el, 14);
+  const d = [0, 1, 2].map((i) => (s[i] - p.pos[i]) / 14);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return { alongForward: dot(d, p.forward), alongUp: dot(d, p.up) };
+}
+for (const p of [pose, poseLater]) {
+  const band = bandAngles(p);
+  assert.ok(Math.abs(band.alongForward - Math.cos(el)) < 1e-9 && Math.abs(band.alongUp - Math.sin(el)) < 1e-9,
+    'the band has to keep its angle above the view axis at every camera pose (it follows the camera)');
+}
 
 // Style: every knob of the app's lyric console that the plates can honour has to be read here,
 // and a plate is one line — no wrap, no paragraph.
