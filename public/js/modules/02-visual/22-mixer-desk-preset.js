@@ -26,6 +26,7 @@ var MIXER_TUNING_SCHEMA = {
   camShake: { def: 0.6, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   camShakeRate: { def: 1, min: 0.1, max: 4, kind: 'ratio', rebuild: 'live' },
   audioDrive: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  lyricFace: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
 
@@ -662,7 +663,7 @@ var mixerState = {
   blitScene: null, blitCam: null, blitMat: null,
   rt: null, rtW: 0, rtH: 0, passScale: 0,
   levelData: null, levelTex: null,
-  lyricScene: null, lyricGroup: null, lyricLayerChecked: false, lyricLayerWasOff: false,
+  lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   size: null
 };
@@ -732,6 +733,10 @@ function mixerBuildScene() {
     blitScene.add(blitQuad);
 
     mixerState.lyricScene = new THREE.Scene();
+    // The console's camera is orthographic and only lives in the GLSL, so the lyrics need a JS
+    // camera that mixerScenePose() keeps in step with it. near/far straddle the plane because an
+    // orthographic frame is scale-invariant along the view axis.
+    mixerState.lyricCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -400, 400);
     mixerState.levelData = levelData;
     mixerState.levelTex = levelTex;
     mixerState.mat = mat;
@@ -805,13 +810,17 @@ function mixerFeedUniforms(nowSec) {
   void nowSec;
 }
 
-// The app's own stage lyrics stay visible over the mixer. They keep their console settings and
-// their own scroll; this only adds the mixer camera's slow sway/roll and the beat shake to the
-// group after the layout has run, so the text moves with the console instead of sitting still on
-// top of it.
+// The app's own stage lyrics stay visible over the mixer. The ported console owns the whole
+// picture and its camera only exists inside the GLSL (mainImage builds an orthographic ray from
+// orthbas(co-ct) and rolls the screen axes with r2d), so the text has to be drawn through a JS
+// mirror of that camera: mixerScenePose() restates those lines and the overlay rides on the
+// result. By default the text lies in the console plane, so it foreshortens with the swing from
+// the top view to the oblique one instead of spinning inside the screen.
+
 var mixerLyricScratch = {
-  fwd: null, right: null, up: null, worldUp: null, rel: null, quat: null, camPos: null,
-  basePos: null, baseQuat: null, hasBase: false
+  right: null, up: null, normal: null, anchor: null, camPos: null,
+  planeRight: null, planeUp: null, plateQuat: null, basisMat: null,
+  baseScale: 1, hasBase: false
 };
 
 function mixerStepSmooth(a, b, x) {
@@ -819,56 +828,149 @@ function mixerStepSmooth(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 
-function updateMixerDeskLyrics(dt, layoutRan) {
-  if (!mixerPresetIsActive()) return false;
-  var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
-  var cam = (typeof camera !== 'undefined') ? camera : null;
-  if (!group || !group.visible || !cam || !group.position || !group.quaternion) return false;
-  var clock = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? Number(audio.currentTime) : 0;
-  var panAnim = mixerStepSmooth(-0.2, 0.2, Math.sin(clock * Math.max(0, mixerParam('camAnim'))));
-  var roll = (0.5 - 0.5 * panAnim) * Math.max(0, mixerParam('camRoll'));
-  var beat = (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Math.max(0, Number(beatPulse)) : 0;
-  var shake = beat * Math.max(0, mixerParam('camShake')) * 0.02;
-  var rate = Math.max(0.1, mixerParam('camShakeRate'));
-  var shX = Math.sin(clock * rate * 8.7) * shake;
-  var shY = Math.cos(clock * rate * 7.3) * shake;
-  var shRoll = Math.cos(clock * rate * 5.3) * shake * 0.8;
+function mixerNormalize3(v) {
+  var n = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  return n > 0 ? [v[0] / n, v[1] / n, v[2] / n] : [0, 0, 0];
+}
 
+function mixerCross3(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+// orthbas(): the shader's camera basis. z points from the look-at point to the eye, so the view
+// axis is -z and (x, y, z) is right-handed.
+function mixerOrthoBasis(v) {
+  var z = mixerNormalize3(v);
+  var up = Math.abs(z[1]) > 0.999 ? [0, 0, 1] : [0, 1, 0];
+  var x = mixerNormalize3(mixerCross3(up, z));
+  return { x: x, y: mixerCross3(z, x), z: z };
+}
+
+// r2d(t) * vec2 in the shader's sense: a rotation by +t.
+function mixerRot2(v, t) {
+  var c = Math.cos(t), s = Math.sin(t);
+  return [v[0] * c - v[1] * s, v[0] * s + v[1] * c];
+}
+
+function mixerScenePose(t, k) {
+  var camAnim = Math.max(0, Number(k.camAnim) || 0);
+  var canim = mixerStepSmooth(-0.2, 0.2, Math.sin(t * camAnim));
+  var pan = t * Math.max(0, Number(k.camPan) || 0);
+  // mix(vec3(-6,-8,-40), vec3(0,-2,-40), canim) and ct=vec3(0,0,-50), both then shifted by the pan.
+  var co = [-6 + 6 * canim + pan, -8 + 6 * canim + pan, -40];
+  var ct = [pan, pan, -50];
+  var fov = Math.max(0.5, Number(k.camFov) || 4);
+  var aspect = Math.max(0.05, Number(k.aspect) || 1);
+  var cr = (0.5 - 0.5 * canim) * Math.max(0, Number(k.camRoll) || 0);
+  var shk = Math.max(0, Number(k.beat) || 0) * Math.max(0, Number(k.camShake) || 0) * 0.02;
+  var rate = Math.max(0.1, Number(k.camShakeRate) || 1);
+  var shake = [Math.sin(t * rate * 8.7) * shk, Math.cos(t * rate * 7.3) * shk];
+  // p += shake; p = r2d(shRoll)*p; then p*r2d(cr) rotates by -cr: net angle shRoll-cr.
+  var alpha = Math.cos(t * rate * 5.3) * shk * 0.8 - cr;
+  var cb = mixerOrthoBasis([co[0] - ct[0], co[1] - ct[1], co[2] - ct[2]]);
+  var ca = Math.cos(alpha), sa = Math.sin(alpha);
+  var right = [ca * cb.x[0] + sa * cb.y[0], ca * cb.x[1] + sa * cb.y[1], ca * cb.x[2] + sa * cb.y[2]];
+  var up = [-sa * cb.x[0] + ca * cb.y[0], -sa * cb.x[1] + ca * cb.y[1], -sa * cb.x[2] + ca * cb.y[2]];
+  var off = mixerRot2(shake, alpha);
+  var pos = [
+    co[0] + fov * (off[0] * cb.x[0] + off[1] * cb.y[0]),
+    co[1] + fov * (off[0] * cb.x[1] + off[1] * cb.y[1]),
+    co[2] + fov * (off[0] * cb.x[2] + off[1] * cb.y[2])
+  ];
+  return {
+    canim: canim, co: co, ct: ct, pos: pos, right: right, up: up, normal: cb.z,
+    halfH: fov, halfW: fov * aspect
+  };
+}
+
+// The mirror has to agree with the shader for every screen coordinate, so the frame is the
+// shader's own: p = uv*2-1 with p.x scaled by the aspect, halfW = camFov*aspect, halfH = camFov.
+function mixerApplyLyricCamera(cam, pose) {
   var sc = mixerLyricScratch;
-  if (!sc.fwd) {
-    sc.fwd = new THREE.Vector3();
+  if (!sc.right) {
     sc.right = new THREE.Vector3();
     sc.up = new THREE.Vector3();
-    sc.worldUp = new THREE.Vector3(0, 1, 0);
-    sc.rel = new THREE.Vector3();
-    sc.quat = new THREE.Quaternion();
-    sc.basePos = new THREE.Vector3();
-    sc.baseQuat = new THREE.Quaternion();
+    sc.normal = new THREE.Vector3();
+    sc.anchor = new THREE.Vector3();
+    sc.camPos = new THREE.Vector3();
+    sc.planeRight = new THREE.Vector3();
+    sc.planeUp = new THREE.Vector3();
+    sc.plateQuat = new THREE.Quaternion();
+    sc.basisMat = new THREE.Matrix4();
   }
-  // The layout only runs on its own gate. Keep its last output as the base so a skipped frame
-  // repeats the same camera delta instead of stacking another one on top of it.
+  sc.basisMat.makeBasis(
+    sc.right.fromArray(pose.right),
+    sc.up.fromArray(pose.up),
+    sc.normal.fromArray(pose.normal)
+  );
+  cam.quaternion.setFromRotationMatrix(sc.basisMat);
+  cam.position.fromArray(pose.pos);
+  cam.left = -pose.halfW;
+  cam.right = pose.halfW;
+  cam.bottom = -pose.halfH;
+  cam.top = pose.halfH;
+  cam.updateProjectionMatrix();
+  return true;
+}
+
+function updateMixerDeskLyrics(dt, layoutRan) {
+  void dt;
+  if (!mixerPresetIsActive()) return false;
+  var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
+  if (!group || !group.visible || !group.position || !group.quaternion) return false;
+  if (!mixerState.built && !mixerBuildScene()) return false;
+  var cam = mixerState.lyricCam;
+  if (!cam) return false;
+  // The same clock the shader runs on, so the text and the console swing together and both freeze
+  // with the music.
+  var clock = (typeof audio !== 'undefined' && audio && isFinite(audio.currentTime)) ? Number(audio.currentTime) : 0;
+  var size = mixerState.size;
+  var pose = mixerScenePose(clock, {
+    camPan: mixerParam('camPan'), camAnim: mixerParam('camAnim'), camRoll: mixerParam('camRoll'),
+    camFov: mixerParam('camFov'), camShake: mixerParam('camShake'), camShakeRate: mixerParam('camShakeRate'),
+    beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
+    aspect: (size && size.y) ? size.x / size.y : 1
+  });
+  mixerApplyLyricCamera(cam, pose);
+
+  // The layout owns the text size; its fit scale only means something to a perspective camera,
+  // so strip it and keep the console's own 歌词大小.
+  var sc = mixerLyricScratch;
   if (layoutRan || !sc.hasBase) {
-    sc.basePos.copy(group.position);
-    sc.baseQuat.copy(group.quaternion);
+    var fit = (typeof stageLyrics !== 'undefined' && stageLyrics && isFinite(stageLyrics.lockFitScale) && stageLyrics.lockFitScale > 0)
+      ? stageLyrics.lockFitScale : 1;
+    sc.baseScale = (Number(group.scale && group.scale.x) || 1) / fit;
     sc.hasBase = true;
   }
-  cam.getWorldDirection(sc.fwd);
-  sc.right.crossVectors(sc.fwd, sc.worldUp).normalize();
-  sc.up.crossVectors(sc.right, sc.fwd).normalize();
-  sc.quat.setFromAxisAngle(sc.fwd, -(roll + shRoll));
+  if (group.scale) group.scale.setScalar(sc.baseScale);
 
-  // Rotate the lyric arrangement around the camera, then slide it with the console's sway/shake.
-  sc.rel.subVectors(sc.basePos, cam.position).applyQuaternion(sc.quat);
-  group.position.copy(cam.position).add(sc.rel);
-  group.position.addScaledVector(sc.right, -(panAnim - 0.5) * 0.35 - shX * 4.0);
-  group.position.addScaledVector(sc.up, -(panAnim - 0.5) * 0.25 - shY * 4.0);
-  group.quaternion.copy(sc.baseQuat).premultiply(sc.quat);
+  // 0 glues the text to the console surface (world x-y plane, facing +z where the eye sits); 1 lets
+  // it face the camera. The console's own tilt knobs ride on top of whichever plane is chosen.
+  var settings = (typeof fx !== 'undefined' && fx) ? fx : {};
+  var face = mixerClamp01(mixerParam('lyricFace'));
+  sc.plateQuat.identity().slerp(cam.quaternion, face);
+  var tiltX = clampRange(Number(settings.lyricTiltX) || 0, -84, 84);
+  var tiltY = clampRange(Number(settings.lyricTiltY) || 0, -84, 84);
+  if (typeof stageLyricTargetQuaternion === 'function') {
+    sc.plateQuat.copy(stageLyricTargetQuaternion(sc.plateQuat, tiltX, tiltY));
+  }
+  group.quaternion.copy(sc.plateQuat);
+  // At face 0 the anchor is the console's look-at point, so the text rides the surface and shakes
+  // because the camera does; at face 1 it is pinned to the screen centre.
+  sc.anchor.fromArray(pose.ct).lerp(sc.camPos.fromArray(pose.pos), face);
+  // The 歌词位置 knobs slide the text inside its own plane, so lying on the desk they move it along
+  // the surface rather than lifting it off.
+  sc.planeRight.set(1, 0, 0).applyQuaternion(sc.plateQuat);
+  sc.planeUp.set(0, 1, 0).applyQuaternion(sc.plateQuat);
+  sc.anchor.addScaledVector(sc.planeRight, clampRange(Number(settings.lyricOffsetX) || 0, -4, 4));
+  sc.anchor.addScaledVector(sc.planeUp, clampRange(Number(settings.lyricOffsetY) || 0, -2.4, 2.7));
+  group.position.copy(sc.anchor);
   return true;
 }
 
 function mixerRenderLyricsOverlay() {
   var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
-  var cam = (typeof camera !== 'undefined') ? camera : null;
+  var cam = mixerState.lyricCam;
   if (!group || !group.visible || !cam || !mixerState.lyricScene) return false;
   var parent = group.parent;
   mixerState.lyricScene.add(group);
@@ -935,6 +1037,7 @@ function mixerDisposeScene() {
   if (mixerState.blitScene) mixerState.blitScene.clear();
   if (mixerState.lyricScene) mixerState.lyricScene.clear();
   mixerState.lyricScene = null;
+  mixerState.lyricCam = null;
   mixerState.built = false;
   mixerState.quadScene = null;
   mixerState.quadCam = null;
