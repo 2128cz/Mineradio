@@ -5,13 +5,13 @@
 // This is a port of the Shadertoy shader at https://www.shadertoy.com/view/cs2GWD (author marker
 // 0b5vr). The body below is the reference source, kept as written; the only changes are the
 // uniforms that replace a few literal constants (camera pan/zoom/roll, grid scale, level gain,
-// march/shadow steps, max distance, and the share of panels that flip to the inverted palette —
-// the reference keeps 10%, which is what day mode, the default, still draws), one added emissive
-// term that lights the crevice between two staggered plates from the reference's own stagger wave,
-// two mixes that move the plate colours from the reference's .9/.04 greyscale to the song's theme
-// colour and the colour a third of the way round the hue wheel from it (strength 0 is the reference
-// literals), and a 1.0 alpha so the post pass can copy it. The reference page was not reachable and carried
-// no licence header;
+// march/shadow steps, max distance, and the share of panels that flip their two colours — the
+// reference's 10% is what that knob draws at 10%, 0 flips none and 1 flips every panel), one added
+// emissive term that lights the crevice between two staggered plates from the reference's own
+// stagger wave, two mixes that move the plate colours from the reference's .9/.04 greyscale to the
+// song's theme colour and the colour a third of the way round the hue wheel from it (strength 0 is
+// the reference literals), and a 1.0 alpha so the post pass can copy it. The reference page was not
+// reachable and carried no licence header;
 // the licence is UNVERIFIED and must be confirmed with the author before this build is
 // distributed. See 22-mixer-desk-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
 
@@ -33,6 +33,7 @@ var MIXER_TUNING_SCHEMA = {
   audioDrive: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricFace: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   nightMix: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  invShare: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   gapGlow: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gapFog: { def: 0.22, min: 0.03, max: 0.6, kind: 'unit', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
@@ -40,12 +41,13 @@ var MIXER_TUNING_SCHEMA = {
 };
 
 // 面板配色：白天面板用当前歌曲的主题色（控制台「视觉主色」：封面取色，或自定义色），黑夜面板用它在
-// 色环上 +120° 的那个色；两套只按亮度分开（亮 0.86 / 暗 0.11），饱和度封顶以免大面积纯色刺眼。
+// 色环上 +120° 的那个色。两套都保留主题色自己的色相与饱和度，只把亮度拉开（亮 0.66 / 暗 0.16）——
+// 之前把亮度钉在 0.86、饱和又封到 0.55，出来的几乎是不偏色的浅色，画面看不出跟着歌走。
 var MIXER_THEME_FALLBACK = '#9db8cf';
 var MIXER_THEME_HUE_SHIFT = 1 / 3;
-var MIXER_THEME_DAY_LIGHTNESS = 0.86;
-var MIXER_THEME_NIGHT_LIGHTNESS = 0.11;
-var MIXER_THEME_SATURATION_CAP = 0.55;
+var MIXER_THEME_DAY_LIGHTNESS = 0.66;
+var MIXER_THEME_NIGHT_LIGHTNESS = 0.16;
+var MIXER_THEME_SATURATION_CAP = 0.8;
 
 function mixerParam(key) {
   var store = (typeof mixerTuning !== 'undefined') ? mixerTuning : null;
@@ -76,6 +78,7 @@ var MIXER_PORT_LINES = [
   "uniform vec3 uDayCol;",
   "uniform vec3 uNightCol;",
   "uniform float uThemeMix;",
+  "uniform float uInvShare;",
   "uniform float uSteps;",
   "uniform float uShadowSteps;",
   "uniform float uMaxDist;",
@@ -493,12 +496,14 @@ var MIXER_PORT_LINES = [
   "    float gap=0.;",
   "    float drv=mLevel(march.grid.h.z*2.1+.37);",
   "    if(mtl==0.){",
-  "      float invThr=mix(.1,.9,uNightMix);",
-  "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),invThr));",
   "      vec3 c=.9+.0*sin(.1*(march.grid.c.x+march.grid.c.y)+march.grid.h.z+vec3(0,2,3));",
-  "      vec3 litc=mix(c,uDayCol,uThemeMix);",
-  "      vec3 darkc=mix(vec3(.04),uNightCol,uThemeMix);",
-  "      basecol=mix(darkc,litc,mtlp)*(.75+.5*drv);",
+  "      vec3 dayT=mix(c,uDayCol,uThemeMix);",
+  "      vec3 inkT=mix(vec3(.04),uNightCol,uThemeMix);",
+  "      float jit=(march.grid.h.x*2.-1.)*uInvShare;",
+  "      float flip=step(fract(march.grid.h.z*66.),uNightMix+jit);",
+  "      vec3 plate=mix(dayT,inkT,flip);",
+  "      vec3 ink=mix(inkT,dayT,flip);",
+  "      basecol=mix(ink,plate,mtlp)*(.75+.5*drv);",
   "      ",
   "      vec2 gp=(march.rp-march.grid.c).xy;",
   "      vec2 ghs=march.grid.s.xy/2.-.02;",
@@ -728,6 +733,7 @@ function mixerInitialUniforms() {
     uShakeRate: { value: 1 },
     uAudioDrive: { value: 1 },
     uNightMix: { value: 0 },
+    uInvShare: { value: 0 },
     uGapGlow: { value: 0.7 },
     uGapFog: { value: 0.22 },
     uDayCol: { value: new THREE.Color(mixerThemePair(MIXER_THEME_FALLBACK).day) },
@@ -884,6 +890,7 @@ function mixerFeedUniforms(nowSec) {
   u.uShakeRate.value = Math.max(0.1, mixerParam('camShakeRate'));
   u.uAudioDrive.value = Math.max(0, mixerParam('audioDrive'));
   u.uNightMix.value = mixerClamp01(mixerParam('nightMix'));
+  u.uInvShare.value = mixerClamp01(mixerParam('invShare'));
   u.uGapGlow.value = Math.max(0, mixerParam('gapGlow'));
   u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
   u.uThemeMix.value = mixerClamp01(mixerParam('themeMix'));

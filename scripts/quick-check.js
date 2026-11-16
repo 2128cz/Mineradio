@@ -2195,20 +2195,30 @@ function runMixerDeskPresetCheck() {
     [/uCamFov\*p\*r2d\(cr\)/, 'the field of view has to come from its knob'],
     [/mix\(.5,\.0,canim\)\*uCamRoll/, 'the roll has to come from its knob'],
     [/2\.0\*uGridScale,2\.0\*uGridScale,100\.0/, 'the cell sizes have to come from the grid-scale knob'],
-    [/float invThr=mix\(\.1,\.9,uNightMix\);/, 'the day/night knob has to move the inverted-module density from the reference 10% up to 90%'],
-    [/step\(fract\(march\.grid\.h\.z\*66\.\),invThr\)/, 'the palette flip has to be drawn per cell from that threshold'],
+    [/float flip=step\(fract\(march\.grid\.h\.z\*66\.\),uNightMix\+jit\);/, 'the day/night knob has to be the inverted-cell share itself, so 0 means every plate is the day colour and 1 means every plate is the night one'],
+    [/float jit=\(march\.grid\.h\.x\*2\.-1\.\)\*uInvShare;/, 'the randomness knob has to jitter that boundary per cell, and it has to read a hash lane the share does not use'],
     [/float ge=abs\(min\(ghs\.x-abs\(gp\.x\),ghs\.y-abs\(gp\.y\)\)\);/, 'the seam fog has to measure its distance from the plate border the reference cuts at .02'],
     [/\.4\*sin\(2\.\*iTime\+1\.\*fract\(pcg3df\(gc\)\.z\*28\.\)\+\.3\*\(gc\.x\+gc\.y\)\)/, 'the fog gate has to read the neighbour plate\'s own reference wave, so only staggered seams light'],
     [/col\+=gap\*vec3\(/, 'the seam light has to be added emissively, after the two lights'],
-    [/vec3 litc=mix\(c,uDayCol,uThemeMix\);/, 'the day panel has to keep the reference greyscale as the zero end of the theme knob'],
-    [/vec3 darkc=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/, 'the night panel has to keep the reference black as the zero end too'],
-    [/basecol=mix\(darkc,litc,mtlp\)\*\(\.75\+\.5\*drv\);/, 'the engraving swap has to ride the themed colours, not a separate path'],
+    [/vec3 dayT=mix\(c,uDayCol,uThemeMix\);/, 'the day panel has to keep the reference greyscale as the zero end of the theme knob'],
+    [/vec3 inkT=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/, 'the night panel has to keep the reference black as the zero end too'],
+    [/vec3 plate=mix\(dayT,inkT,flip\);/, 'an inverted cell has to put the night tone on the plate'],
+    [/vec3 ink=mix\(inkT,dayT,flip\);/, 'and the day tone on the engraving, so the cell stays high-contrast whichever side it lands on'],
+    [/basecol=mix\(ink,plate,mtlp\)\*\(\.75\+\.5\*drv\);/, 'the engraving swap has to ride the themed colours, not a separate path'],
     [/uDayCol:\s*\{\s*value:\s*new THREE\.Color\(/, 'the material needs the day colour in its initial block'],
     [/u\.uDayCol\.value\.copy\(/, 'the theme colours have to reach the shader every frame'],
     [/function mixerThemePair\(/, 'the day/night pair has to be derived in one place so the hue rule is judgeable'],
     [/mixerState\.themeKey !== hex/, 'the pair has to be cached per song, because the cover palette already is'],
   ]) {
     if (!pattern.test(text)) fail(why);
+  }
+  // The old knob did two jobs at once: it scaled the density into a 10%..90% band and then rewrote the
+  // material polarity. Either one coming back would break 0 = day / 1 = night.
+  for (const [pattern, why] of [
+    [/float invThr=/, 'uNightMix may not be re-scaled into a density band again; it is the share of inverted cells'],
+    [/mtlp=mix\(mtlp,1\.-mtlp,/, 'the polarity has to be the two tones trading places, not mtlp rewritten'],
+  ]) {
+    if (pattern.test(text)) fail(why);
   }
   // Attribution and the honest licence status.
   for (const [body, name] of [[licenseText, 'LICENSE sidecar'], [noticeText, 'NOTICE.md'], [portsText, 'THIRD_PARTY_PORTS.md']]) {

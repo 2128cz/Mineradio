@@ -3,7 +3,7 @@
 // 预设 17「调音台」的主题色面板配色。
 //
 // 规则：白天面板 = 当前歌曲的主题色（控制台「视觉主色」：封面取色，或自定义色），黑夜面板 = 它在色环
-// 上 +120° 的那个色；两套只差在亮度上（亮 0.86 / 暗 0.11），饱和度封顶以免大面积纯色刺眼。这里把 app
+// 上 +120° 的那个色；两套只差在亮度上（亮 0.66 / 暗 0.16），饱和度封顶以免大面积纯色刺眼。这里把 app
 // 自己的 rgbToHsl/hslToRgb/rgbToHexColor 原样切片进来跑 mixerThemePair，再用上面这套规则当判据。
 // 另外量：uThemeMix 归零必须逐位退回参考的黑白灰、灰主题必须保持无色相、换色才重算一次。
 
@@ -117,7 +117,7 @@ assert.ok(isFinite(HUE_SHIFT) && isFinite(DAY_L) && isFinite(NIGHT_L) && isFinit
 // ---------------------------------------------------------------- 2) the two colours differ in brightness
 
 {
-  assert.ok(DAY_L > 0.7 && NIGHT_L < 0.2, `day ${DAY_L} / night ${NIGHT_L}: the pair is separated by lightness, not by hue alone`);
+  assert.ok(DAY_L > 0.6 && NIGHT_L < 0.2, `day ${DAY_L} / night ${NIGHT_L}: the pair is separated by lightness, not by hue alone`);
   let minRatio = Infinity;
   for (const theme of THEMES) {
     const pair = mixerThemePair(theme);
@@ -127,7 +127,9 @@ assert.ok(isFinite(HUE_SHIFT) && isFinite(DAY_L) && isFinite(NIGHT_L) && isFinit
     const ratio = luma(pair.day) / Math.max(1e-6, luma(pair.night));
     minRatio = Math.min(minRatio, ratio);
   }
-  assert.ok(minRatio > 5, `the day panel has to be visibly brighter than the night one (worst ratio ${minRatio.toFixed(2)})`);
+  // The ratio is measured as luma, so a blue day panel over a yellow-green night one lands lower than
+  // the 0.66/0.16 lightness pair suggests; 2 is still an obvious step, and the desk never inverts.
+  assert.ok(minRatio > 2, `the day panel has to be visibly brighter than the night one (worst ratio ${minRatio.toFixed(2)})`);
 }
 
 // ---------------------------------------------------------------- 3) saturation stays a paint, not a highlighter
@@ -138,7 +140,7 @@ assert.ok(isFinite(HUE_SHIFT) && isFinite(DAY_L) && isFinite(NIGHT_L) && isFinit
     assert.ok(hslOf(pair.day).s <= SAT_CAP + 0.02 && hslOf(pair.night).s <= SAT_CAP + 0.02,
       `${theme}: a full-saturation cover may not blow the cap on a wall-sized panel`);
   }
-  assert.ok(SAT_CAP >= 0.2 && SAT_CAP <= 0.7, `the cap ${SAT_CAP} has to leave the panels readable`);
+  assert.ok(SAT_CAP >= 0.2 && SAT_CAP <= 0.85, `the cap ${SAT_CAP} has to leave the panels readable`);
 
   // A grey cover has no hue to rotate: both ends stay achromatic, so the desk still looks like itself.
   for (const grey of ['#808080', '#f0f0f0', '#202020']) {
@@ -154,17 +156,21 @@ assert.ok(isFinite(HUE_SHIFT) && isFinite(DAY_L) && isFinite(NIGHT_L) && isFinit
 // ---------------------------------------------------------------- 4) the knob still lands on the reference greys
 
 {
-  // vec3 litc=mix(c,uDayCol,uThemeMix); vec3 darkc=mix(vec3(.04),uNightCol,uThemeMix);
+  // vec3 dayT=mix(c,uDayCol,uThemeMix); vec3 inkT=mix(vec3(.04),uNightCol,uThemeMix);
   // At uThemeMix=0 both mixes take their first argument, which is the reference's own literal.
-  assert.ok(/vec3 litc=mix\(c,uDayCol,uThemeMix\);/.test(mixerSrc), 'the light plate has to blend from the reference c');
-  assert.ok(/vec3 darkc=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/.test(mixerSrc), 'the dark plate has to blend from the reference .04');
+  assert.ok(/vec3 dayT=mix\(c,uDayCol,uThemeMix\);/.test(mixerSrc), 'the light plate has to blend from the reference c');
+  assert.ok(/vec3 inkT=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/.test(mixerSrc), 'the dark plate has to blend from the reference .04');
   assert.ok(/vec3 c=\.9\+/.test(mixerSrc), 'the reference light literal has to stay as the zero end of the mix');
-  assert.ok(/basecol=mix\(darkc,litc,mtlp\)\*\(\.75\+\.5\*drv\);/.test(mixerSrc),
+  assert.ok(/basecol=mix\(ink,plate,mtlp\)\*\(\.75\+\.5\*drv\);/.test(mixerSrc),
     'mtlp still picks plate vs engraving, so day/night stay legible at any theme');
 
-  // And the day colour is the bright end: mtlp=1 (the plate face) has to be uDayCol, not uNightCol.
-  const line = mixerSrc.match(/basecol=mix\((\w+),(\w+),mtlp\)/);
-  assert.ok(line && line[1] === 'darkc' && line[2] === 'litc', 'the plate face (mtlp=1) has to read as the day colour');
+  // The two themed tones trade places on an inverted cell and nowhere else, so the theme pair is the
+  // only thing that decides what colour the desk wears.
+  assert.ok(/vec3 plate=mix\(dayT,inkT,flip\);/.test(mixerSrc) && /vec3 ink=mix\(inkT,dayT,flip\);/.test(mixerSrc),
+    'the plate tone and the engraving tone have to be one trade away from each other');
+  const trade = mixerSrc.match(/vec3 plate=mix\((\w+),(\w+),flip\);/);
+  assert.ok(trade && trade[1] === 'dayT' && trade[2] === 'inkT',
+    'the un-flipped plate has to be the day colour, or 昼夜 0% would show the night scheme');
 }
 
 // ---------------------------------------------------------------- 5) one song, one calculation
@@ -203,4 +209,4 @@ assert.ok(isFinite(HUE_SHIFT) && isFinite(DAY_L) && isFinite(NIGHT_L) && isFinit
   assert.ok(consoleSrc.includes("fxConsoleItem('fx-mixerthemeMix'"), 'the knob must be listed in the console 调音台 group');
 }
 
-console.log(`OK mixer theme palette: song hue + 120°, luma ratio >5, cap ${SAT_CAP}, grey stays grey, 0 returns the reference`);
+console.log(`OK mixer theme palette: song hue + 120°, luma ratio >2, cap ${SAT_CAP}, grey stays grey, 0 returns the reference`);

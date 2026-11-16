@@ -12,7 +12,11 @@ LICENCE STATUS: UNVERIFIED.
 What was changed by the port:
   - the reference body is kept as written; a few constants became uniforms: camera pan / sway /
     roll / fov, grid cell scale, level gain, march steps, shadow steps, max distance, and the
-    density of inverted black/white panels (the reference literal .1 is the day-mode end of it);
+    density of inverted black/white panels; the reference literal .1 is the value that reproduces
+    the reference, because the knob is now that share directly - 0 inverts no panel, 1 inverts
+    every one - and a second knob randomises which panels sit near the boundary without moving the
+    share. The inversion itself no longer rewrites the material polarity the reference did; it
+    trades the plate colour with the engraving colour, so an inverted cell stays high contrast;
   - one emissive term was added: the crevice between two plates is lit, gated by the reference's
     own plate-stagger wave so only seams where the neighbours are out of step glow;
   - the two plate colours are mixed towards the song's theme colour, and towards the colour 120
