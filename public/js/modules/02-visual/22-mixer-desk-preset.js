@@ -8,7 +8,7 @@
 // march/shadow steps, max distance, and the share of panels that flip their two colours — the
 // reference's 10% is what that knob draws at 10%, 0 flips none and 1 flips every panel), one added
 // volumetric term that fills the crevice between two staggered plates with light - it is gated by the
-// reference's own stagger wave and opens only on the side that sits BELOW the step, so the high plate
+// desk's own wave and opens only on the side that sits BELOW the step, so the high plate
 // keeps a clean face and the light spills onto the low one; the column grows out of that plate's own
 // lifted top rather than out of the mean plane, and it is integrated along the ray inside the march
 // (which gained a flag so the shadow rays skip it), so a panel in front of a seam hides it instead of
@@ -19,6 +19,13 @@
 // reachable and carried no licence header;
 // the licence is UNVERIFIED and must be confirmed with the author before this build is
 // distributed. See 22-mixer-desk-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
+//
+// The one change of shape rather than of constants: the reference lifts each plate by its own
+// random phase, so the desk reads as a field of independent bumps. The plates now ride one shared
+// sine (cellWave) that travels in from the world origin along x+y — amplitude, wavelength and phase
+// are knobs, and the phase is a clock the JS side advances at one crest per beat of the song, so a
+// faster song sends crests more often. A kick re-anchors the phase so a crest sits on the origin and
+// surges that clock briefly, which is what makes the swell lurch on the drum.
 
 var MIXER_PRESET_INDEX = 17;
 
@@ -41,6 +48,9 @@ var MIXER_TUNING_SCHEMA = {
   invShare: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   gapGlow: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gapFog: { def: 0.22, min: 0.03, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
+  waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
+  wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
@@ -80,6 +90,9 @@ var MIXER_PORT_LINES = [
   "uniform float uNightMix;",
   "uniform float uGapGlow;",
   "uniform float uGapFog;",
+  "uniform float uWaveAmp;",
+  "uniform float uWaveK;",
+  "uniform float uWavePhase;",
   "uniform vec3 uDayCol;",
   "uniform vec3 uNightCol;",
   "uniform float uThemeMix;",
@@ -173,9 +186,18 @@ var MIXER_PORT_LINES = [
   "  return length(max(d,0.))+min(0.,max(d.x,d.y));",
   "}",
   "",
+  "// The desk's one wave. It replaces the reference's per-cell random phase with a coherent swell that",
+  "// rolls in along x+y from the world origin (0,0): one sine shared by every plate, so the field lifts",
+  "// in travelling ridges instead of independent bumps. uWavePhase is the wave's own clock (radians),",
+  "// advanced by the song's tempo in JS; uWaveK sets how many radians one world unit is, uWaveAmp how",
+  "// far a plate rides. It has to live above map(), which lifts each plate by it.",
+  "float cellWave(vec3 c){",
+  "  return uWaveAmp*sin(uWaveK*(c.x+c.y)+uWavePhase);",
+  "}",
+  "",
   "vec4 map(vec3 p,Grid grid){",
   "  p-=grid.c;",
-  "  p.z+=.4*sin(2.*iTime+1.*fract(grid.h.z*28.)+.3*(grid.c.x+grid.c.y));",
+  "  p.z+=cellWave(grid.c);",
   "  ",
   "  vec3 psize=grid.s/2.;",
   "  psize.z=1.;",
@@ -430,21 +452,17 @@ var MIXER_PORT_LINES = [
   "  ));",
   "}",
   "",
-  "float cellWave(vec3 c,vec3 h){",
-  "  return .4*sin(2.*iTime+1.*fract(h.z*28.)+.3*(c.x+c.y));",
-  "}",
-  "",
   "vec4 seamGates(Grid g){",
-  "  float w0=cellWave(g.c,g.h);",
+  "  float w0=cellWave(g.c);",
   "  vec3 px=g.c+vec3(g.s.x,0.,0.);",
   "  vec3 nx=g.c-vec3(g.s.x,0.,0.);",
   "  vec3 py=g.c+vec3(0.,g.s.y,0.);",
   "  vec3 ny=g.c-vec3(0.,g.s.y,0.);",
   "  vec4 dh=vec4(",
-  "    cellWave(px,pcg3df(px))-w0,",
-  "    cellWave(py,pcg3df(py))-w0,",
-  "    cellWave(nx,pcg3df(nx))-w0,",
-  "    cellWave(ny,pcg3df(ny))-w0",
+  "    cellWave(px)-w0,",
+  "    cellWave(py)-w0,",
+  "    cellWave(nx)-w0,",
+  "    cellWave(ny)-w0",
   "  );",
   "  return smoothstep(.02,.35,dh)*(.35+.65*mLevel(g.h.z*2.1+.37));",
   "}",
@@ -488,7 +506,7 @@ var MIXER_PORT_LINES = [
   "    ",
   "    if(seamOn!=0){",
   "      float seg=(rl-rl0)*.25;",
-  "      float top=cellWave(grid.c,grid.h);",
+  "      float top=cellWave(grid.c);",
   "      for(int k=1;k<5;k++){",
   "        vec3 sp=ro+rd*(rl0+seg*float(k));",
   "        vec2 sd=seamDensity(sp,grid,top);",
@@ -671,6 +689,84 @@ function mixerClamp01(value) {
   return !isFinite(n) ? 0 : Math.min(1, Math.max(0, n));
 }
 
+// ---------------------------------------------------------------- the wave clock
+//
+// The desk's plates ride one shared sine (see cellWave in the ported body), so what used to be a
+// field of independent bumps is a swell that travels across the desk. The wave is anchored to the
+// world origin - the corner it rolls in from - and its speed comes from the song, not from the
+// camera's own drift: one crest passes the origin per beat, so a faster song sends crests more
+// often while the wavelength stays where the 频率 knob put it. A kick re-anchors the phase so a
+// crest sits exactly on the origin, and multiplies the angular speed for a short tail, which is
+// what makes the swell lurch forward on the drum instead of drifting at a constant rate.
+
+var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
+var MIXER_WAVE_KICK_BOOST = 1.8;     // extra angular speed at the instant of a kick
+var MIXER_WAVE_KICK_TAIL = 0.20;     // seconds for that surge to fall to 1/e
+var MIXER_WAVE_FALLBACK_STEP = 0.6;  // no tempo known yet: a neutral 100 BPM
+var MIXER_WAVE_CREST = Math.PI / 2;  // sin() is at its crest here, i.e. a crest on the origin
+
+function mixerWrapAngle(a) {
+  var t = Math.PI * 2;
+  var r = a % t;
+  return r < 0 ? r + t : r;
+}
+
+// The song's beat period, in the order the app trusts its own data: the beat map's grid step, the
+// median gap of that map's own beat times (older caches carry no step), then the realtime tempo
+// tracker. 0 means none of them knows yet.
+function mixerBeatStep() {
+  var map = (typeof currentBeatMap !== 'undefined' && currentBeatMap) ? currentBeatMap : null;
+  var step = map ? Number(map.gridStep) || 0 : 0;
+  if (step > 0.15 && step <= 2) return step;
+  var list = map ? (map.pulseBeats || map.beats || map.kicks) : null;
+  if (list && list.length >= 4) {
+    var gaps = [];
+    for (var i = 1; i < Math.min(list.length, 16); i++) {
+      var a = list[i], b = list[i - 1];
+      var d = (Number(a && a.time != null ? a.time : a) || 0) - (Number(b && b.time != null ? b.time : b) || 0);
+      if (d > 0.15 && d <= 2) gaps.push(d);
+    }
+    if (gaps.length) {
+      gaps.sort(function (x, y) { return x - y; });
+      step = gaps[gaps.length >> 1];
+      if (step > 0.15 && step <= 2) return step;
+    }
+  }
+  var rt = (typeof rtBeat !== 'undefined' && rtBeat) ? Number(rtBeat.tempoGap) || 0 : 0;
+  return (rt > 0.15 && rt <= 2) ? rt : 0;
+}
+
+// One step of the wave. `phase` runs backwards, so crests travel towards +x+y - away from the
+// origin they are anchored to. A kick lands the phase exactly on a crest and lights the surge.
+function mixerWaveStep(w, dt, o) {
+  o = o || {};
+  var step = Number(o.step) > 0 ? Number(o.step) : MIXER_WAVE_FALLBACK_STEP;
+  w.beatStep = step;
+  if (dt > 0) {
+    var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST);
+    w.phase = mixerWrapAngle(w.phase - omega * dt);
+    w.kick *= Math.exp(-dt / MIXER_WAVE_KICK_TAIL);
+  }
+  if (o.onset) {
+    w.phase = MIXER_WAVE_CREST;
+    w.kick = 1;
+  }
+  return w;
+}
+
+// Per frame: freeze with the music (iTime is the song clock, so a paused desk must not move), and
+// treat a rising beat pulse as the drum that launches the wave.
+function mixerStepWave(w, dt, o) {
+  o = o || {};
+  var beat = Number(o.beat) || 0;
+  var playing = o.playing !== false;
+  var onset = false;
+  if (playing) onset = !!o.onset || beat > w.prevBeat * 1.4 + 0.04;
+  mixerWaveStep(w, playing ? dt : 0, { step: o.step, onset: onset });
+  w.prevBeat = playing ? beat : 0;
+  return w;
+}
+
 // Log-spaced bin -> FFT index, so the low end is not squeezed into one texel.
 function mixerSpectrumIndex(bin, bins) {
   var n = (typeof frequencyData !== 'undefined' && frequencyData && frequencyData.length) ? frequencyData.length : 0;
@@ -748,6 +844,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0 },
   size: null
 };
 
@@ -775,6 +872,9 @@ function mixerInitialUniforms() {
     uInvShare: { value: 0 },
     uGapGlow: { value: 1 },
     uGapFog: { value: 0.22 },
+    uWaveAmp: { value: 0.4 },
+    uWaveK: { value: (Math.PI * 2) / MIXER_WAVE_BASE_UNITS },
+    uWavePhase: { value: MIXER_WAVE_CREST },
     uDayCol: { value: new THREE.Color(mixerThemePair(MIXER_THEME_FALLBACK).day) },
     uNightCol: { value: new THREE.Color(mixerThemePair(MIXER_THEME_FALLBACK).night) },
     uThemeMix: { value: 1 }
@@ -932,6 +1032,10 @@ function mixerFeedUniforms(nowSec) {
   u.uInvShare.value = mixerClamp01(mixerParam('invShare'));
   u.uGapGlow.value = Math.max(0, mixerParam('gapGlow'));
   u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
+  var waveFreq = Math.max(0.05, mixerParam('waveFreq'));
+  u.uWaveAmp.value = Math.max(0, mixerParam('waveAmp'));
+  u.uWaveK.value = (Math.PI * 2 * waveFreq) / MIXER_WAVE_BASE_UNITS;
+  u.uWavePhase.value = mixerWrapAngle(mixerState.wave.phase + Math.PI * 2 * mixerClamp01(mixerParam('wavePhase')));
   u.uThemeMix.value = mixerClamp01(mixerParam('themeMix'));
   var theme = mixerThemeColors();
   u.uDayCol.value.copy(theme.themeDay);
@@ -1124,6 +1228,12 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
   if (!mixerState.built && !mixerBuildScene()) return false;
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
   mixerUpdateLevels(sonicFrame, step, mixerParam('audioSmooth'));
+  mixerStepWave(mixerState.wave, step, {
+    step: mixerBeatStep(),
+    beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
+    onset: (typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag) ? true : false,
+    playing: !(typeof audio !== 'undefined' && audio && audio.paused)
+  });
   mixerFeedUniforms((Number(now) || 0) / 1000);
   mixerState.frames++;
   mixerState.lastCostMs = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - startedAt;

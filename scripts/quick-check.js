@@ -2198,9 +2198,10 @@ function runMixerDeskPresetCheck() {
     [/2\.0\*uGridScale,2\.0\*uGridScale,100\.0/, 'the cell sizes have to come from the grid-scale knob'],
     [/float flip=step\(fract\(march\.grid\.h\.z\*66\.\),uNightMix\+jit\);/, 'the day/night knob has to be the inverted-cell share itself, so 0 means every plate is the day colour and 1 means every plate is the night one'],
     [/float jit=\(march\.grid\.h\.x\*2\.-1\.\)\*uInvShare;/, 'the randomness knob has to jitter that boundary per cell, and it has to read a hash lane the share does not use'],
-    [/float cellWave\(vec3 c,vec3 h\)\{[\s\S]{0,80}\.4\*sin\(2\.\*iTime\+1\.\*fract\(h\.z\*28\.\)\+\.3\*\(c\.x\+c\.y\)\)/, 'the seam helper has to reuse the reference stagger wave verbatim, so the light can only ever sit where the reference moves plates'],
+    [/float cellWave\(vec3 c\)\{[\s\S]{0,80}uWaveAmp\*sin\(uWaveK\*\(c\.x\+c\.y\)\+uWavePhase\)/, 'the plates have to ride one shared sine so the desk lifts in travelling ridges, not independent bumps'],
+    [/p\.z\+=cellWave\(grid\.c\);/, 'map() has to lift each plate with that wave, and cellWave has to be declared above it'],
     [/vec2 d=abs\(hs-abs\(q\.xy\)\);/, 'the volume has to measure its distance from the plate border the reference cuts at .02'],
-    [/cellWave\(px,pcg3df\(px\)\)-w0,/, 'each side has to be gated by the signed height of its neighbour, so the light only ever lands on the plate that sits below the step'],
+    [/cellWave\(px\)-w0,/, 'each side has to be gated by the signed height of its neighbour, so the light only ever lands on the plate that sits below the step'],
     [/exp\(-max\(q\.z\+top,0\.\)\*1\.4\)/, 'the glow has to die as it rises off the plate it lands on, that is what gives it a body instead of a decal'],
     [/float seg=\(rl-rl0\)\*\.25;[\s\S]{0,600}seam\+=dens\*seg\*exp\(-rl0\*\.04\);/, 'the volume has to be integrated along the ray, not sampled once per march step, and a nearer panel has to hide the seams behind it'],
     [/col\+=\(1\.-exp\(-march\.seam\*uGapGlow\*\.4\)\)\*vec3\(/, 'the seam light has to be added emissively after the two lights, at a fog emissivity that keeps a lit crevice hazy instead of blown white, and bounded so the knob cannot blow out'],
@@ -2209,6 +2210,12 @@ function runMixerDeskPresetCheck() {
     [/vec3 plate=mix\(dayT,inkT,flip\);/, 'an inverted cell has to put the night tone on the plate'],
     [/vec3 ink=mix\(inkT,dayT,flip\);/, 'and the day tone on the engraving, so the cell stays high-contrast whichever side it lands on'],
     [/basecol=mix\(ink,plate,mtlp\)\*\(\.75\+\.5\*drv\);/, 'the engraving swap has to ride the themed colours, not a separate path'],
+    [/uniform float uWaveAmp;[\s\S]{0,120}uniform float uWaveK;[\s\S]{0,120}uniform float uWavePhase;/, 'the wave needs its amplitude, wavenumber and phase as uniforms so the console can tune it'],
+    [/u\.uWaveK\.value\s*=\s*\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS/, 'the 频率 knob has to become a wavenumber, so one crest per base wavelength at 100%'],
+    [/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/, 'the shader phase has to be the BPM wave clock plus the 相位 knob, one full turn per 100%'],
+    [/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,280}onset:\s*\(typeof beatOnsetFlag/, 'the desk frame has to advance the wave from the live beat pulse and its onset flag'],
+    [/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/, 'the wave has to freeze with the music, because iTime is the song clock'],
+    [/Number\(map\.gridStep\)[\s\S]{0,700}Number\(rtBeat\.tempoGap\)/, 'the wave speed has to trust the beat map first and the realtime tempo last'],
     [/uDayCol:\s*\{\s*value:\s*new THREE\.Color\(/, 'the material needs the day colour in its initial block'],
     [/u\.uDayCol\.value\.copy\(/, 'the theme colours have to reach the shader every frame'],
     [/function mixerThemePair\(/, 'the day/night pair has to be derived in one place so the hue rule is judgeable'],
@@ -2318,13 +2325,15 @@ function runMixerDeskPresetCheck() {
   if (!fs.existsSync(nightTest)) fail('tests/mixer-day-night.test.js is missing; the day/night density needs a measured judge');
   const fogTest = path.join(appRoot, 'tests', 'mixer-gap-glow.test.js');
   if (!fs.existsSync(fogTest)) fail('tests/mixer-gap-glow.test.js is missing; the seam fog needs a measured judge');
+  const waveTest = path.join(appRoot, 'tests', 'mixer-wave.test.js');
+  if (!fs.existsSync(waveTest)) fail('tests/mixer-wave.test.js is missing; the BPM wave clock needs a measured judge');
   const themeTest = path.join(appRoot, 'tests', 'mixer-theme-palette.test.js');
   if (!fs.existsSync(themeTest)) fail('tests/mixer-theme-palette.test.js is missing; the 120-degree panel palette needs a measured judge');
-  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest, fogTest, themeTest], { cwd: appRoot, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest, fogTest, waveTest, themeTest], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
     process.stdout.write(result.stdout || '');
     process.stderr.write(result.stderr || '');
-    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest) + ', ' + rel(fogTest) + ', ' + rel(themeTest));
+    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest) + ', ' + rel(fogTest) + ', ' + rel(waveTest) + ', ' + rel(themeTest));
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);

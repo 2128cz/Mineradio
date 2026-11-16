@@ -2,14 +2,15 @@
 
 // 预设 17「调音台」的缝隙圣光（这次是雾光柱，不是贴在台面上的遮罩）。
 //
-// 参考把每个面板格子沿 z 抬起 .4*sin(2*iTime+...)，相邻格子一高一低时缝隙才真的错台露出。
+// 台面被一道共享的行进 sine 抬起（cellWave：振幅 × sin(波长 × (x+y) + 相位)，相位来自跟着歌曲 BPM
+// 走的波时钟），相邻格子一高一低时缝隙才真的错台露出。
 // 光长在那道缝上，而且只长在低的那一侧：高板把光压在缝里，低板才接得住漫出来的光柱——所以门控读的是
 // 带符号的高度差（邻格减本格），齐平或本格更高时这一侧就是黑的。雾以格线为中心（宽度归 gapFog 管），
 // 高度上从本格自己的台面（抬起后的那一个面）往上按 1/1.4 单位衰减，沿视线累积进 march.seam，
 // 命中面即停止累积——所以前面的板子会挡住后面的缝，这是表面遮罩做不到的。
 // 这里把这套算式独立抄写成 oracle，量四件事：旋钮归零逐位不变；光是有体积的（沿缝走比横穿缝累积得多、
-// 被前面的面挡住就没了、亮的只有低的那一侧）；门控仍来自参考自己的波浪（周期同为 2*iTime，齐平不亮，
-// 半个周期后整片台的波浪反号——同一条缝的光要换到另一块板上，而不是原地变暗）；雾宽只加宽外圈、不动那条峰。
+// 被前面的面挡住就没了、亮的只有低的那一侧）；门控跟着同一道波浪走（整片台一个 2π 周期，半个周期后
+// 所有高差反号——同一条缝的光要换到另一块板上，而不是原地变暗）；雾宽只加宽外圈、不动那条峰。
 
 const fs = require('fs');
 const path = require('path');
@@ -20,44 +21,15 @@ const src = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '02-visua
 
 // ---------------------------------------------------------------- the oracle
 
-const U32 = 4294967296;
-const f32 = (x) => Math.fround(x);
-
-function floatBitsToUint(x) {
-  const buf = new ArrayBuffer(4);
-  new Float32Array(buf)[0] = x;
-  return new Uint32Array(buf)[0];
-}
-
-function pcg3d(s) {
-  let x = (Math.imul(s[0], 1145141919) + 1919810) >>> 0;
-  let y = (Math.imul(s[1], 1145141919) + 1919810) >>> 0;
-  let z = (Math.imul(s[2], 1145141919) + 1919810) >>> 0;
-  x = (x + Math.imul(y, z)) >>> 0;
-  y = (y + Math.imul(z, x)) >>> 0;
-  z = (z + Math.imul(x, y)) >>> 0;
-  x = (x ^ (x >>> 16)) >>> 0;
-  y = (y ^ (y >>> 16)) >>> 0;
-  z = (z ^ (z >>> 16)) >>> 0;
-  x = (x + Math.imul(y, z)) >>> 0;
-  y = (y + Math.imul(z, x)) >>> 0;
-  z = (z + Math.imul(x, y)) >>> 0;
-  return [x, y, z];
-}
-
-function pcg3df(c) {
-  const r = pcg3d([floatBitsToUint(f32(c[0])), floatBitsToUint(f32(c[1])), floatBitsToUint(f32(c[2]))]);
-  return [f32(r[0]) / U32, f32(r[1]) / U32, f32(r[2]) / U32].map(f32);
-}
-
-const fract = (x) => x - Math.floor(x);
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 
-// map()'s plate lift, verbatim: the gate and the light have to share this one wave.
-function bob(c, t) {
-  const h = pcg3df(c);
-  return 0.4 * Math.sin(2 * t + 1 * fract(h[2] * 28) + 0.3 * (c[0] + c[1]));
+// cellWave(): one shared sine, lifted by the amplitude and carried by the wave clock. `ph` below is
+// that clock's phase in radians, not a time: the JS side turns the song's tempo into it.
+const WAVE_AMP = 0.4;
+const WAVE_K = (Math.PI * 2) / 12;
+function bob(c, ph) {
+  return WAVE_AMP * Math.sin(WAVE_K * (c[0] + c[1]) + ph);
 }
 
 // seamGates(): a cell's four sides, each open only where that neighbour rides ABOVE this plate.
@@ -129,30 +101,32 @@ function eyeSeam(cell, t, o, over) {
 // the default knob lands at 0.74 of white and the crevice reads as a painted rim rather than a haze.
 const emit = (seam, glow) => 1 - Math.exp(-seam * glow * 0.4);
 
-// A cell with a genuinely staggered +x seam and a level y seam, so the shape tests have light to measure.
+// A cell with a genuinely staggered +x seam, so the shape tests have light to measure. The wave is
+// diagonal and shared, so a cell's x and y steps are the same number: the search only has to put a
+// plate on the steep part of the ridge.
 function findOpenCell() {
   for (let k = 0; k < 900; k++) {
     const cell = [1 + 2 * k, 3 + 2 * (k % 17), 50];
-    const g = gates(cell, SIZE, T, 1);
-    if (g[0] > 0.95 && g[1] < 0.05) return cell;
+    if (gates(cell, SIZE, T, 1)[0] > 0.95) return cell;
   }
-  throw new Error('no staggered seam found; the wave gate would never open');
+  throw new Error('no staggered seam found; the wave would never open');
 }
 const OPEN = findOpenCell();
 const atOpen = (o, over) => eyeSeam(OPEN, T, opts(o), over);
 
-// A seam whose gate sits inside its ramp, so the wave visibly moves it. Saturated gates are meant to
-// read the same from either side of the crest.
-function findMidCell() {
-  for (let k = 0; k < 900; k++) {
-    const cell = [1 + 2 * k, 3 + 2 * (k % 19), 50];
-    const g = gates(cell, SIZE, T, 1);
-    if (g[0] > 0.25 && g[0] < 0.75 && g[1] < 0.02) return cell;
+// The phase that puts one plate's +x gate inside its ramp. The plates sit on a 2-unit lattice, so at
+// any one phase the gate can only take a discrete set of values; sweeping the phase is what fills the
+// ramp in, and the level and period tests need a seam that moves instead of sitting saturated.
+const MID = [5, 3, 50];
+const MID_PHASE = (function () {
+  for (let i = 0; i < 1440; i++) {
+    const ph = (i * Math.PI) / 720;
+    const g = gates(MID, SIZE, ph, 1)[0];
+    if (g > 0.3 && g < 0.7) return ph;
   }
   throw new Error('no half-open seam found; the gate ramp would be unreadable');
-}
-const MID = findMidCell();
-const atMid = (t, o, over) => eyeSeam(MID, t, opts(o), over);
+})();
+const atMid = (ph, o, over) => eyeSeam(MID, ph, opts(o), over);
 
 // ---------------------------------------------------------------- 1) the knob at zero is nothing
 
@@ -236,43 +210,45 @@ const atMid = (t, o, over) => eyeSeam(MID, t, opts(o), over);
 // ---------------------------------------------------------------- 4) the gate is the reference's own wave
 
 {
-  const at = (t) => atMid(t, { drv: 0 });
-  const a = at(T);
+  const at = (ph) => atMid(ph, { drv: 0 });
+  const a = at(MID_PHASE);
   assert.ok(a > 0, 'the sample seam has to be lit at all');
-  // The plates ride on sin(2*iTime), so a full period is PI. The gate reads a difference of two of
-  // those waves, so it is the stagger that drives the light; if either changes, the gate is no longer
-  // the reference's own geometry.
-  const full = at(T + Math.PI);
-  assert.ok(Math.abs(full - a) < a * 1e-6, `the seam column has to breathe on the plates' own period (${a.toFixed(6)} vs ${full.toFixed(6)})`);
-  const moved = at(T + Math.PI / 4);
-  assert.ok(Math.abs(moved - a) > a * 0.05, `a quarter of that has to move the stagger, or nothing is driving it (${a.toFixed(6)} vs ${moved.toFixed(6)})`);
+  // The wave is one sine, so the whole field repeats every 2*PI of its clock, and half a period
+  // inverts every height at once.
+  const full = at(MID_PHASE + Math.PI * 2);
+  assert.ok(Math.abs(full - a) < a * 1e-9, `the field has to repeat on the wave's own period (${a.toFixed(6)} vs ${full.toFixed(6)})`);
+  const moved = at(MID_PHASE + Math.PI / 3);
+  assert.ok(Math.abs(moved - a) > a * 0.05, `a sixth of that has to move the ridge, or nothing is driving it (${a.toFixed(6)} vs ${moved.toFixed(6)})`);
 
-  // Half a period on, sin(2*iTime) has flipped sign, so every height difference flips with it. For a
-  // signed gate that means the light crosses onto the other plate instead of fading and returning -
-  // which is the observable difference from the symmetric gate this replaced.
+  // Half a period on, every height has flipped sign, so every step has too. For a signed gate that
+  // means the light crosses onto the other plate instead of fading and returning - which is the
+  // observable difference from the symmetric gate this replaced.
   let across = 0;
   for (let k = 0; k < 400; k++) {
     const cell = [1 + 2 * k, 3 + 2 * (k % 13), 50];
     const nb = [cell[0] + SIZE[0], cell[1], cell[2]];
     const here = gates(cell, SIZE, T, 1)[0];
-    const flips = gates(cell, SIZE, T + Math.PI / 2, 1)[0];
+    const flips = gates(cell, SIZE, T + Math.PI, 1)[0];
     assert.ok(Math.abs(flips - gates(nb, SIZE, T, 1)[2]) < 1e-12, "half a period on, a border's light has to sit on the other plate");
     if (here > 0.5 && flips === 0) across++;
   }
   assert.ok(across > 3, `the wave has to hand seams over to the other side (${across} moved)`);
 
-  // And the wave opens and shuts different seams over time, which is the whole point of borrowing it.
-  const openShare = (t) => {
-    let n = 0;
+  // And the ridge travels: the cells sit on a lattice, so a moving wave cannot change how many seams
+  // are open, only which ones - a pattern sliding across the desk rather than a field of lamps fading
+  // up and down in place.
+  const openSet = (ph) => {
+    const out = [];
     for (let k = 0; k < 300; k++) {
       const c = [1 + 2 * k, 3 + 2 * (k % 7), 50];
-      if (smoothstep(0.02, 0.35, bob([c[0] + 2, c[1], c[2]], t) - bob(c, t)) > 0.5) n++;
+      if (smoothstep(0.02, 0.35, bob([c[0] + 2, c[1], c[2]], ph) - bob(c, ph)) > 0.5) out.push(k);
     }
-    return n / 300;
+    return out;
   };
-  const shareA = openShare(T), shareB = openShare(T + 0.7);
-  assert.ok(shareA > 0.05 && shareA < 0.6, `lit sides have to be a minority of the field (open ${shareA.toFixed(2)})`);
-  assert.ok(Math.abs(shareA - shareB) > 0.02, 'the wave has to move which seams are lit, not just their brightness');
+  const setA = openSet(T), setB = openSet(T + 0.7);
+  assert.ok(setA.length > 60 && setA.length < 240, `lit sides have to be a share of the field, not all of it (open ${setA.length}/300)`);
+  const kept = setA.filter((k) => setB.indexOf(k) >= 0).length;
+  assert.ok(kept < setA.length * 0.9, `the ridge has to carry the glow to other seams as it travels (${kept}/${setA.length} stayed lit)`);
 }
 
 // ---------------------------------------------------------------- 5) fog width moves the halo, not the peak
@@ -322,18 +298,21 @@ const atMid = (t, o, over) => eyeSeam(MID, t, opts(o), over);
   assert.ok(/u\.uGapGlow\.value\s*=\s*Math\.max\(0,\s*mixerParam\('gapGlow'\)\)/.test(src), 'gapGlow has to reach the shader');
   assert.ok(/u\.uGapFog\.value\s*=\s*Math\.max\(0\.03,\s*mixerParam\('gapFog'\)\)/.test(src), 'gapFog has to reach the shader');
 
-  // The wave the gate reads has to be the reference's own, verbatim, or the light lies about the geometry.
-  assert.ok(/float cellWave\(vec3 c,vec3 h\)\{[\s\S]{0,90}\.4\*sin\(2\.\*iTime\+1\.\*fract\(h\.z\*28\.\)\+\.3\*\(c\.x\+c\.y\)\)/.test(src),
-    "cellWave has to be map()'s stagger wave");
-  assert.ok(/p\.z\+=\.4\*sin\(2\.\*iTime\+1\.\*fract\(grid\.h\.z\*28\.\)\+\.3\*\(grid\.c\.x\+grid\.c\.y\)\);/.test(src),
-    'the reference line inside map() stays as it is');
+  // The gate reads the same wave that lifts the plate - one shared sine in the ported body, whose
+  // amplitude and phase are uniforms (the wave's own clock is the BPM-driven phase, not iTime).
+  assert.ok(/float cellWave\(vec3 c\)\{[\s\S]{0,80}uWaveAmp\*sin\(uWaveK\*\(c\.x\+c\.y\)\+uWavePhase\)/.test(src),
+    'cellWave has to be the one shared sine, scaled by the amplitude and carried by the phase');
+  assert.equal(src.indexOf('2.*iTime+1.*fract(h.z*28.)'), -1, "the per-cell random phase would break the wave's coherence");
+  assert.ok(/p\.z\+=cellWave\(grid\.c\);/.test(src), 'map() has to lift each plate with that same wave');
+  assert.ok(src.indexOf('float cellWave(vec3 c)') < src.indexOf('vec4 map(vec3 p,Grid grid)'),
+    'cellWave has to be declared above map(), which calls it');
 
   // Signed, both of them: the gate must ask which side is higher, and the column must grow out of the
   // plate it lands on rather than out of the mean plane, or a lifted panel lights inside itself.
-  assert.ok(/cellWave\(px,pcg3df\(px\)\)-w0,/.test(src), 'the gate has to be a signed height difference');
+  assert.ok(/cellWave\(px\)-w0,/.test(src), 'the gate has to be a signed height difference');
   assert.equal(src.indexOf('abs(w0-cellWave('), -1, 'the symmetric gate is what made this read as a bevel');
   assert.ok(/exp\(-max\(q\.z\+top,0\.\)\*1\.4\)/.test(src), 'the column has to decay from the lifted top of its own plate');
-  assert.ok(/float top=cellWave\(grid\.c,grid\.h\);/.test(src), 'and the march has to hand that height to the density');
+  assert.ok(/float top=cellWave\(grid\.c\);/.test(src), 'and the march has to hand that height to the density');
 
   // The volume has to be carried out of the march, and only out of the eye ray.
   assert.ok(/"  float seam;"/.test(src), 'the march result has to have a slot for the accumulated column');
@@ -371,4 +350,4 @@ const atMid = (t, o, over) => eyeSeam(MID, t, opts(o), over);
 }
 
 const shown = emit(atOpen({}), DEF.glow);
-console.log(`OK mixer seam volume: silent at 0 and when flush, runs along the seam, hidden by a nearer panel, lit on the lower plate only, handed from side to side by the reference wave, width moves only the halo; default reads ${shown.toFixed(2)}`);
+console.log(`OK mixer seam volume: silent at 0 and when flush, runs along the seam, hidden by a nearer panel, lit on the lower plate only, handed from side to side by the wave, width moves only the halo; default reads ${shown.toFixed(2)}`);
