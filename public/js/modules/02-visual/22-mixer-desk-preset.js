@@ -623,7 +623,7 @@ var MIXER_PORT_LINES = [
   "      vec3 spec=speccol*pow(dotnh,specpow);",
   "      col+=shadow*dotnl*(diff+spec);",
   "    }",
-  "    col+=(1.-exp(-march.seam*uGapGlow))*vec3(1.,.86,.62);",
+  "    col+=(1.-exp(-march.seam*uGapGlow*.4))*vec3(1.,.86,.62);",
   "  }",
   "  ",
   "  col=pow(col,vec3(.4545));",

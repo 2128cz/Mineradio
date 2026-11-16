@@ -125,8 +125,9 @@ function eyeSeam(cell, t, o, over) {
   return accumulate(ro, EYE, 0, p.stop, cell, SIZE, p.g || gates(cell, SIZE, t, o.drv), o.fog, t);
 }
 
-// The one line mainImage adds.
-const emit = (seam, glow) => 1 - Math.exp(-seam * glow);
+// The one line mainImage adds. The .4 is the fog's own emissivity: without it a fully open seam at
+// the default knob lands at 0.74 of white and the crevice reads as a painted rim rather than a haze.
+const emit = (seam, glow) => 1 - Math.exp(-seam * glow * 0.4);
 
 // A cell with a genuinely staggered +x seam and a level y seam, so the shape tests have light to measure.
 function findOpenCell() {
@@ -346,7 +347,7 @@ const atMid = (t, o, over) => eyeSeam(MID, t, opts(o), over);
   assert.ok(/domarch\(ro,rd,int\(uSteps\),1\)/.test(src), 'the eye ray is the one that gathers the column');
 
   // Emissive, after the two lights, before the gamma line.
-  const addAt = src.indexOf('col+=(1.-exp(-march.seam*uGapGlow))');
+  const addAt = src.indexOf('col+=(1.-exp(-march.seam*uGapGlow*.4))');
   const lightAt = src.lastIndexOf('col+=shadow*dotnl*(diff+spec);');
   const gammaAt = src.indexOf('col=pow(col,vec3(.4545))');
   assert.ok(addAt > lightAt && addAt < gammaAt, 'the seam light has to be emissive, added after the lighting');

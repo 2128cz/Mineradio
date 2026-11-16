@@ -2203,7 +2203,7 @@ function runMixerDeskPresetCheck() {
     [/cellWave\(px,pcg3df\(px\)\)-w0,/, 'each side has to be gated by the signed height of its neighbour, so the light only ever lands on the plate that sits below the step'],
     [/exp\(-max\(q\.z\+top,0\.\)\*1\.4\)/, 'the glow has to die as it rises off the plate it lands on, that is what gives it a body instead of a decal'],
     [/float seg=\(rl-rl0\)\*\.25;[\s\S]{0,600}seam\+=dens\*seg\*exp\(-rl0\*\.04\);/, 'the volume has to be integrated along the ray, not sampled once per march step, and a nearer panel has to hide the seams behind it'],
-    [/col\+=\(1\.-exp\(-march\.seam\*uGapGlow\)\)\*vec3\(/, 'the seam light has to be added emissively after the two lights, and bounded so the knob cannot blow out'],
+    [/col\+=\(1\.-exp\(-march\.seam\*uGapGlow\*\.4\)\)\*vec3\(/, 'the seam light has to be added emissively after the two lights, at a fog emissivity that keeps a lit crevice hazy instead of blown white, and bounded so the knob cannot blow out'],
     [/vec3 dayT=mix\(c,uDayCol,uThemeMix\);/, 'the day panel has to keep the reference greyscale as the zero end of the theme knob'],
     [/vec3 inkT=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/, 'the night panel has to keep the reference black as the zero end too'],
     [/vec3 plate=mix\(dayT,inkT,flip\);/, 'an inverted cell has to put the night tone on the plate'],
