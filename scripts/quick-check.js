@@ -2197,6 +2197,9 @@ function runMixerDeskPresetCheck() {
     [/2\.0\*uGridScale,2\.0\*uGridScale,100\.0/, 'the cell sizes have to come from the grid-scale knob'],
     [/float invThr=mix\(\.1,\.9,uNightMix\);/, 'the day/night knob has to move the inverted-module density from the reference 10% up to 90%'],
     [/step\(fract\(march\.grid\.h\.z\*66\.\),invThr\)/, 'the palette flip has to be drawn per cell from that threshold'],
+    [/float ge=abs\(min\(ghs\.x-abs\(gp\.x\),ghs\.y-abs\(gp\.y\)\)\);/, 'the seam fog has to measure its distance from the plate border the reference cuts at .02'],
+    [/\.4\*sin\(2\.\*iTime\+1\.\*fract\(pcg3df\(gc\)\.z\*28\.\)\+\.3\*\(gc\.x\+gc\.y\)\)/, 'the fog gate has to read the neighbour plate\'s own reference wave, so only staggered seams light'],
+    [/col\+=gap\*vec3\(/, 'the seam light has to be added emissively, after the two lights'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2276,11 +2279,13 @@ function runMixerDeskPresetCheck() {
   if (!fs.existsSync(cameraTest)) fail('tests/mixer-lyric-camera.test.js is missing; the mirrored camera needs a numeric judge');
   const nightTest = path.join(appRoot, 'tests', 'mixer-day-night.test.js');
   if (!fs.existsSync(nightTest)) fail('tests/mixer-day-night.test.js is missing; the day/night density needs a measured judge');
-  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest], { cwd: appRoot, encoding: 'utf8' });
+  const fogTest = path.join(appRoot, 'tests', 'mixer-gap-glow.test.js');
+  if (!fs.existsSync(fogTest)) fail('tests/mixer-gap-glow.test.js is missing; the seam fog needs a measured judge');
+  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest, fogTest], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
     process.stdout.write(result.stdout || '');
     process.stderr.write(result.stderr || '');
-    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest));
+    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest) + ', ' + rel(fogTest));
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);

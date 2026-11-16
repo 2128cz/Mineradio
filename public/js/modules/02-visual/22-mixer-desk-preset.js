@@ -6,8 +6,10 @@
 // 0b5vr). The body below is the reference source, kept as written; the only changes are the
 // uniforms that replace a few literal constants (camera pan/zoom/roll, grid scale, level gain,
 // march/shadow steps, max distance, and the share of panels that flip to the inverted palette —
-// the reference keeps 10%, which is what day mode, the default, still draws) and a 1.0 alpha so
-// the post pass can copy it. The reference page was not reachable and carried no licence header;
+// the reference keeps 10%, which is what day mode, the default, still draws), one added emissive
+// term that lights the crevice between two staggered plates from the reference's own stagger wave,
+// and a 1.0 alpha so the post pass can copy it. The reference page was not reachable and carried
+// no licence header;
 // the licence is UNVERIFIED and must be confirmed with the author before this build is
 // distributed. See 22-mixer-desk-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
 
@@ -29,6 +31,8 @@ var MIXER_TUNING_SCHEMA = {
   audioDrive: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricFace: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   nightMix: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  gapGlow: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  gapFog: { def: 0.22, min: 0.03, max: 0.6, kind: 'unit', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
 
@@ -56,6 +60,8 @@ var MIXER_PORT_LINES = [
   "uniform float uLevelGain;",
   "uniform float uAudioDrive;",
   "uniform float uNightMix;",
+  "uniform float uGapGlow;",
+  "uniform float uGapFog;",
   "uniform float uSteps;",
   "uniform float uShadowSteps;",
   "uniform float uMaxDist;",
@@ -470,12 +476,23 @@ var MIXER_PORT_LINES = [
   "    ",
   "    float mtl=march.isect.y;",
   "    float mtlp=march.isect.z;",
+  "    float gap=0.;",
   "    float drv=mLevel(march.grid.h.z*2.1+.37);",
   "    if(mtl==0.){",
   "      float invThr=mix(.1,.9,uNightMix);",
   "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),invThr));",
   "      vec3 c=.9+.0*sin(.1*(march.grid.c.x+march.grid.c.y)+march.grid.h.z+vec3(0,2,3));",
   "      basecol=mix(vec3(.04),c,mtlp)*(.75+.5*drv);",
+  "      ",
+  "      vec2 gp=(march.rp-march.grid.c).xy;",
+  "      vec2 ghs=march.grid.s.xy/2.-.02;",
+  "      float ge=abs(min(ghs.x-abs(gp.x),ghs.y-abs(gp.y)));",
+  "      vec2 gs=sign(gp);",
+  "      vec3 gc=march.grid.c+(ghs.x-abs(gp.x)<ghs.y-abs(gp.y)?vec3(gs.x*march.grid.s.x,0.,0.):vec3(0.,gs.y*march.grid.s.y,0.));",
+  "      float gb=abs(",
+  "        .4*sin(2.*iTime+1.*fract(march.grid.h.z*28.)+.3*(march.grid.c.x+march.grid.c.y))",
+  "        -.4*sin(2.*iTime+1.*fract(pcg3df(gc).z*28.)+.3*(gc.x+gc.y)));",
+  "      gap=uGapGlow*(exp(-ge*24.)+.45*exp(-ge/max(.03,uGapFog)*3.))*smoothstep(.02,.35,gb)*(.35+.65*drv);",
   "    }else if(mtl==1.){",
   "      basecol=vec3(0);",
   "      speccol=vec3(.5);",
@@ -546,6 +563,7 @@ var MIXER_PORT_LINES = [
   "      vec3 spec=speccol*pow(dotnh,specpow);",
   "      col+=shadow*dotnl*(diff+spec);",
   "    }",
+  "    col+=gap*vec3(1.,.86,.62);",
   "  }",
   "  ",
   "  col=pow(col,vec3(.4545));",
@@ -692,7 +710,9 @@ function mixerInitialUniforms() {
     uShakeAmp: { value: 0.6 },
     uShakeRate: { value: 1 },
     uAudioDrive: { value: 1 },
-    uNightMix: { value: 0 }
+    uNightMix: { value: 0 },
+    uGapGlow: { value: 0.7 },
+    uGapFog: { value: 0.22 }
   };
 }
 
@@ -812,6 +832,8 @@ function mixerFeedUniforms(nowSec) {
   u.uShakeRate.value = Math.max(0.1, mixerParam('camShakeRate'));
   u.uAudioDrive.value = Math.max(0, mixerParam('audioDrive'));
   u.uNightMix.value = mixerClamp01(mixerParam('nightMix'));
+  u.uGapGlow.value = Math.max(0, mixerParam('gapGlow'));
+  u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
   mixerState.blitMat.uniforms.uVignette.value = 0.2;
   void nowSec;
 }
