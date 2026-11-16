@@ -652,7 +652,12 @@ function updateVisualTintControls() {
   var color = normalizeHexColor(fx.visualTintColor || '#9db8cf');
   document.documentElement.style.setProperty('--visual-tint', color);
   if (picker) picker.value = color;
-  if (value) value.textContent = fx.visualTintMode === 'custom' ? color.toUpperCase() : '封面取色';
+  if (value) {
+    // 自动模式下也要给出算出来的那个色，否则「封面取色」是一个读不出来的说法，
+    // 没法判断画面到底跟着哪个颜色走（「界面高亮」那一行一直是直接显示十六进制的）。
+    var resolved = typeof effectiveSkullVisualTint === 'function' ? effectiveSkullVisualTint().color : color;
+    value.textContent = fx.visualTintMode === 'custom' ? color.toUpperCase() : '封面取色 ' + String(resolved).toUpperCase();
+  }
   if (autoBtn) autoBtn.classList.toggle('active', fx.visualTintMode !== 'custom');
 }
 function setVisualTintAuto() {
