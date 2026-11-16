@@ -2177,7 +2177,8 @@ function runMixerDeskPresetCheck() {
     [/uvec3 pcg3d\(uvec3 s\)/, 'the reference hash has to survive the port'],
     [/Grid dogrid\(vec3 ro,vec3 rd\)/, 'the reference grid function has to survive the port'],
     [/vec4 map\(vec3 p,Grid grid\)/, 'the reference module field has to survive the port'],
-    [/March domarch\(vec3 ro,vec3 rd,int iter\)/, 'the reference march has to survive the port'],
+    [/March domarch\(vec3 ro,vec3 rd,int iter,int seamOn\)/, 'the march has to stay the reference one, plus the one switch that keeps the seam volume out of the shadow rays'],
+    [/rl=min\(rl\+isect\.x\*\.8,gridlen\);/, 'the reference march step has to survive the port'],
     [/float mLevel\(float h\)/, 'the level lookup has to be one helper the whole field can use'],
     [/texture\(iChannel0, vec2\(fract\(h\), 0\.5\)\)\.x \* uLevelGain \* uAudioDrive/, 'the helper has to scale by the level and audio-drive knobs'],
     [/float drv=mLevel\(grid\.h\.z\*1\.37\+\.11\)/, 'the knobs have to read their own spectrum point'],
@@ -2185,8 +2186,8 @@ function runMixerDeskPresetCheck() {
     [/plasma\*=\(\.7\+\.6\*mLevel/, 'the kaoss surface has to be driven by the spectrum'],
     [/uBeat\*uShakeAmp\*\.02/, 'the camera shake has to be scaled by the beat and its knob'],
     [/sin\(iTime\*uShakeRate\*8\.7\)/, 'the shake has to wobble at its own rate'],
-    [/domarch\(ro,rd,int\(uSteps\)\)/, 'the march steps have to come from the knob'],
-    [/int\(uShadowSteps\)/, 'the shadow steps have to come from the knob'],
+    [/domarch\(ro,rd,int\(uSteps\),1\)/, 'the march steps have to come from the knob, and only the eye ray carries the seam volume'],
+    [/domarch\(march\.rp,l,int\(uShadowSteps\),0\)/, 'the shadow march has to come from its knob and skip the seam volume, or every lit surface would read as glow'],
     [/if\(rl>uMaxDist\)\{break;\}/, 'the far distance has to come from the knob'],
     [/fragColor = vec4\(col,1\.0\);/, 'the fragment has to write opaque alpha so the blit can copy it'],
     [/sin\(iTime\*uCamAnim\)/, 'the camera sway has to come from its knob'],
@@ -2197,9 +2198,12 @@ function runMixerDeskPresetCheck() {
     [/2\.0\*uGridScale,2\.0\*uGridScale,100\.0/, 'the cell sizes have to come from the grid-scale knob'],
     [/float flip=step\(fract\(march\.grid\.h\.z\*66\.\),uNightMix\+jit\);/, 'the day/night knob has to be the inverted-cell share itself, so 0 means every plate is the day colour and 1 means every plate is the night one'],
     [/float jit=\(march\.grid\.h\.x\*2\.-1\.\)\*uInvShare;/, 'the randomness knob has to jitter that boundary per cell, and it has to read a hash lane the share does not use'],
-    [/float ge=abs\(min\(ghs\.x-abs\(gp\.x\),ghs\.y-abs\(gp\.y\)\)\);/, 'the seam fog has to measure its distance from the plate border the reference cuts at .02'],
-    [/\.4\*sin\(2\.\*iTime\+1\.\*fract\(pcg3df\(gc\)\.z\*28\.\)\+\.3\*\(gc\.x\+gc\.y\)\)/, 'the fog gate has to read the neighbour plate\'s own reference wave, so only staggered seams light'],
-    [/col\+=gap\*vec3\(/, 'the seam light has to be added emissively, after the two lights'],
+    [/float cellWave\(vec3 c,vec3 h\)\{[\s\S]{0,80}\.4\*sin\(2\.\*iTime\+1\.\*fract\(h\.z\*28\.\)\+\.3\*\(c\.x\+c\.y\)\)/, 'the seam helper has to reuse the reference stagger wave verbatim, so the light can only ever sit where the reference moves plates'],
+    [/vec2 d=abs\(hs-abs\(q\.xy\)\);/, 'the volume has to measure its distance from the plate border the reference cuts at .02'],
+    [/cellWave\(px,pcg3df\(px\)\)-w0,/, 'each side has to be gated by the signed height of its neighbour, so the light only ever lands on the plate that sits below the step'],
+    [/exp\(-max\(q\.z\+top,0\.\)\*1\.4\)/, 'the glow has to die as it rises off the plate it lands on, that is what gives it a body instead of a decal'],
+    [/float seg=\(rl-rl0\)\*\.25;[\s\S]{0,600}seam\+=dens\*seg\*exp\(-rl0\*\.04\);/, 'the volume has to be integrated along the ray, not sampled once per march step, and a nearer panel has to hide the seams behind it'],
+    [/col\+=\(1\.-exp\(-march\.seam\*uGapGlow\)\)\*vec3\(/, 'the seam light has to be added emissively after the two lights, and bounded so the knob cannot blow out'],
     [/vec3 dayT=mix\(c,uDayCol,uThemeMix\);/, 'the day panel has to keep the reference greyscale as the zero end of the theme knob'],
     [/vec3 inkT=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/, 'the night panel has to keep the reference black as the zero end too'],
     [/vec3 plate=mix\(dayT,inkT,flip\);/, 'an inverted cell has to put the night tone on the plate'],
@@ -2212,11 +2216,27 @@ function runMixerDeskPresetCheck() {
   ]) {
     if (!pattern.test(text)) fail(why);
   }
+  // A GLSL body that does not balance its brackets cannot compile, and the only symptom in the app is
+  // a black desk. The ported body has no string literals and its comments carry no brackets, so a
+  // count is enough to catch it here instead of at runtime.
+  const portStart = text.indexOf('var MIXER_PORT_LINES = [');
+  if (portStart < 0) fail('the ported body has to be one line table');
+  const portBody = text.slice(portStart, text.indexOf('\n];', portStart)).replace(/\/\/[^\n]*/g, '');
+  for (const [open, close, name] of [['{', '}', 'braces'], ['(', ')', 'parens']]) {
+    const a = (portBody.match(new RegExp('\\' + open, 'g')) || []).length;
+    const b = (portBody.match(new RegExp('\\' + close, 'g')) || []).length;
+    if (a !== b) fail(`the ported GLSL body has ${a} ${name} open and ${b} close; the driver would report a syntax error and the desk would render black`);
+  }
   // The old knob did two jobs at once: it scaled the density into a 10%..90% band and then rewrote the
   // material polarity. Either one coming back would break 0 = day / 1 = night.
+  // The old seam light was a mask painted on the panel surface with a Manhattan distance; the user
+  // rejected it as flat, so it must not come back under another name.
   for (const [pattern, why] of [
     [/float invThr=/, 'uNightMix may not be re-scaled into a density band again; it is the share of inverted cells'],
     [/mtlp=mix\(mtlp,1\.-mtlp,/, 'the polarity has to be the two tones trading places, not mtlp rewritten'],
+    [/float gap=0\.;/, 'the seam light lives in the march now; a per-pixel accumulator is the surface-mask shape'],
+    [/vec2 gp=\(march\.rp-march\.grid\.c\)\.xy;/, 'the seam light may not go back to being measured on the hit surface'],
+    [/exp\(-ge\*24\.\)/, 'the seam light may not go back to a two-tap exponential band painted onto the panel'],
   ]) {
     if (pattern.test(text)) fail(why);
   }

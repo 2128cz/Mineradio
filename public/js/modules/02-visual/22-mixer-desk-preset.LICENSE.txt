@@ -17,8 +17,10 @@ What was changed by the port:
     every one - and a second knob randomises which panels sit near the boundary without moving the
     share. The inversion itself no longer rewrites the material polarity the reference did; it
     trades the plate colour with the engraving colour, so an inverted cell stays high contrast;
-  - one emissive term was added: the crevice between two plates is lit, gated by the reference's
-    own plate-stagger wave so only seams where the neighbours are out of step glow;
+  - one volumetric term was added: the crevice between two plates holds a column of fog that the eye
+    ray integrates along its path, so a nearer panel occludes a seam behind it. It is gated by the
+    reference's own plate-stagger wave read as a SIGNED height difference, so the light spills onto
+    whichever of the two plates sits lower and a flush seam stays dark;
   - the two plate colours are mixed towards the song's theme colour, and towards the colour 120
     degrees round the hue wheel from it for the inverted panels; the reference's own .9 and .04
     literals stay as the zero end of that mix, so at 0 the field is the reference greyscale;
