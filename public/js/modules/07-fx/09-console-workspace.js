@@ -299,6 +299,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mixercamShakeRate', '震动频率', '调音台 相机 震动 频率 快慢'),
         fxConsoleItem('fx-mixeraudioDrive', '音频驱动强度', '调音台 音频 驱动 所有 模块 电平 频谱'),
         fxConsoleItem('fx-mixerlyricFace', '歌词朝向', '调音台 歌词 朝向 贴合 台面 正对 镜头 透视'),
+        fxConsoleItem('fx-mixernightMix', '昼夜模式', '调音台 昼夜 白天 黑夜 夜间 模式 黑色 白色 反色 元件 数量 密度'),
         fxConsoleItem('fx-mixerrenderScale', '渲染分辨率', '调音台 渲染 分辨率 性能'),
         fxConsoleItem({ selector: '.fx-mixer-tuning .fx-actions' }, '恢复调音台默认', '调音台 重置 还原 默认')
       ] },

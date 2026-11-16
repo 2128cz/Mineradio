@@ -5,10 +5,11 @@
 // This is a port of the Shadertoy shader at https://www.shadertoy.com/view/cs2GWD (author marker
 // 0b5vr). The body below is the reference source, kept as written; the only changes are the
 // uniforms that replace a few literal constants (camera pan/zoom/roll, grid scale, level gain,
-// march/shadow steps, max distance) and a 1.0 alpha so the post pass can copy it. The reference
-// page was not reachable and carried no licence header; the licence is UNVERIFIED and must be
-// confirmed with the author before this build is distributed. See 22-mixer-desk-preset.LICENSE.txt,
-// NOTICE.md and docs/THIRD_PARTY_PORTS.md.
+// march/shadow steps, max distance, and the share of panels that flip to the inverted palette —
+// the reference keeps 10%, which is what day mode, the default, still draws) and a 1.0 alpha so
+// the post pass can copy it. The reference page was not reachable and carried no licence header;
+// the licence is UNVERIFIED and must be confirmed with the author before this build is
+// distributed. See 22-mixer-desk-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
 
 var MIXER_PRESET_INDEX = 17;
 
@@ -27,6 +28,7 @@ var MIXER_TUNING_SCHEMA = {
   camShakeRate: { def: 1, min: 0.1, max: 4, kind: 'ratio', rebuild: 'live' },
   audioDrive: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   lyricFace: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  nightMix: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
 
@@ -53,6 +55,7 @@ var MIXER_PORT_LINES = [
   "uniform float uGridScale;",
   "uniform float uLevelGain;",
   "uniform float uAudioDrive;",
+  "uniform float uNightMix;",
   "uniform float uSteps;",
   "uniform float uShadowSteps;",
   "uniform float uMaxDist;",
@@ -469,7 +472,8 @@ var MIXER_PORT_LINES = [
   "    float mtlp=march.isect.z;",
   "    float drv=mLevel(march.grid.h.z*2.1+.37);",
   "    if(mtl==0.){",
-  "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),.1));",
+  "      float invThr=mix(.1,.9,uNightMix);",
+  "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),invThr));",
   "      vec3 c=.9+.0*sin(.1*(march.grid.c.x+march.grid.c.y)+march.grid.h.z+vec3(0,2,3));",
   "      basecol=mix(vec3(.04),c,mtlp)*(.75+.5*drv);",
   "    }else if(mtl==1.){",
@@ -687,7 +691,8 @@ function mixerInitialUniforms() {
     uBeat: { value: 0 },
     uShakeAmp: { value: 0.6 },
     uShakeRate: { value: 1 },
-    uAudioDrive: { value: 1 }
+    uAudioDrive: { value: 1 },
+    uNightMix: { value: 0 }
   };
 }
 
@@ -806,6 +811,7 @@ function mixerFeedUniforms(nowSec) {
   u.uShakeAmp.value = Math.max(0, mixerParam('camShake'));
   u.uShakeRate.value = Math.max(0.1, mixerParam('camShakeRate'));
   u.uAudioDrive.value = Math.max(0, mixerParam('audioDrive'));
+  u.uNightMix.value = mixerClamp01(mixerParam('nightMix'));
   mixerState.blitMat.uniforms.uVignette.value = 0.2;
   void nowSec;
 }

@@ -2195,6 +2195,8 @@ function runMixerDeskPresetCheck() {
     [/uCamFov\*p\*r2d\(cr\)/, 'the field of view has to come from its knob'],
     [/mix\(.5,\.0,canim\)\*uCamRoll/, 'the roll has to come from its knob'],
     [/2\.0\*uGridScale,2\.0\*uGridScale,100\.0/, 'the cell sizes have to come from the grid-scale knob'],
+    [/float invThr=mix\(\.1,\.9,uNightMix\);/, 'the day/night knob has to move the inverted-module density from the reference 10% up to 90%'],
+    [/step\(fract\(march\.grid\.h\.z\*66\.\),invThr\)/, 'the palette flip has to be drawn per cell from that threshold'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2272,11 +2274,13 @@ function runMixerDeskPresetCheck() {
   if (!fs.existsSync(levelTest)) fail('tests/mixer-level-table.test.js is missing');
   const cameraTest = path.join(appRoot, 'tests', 'mixer-lyric-camera.test.js');
   if (!fs.existsSync(cameraTest)) fail('tests/mixer-lyric-camera.test.js is missing; the mirrored camera needs a numeric judge');
-  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest], { cwd: appRoot, encoding: 'utf8' });
+  const nightTest = path.join(appRoot, 'tests', 'mixer-day-night.test.js');
+  if (!fs.existsSync(nightTest)) fail('tests/mixer-day-night.test.js is missing; the day/night density needs a measured judge');
+  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
     process.stdout.write(result.stdout || '');
     process.stderr.write(result.stderr || '');
-    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest));
+    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest));
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);
