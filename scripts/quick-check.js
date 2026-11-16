@@ -2220,10 +2220,21 @@ function runMixerDeskPresetCheck() {
   if (!/stageLyrics: false/.test(ownerBlock)) fail('the desk must leave stageLyrics visible; the default scrolling lyrics ride over the console');
   if (!/function updateMixerDeskLyrics\(/.test(text)) fail('the lyrics need their camera-matched transform after the app lays them out');
   if (!/mixerRenderLyricsOverlay\(\)/.test(text)) fail('the lyrics have to be composited over the blit, or the opaque console hides them');
-  if (!/updateMixerDeskLyrics\(dt, stageLyricsStepDt > 0\)/.test(loopText)) fail('the main loop must apply the mixer camera to the lyrics after updateStageLyrics3D, with the layout-ran flag so the delta cannot stack');
-  if (!/sc\.basePos\.copy\(group\.position\)/.test(text) || !/group\.quaternion\.copy\(sc\.baseQuat\)/.test(text)) {
-    fail('the mixer lyric delta has to come from the last layout output, not from the already-offset group');
+  if (!/updateMixerDeskLyrics\(dt, stageLyricsStepDt > 0\)/.test(loopText)) fail('the main loop must apply the mixer camera to the lyrics after updateStageLyrics3D, with the layout-ran flag so the fit scale is only read when the layout wrote it');
+  if (/setFromAxisAngle\(sc\.fwd/.test(text)) {
+    fail('the lyrics must ride a mirror of the console camera; spinning them about the screen axis is exactly the mismatch that was fixed');
   }
+  if (!/function mixerScenePose\(/.test(text) || !/function mixerApplyLyricCamera\(/.test(text)) {
+    fail('the shader owns its camera, so the desk needs a JS mirror of orthbas(co-ct) plus the r2d roll for the lyrics');
+  }
+  if (!/mixerState\.lyricCam = new THREE\.OrthographicCamera\(/.test(text)) {
+    fail('the lyric overlay needs an orthographic camera of its own; the console frame has no perspective one');
+  }
+  const overlayBlock = text.slice(text.indexOf('function mixerRenderLyricsOverlay('));
+  if (!/var cam = mixerState\.lyricCam/.test(overlayBlock)) {
+    fail('mixerRenderLyricsOverlay must draw the text through the mirrored camera, not the app camera');
+  }
+  if (!/lyricFace:/.test(text)) fail('the desk needs the lyricFace knob: flat on the console by default, facing the camera on demand');
   for (const field of ['frames:', 'error:', 'passScale:', 'rt:']) {
     if (text.indexOf(field) < 0) fail('mixerDeskStatus() has to report ' + field);
   }
@@ -2259,11 +2270,13 @@ function runMixerDeskPresetCheck() {
   }
   const levelTest = path.join(appRoot, 'tests', 'mixer-level-table.test.js');
   if (!fs.existsSync(levelTest)) fail('tests/mixer-level-table.test.js is missing');
-  const result = spawnSync(process.execPath, ['--test', levelTest], { cwd: appRoot, encoding: 'utf8' });
+  const cameraTest = path.join(appRoot, 'tests', 'mixer-lyric-camera.test.js');
+  if (!fs.existsSync(cameraTest)) fail('tests/mixer-lyric-camera.test.js is missing; the mirrored camera needs a numeric judge');
+  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
     process.stdout.write(result.stdout || '');
     process.stderr.write(result.stderr || '');
-    fail('the mixer level-table regression failed: ' + rel(levelTest));
+    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest));
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);
