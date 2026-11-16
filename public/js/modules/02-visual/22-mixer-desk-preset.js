@@ -33,8 +33,17 @@ var MIXER_TUNING_SCHEMA = {
   nightMix: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   gapGlow: { def: 0.7, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gapFog: { def: 0.22, min: 0.03, max: 0.6, kind: 'unit', rebuild: 'live' },
+  themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
+
+// 面板配色：白天面板用当前歌曲的主题色（控制台「视觉主色」：封面取色，或自定义色），黑夜面板用它在
+// 色环上 +120° 的那个色；两套只按亮度分开（亮 0.86 / 暗 0.11），饱和度封顶以免大面积纯色刺眼。
+var MIXER_THEME_FALLBACK = '#9db8cf';
+var MIXER_THEME_HUE_SHIFT = 1 / 3;
+var MIXER_THEME_DAY_LIGHTNESS = 0.86;
+var MIXER_THEME_NIGHT_LIGHTNESS = 0.11;
+var MIXER_THEME_SATURATION_CAP = 0.55;
 
 function mixerParam(key) {
   var store = (typeof mixerTuning !== 'undefined') ? mixerTuning : null;
@@ -62,6 +71,9 @@ var MIXER_PORT_LINES = [
   "uniform float uNightMix;",
   "uniform float uGapGlow;",
   "uniform float uGapFog;",
+  "uniform vec3 uDayCol;",
+  "uniform vec3 uNightCol;",
+  "uniform float uThemeMix;",
   "uniform float uSteps;",
   "uniform float uShadowSteps;",
   "uniform float uMaxDist;",
@@ -482,7 +494,9 @@ var MIXER_PORT_LINES = [
   "      float invThr=mix(.1,.9,uNightMix);",
   "      mtlp=mix(mtlp,1.-mtlp,step(fract(march.grid.h.z*66.),invThr));",
   "      vec3 c=.9+.0*sin(.1*(march.grid.c.x+march.grid.c.y)+march.grid.h.z+vec3(0,2,3));",
-  "      basecol=mix(vec3(.04),c,mtlp)*(.75+.5*drv);",
+  "      vec3 litc=mix(c,uDayCol,uThemeMix);",
+  "      vec3 darkc=mix(vec3(.04),uNightCol,uThemeMix);",
+  "      basecol=mix(darkc,litc,mtlp)*(.75+.5*drv);",
   "      ",
   "      vec2 gp=(march.rp-march.grid.c).xy;",
   "      vec2 ghs=march.grid.s.xy/2.-.02;",
@@ -687,6 +701,7 @@ var mixerState = {
   levelData: null, levelTex: null,
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
+  themeKey: '', themeDay: null, themeNight: null,
   size: null
 };
 
@@ -712,7 +727,10 @@ function mixerInitialUniforms() {
     uAudioDrive: { value: 1 },
     uNightMix: { value: 0 },
     uGapGlow: { value: 0.7 },
-    uGapFog: { value: 0.22 }
+    uGapFog: { value: 0.22 },
+    uDayCol: { value: new THREE.Color(mixerThemePair(MIXER_THEME_FALLBACK).day) },
+    uNightCol: { value: new THREE.Color(mixerThemePair(MIXER_THEME_FALLBACK).night) },
+    uThemeMix: { value: 1 }
   };
 }
 
@@ -815,6 +833,38 @@ function mixerUpdateLevels(frame, dt, smooth) {
   return true;
 }
 
+function mixerThemeHex(h, s, l) {
+  var rgb = hslToRgb(h, s, l);
+  return rgbToHexColor(rgb.r, rgb.g, rgb.b);
+}
+
+function mixerThemePair(hex) {
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  var sat = Math.min(MIXER_THEME_SATURATION_CAP, hsl.s);
+  return {
+    day: mixerThemeHex(hsl.h, sat, MIXER_THEME_DAY_LIGHTNESS),
+    night: mixerThemeHex((hsl.h + MIXER_THEME_HUE_SHIFT) % 1, sat, MIXER_THEME_NIGHT_LIGHTNESS)
+  };
+}
+
+// 主题色只在换歌时算一次：封面取色本身是按歌曲缓存的，逐帧重算没有意义。
+function mixerThemeColors() {
+  var tint = typeof effectiveSkullVisualTint === 'function' ? effectiveSkullVisualTint() : null;
+  var hex = normalizeHexColor((tint && tint.color) || MIXER_THEME_FALLBACK, MIXER_THEME_FALLBACK);
+  if (!mixerState.themeDay) {
+    mixerState.themeDay = new THREE.Color();
+    mixerState.themeNight = new THREE.Color();
+  }
+  if (mixerState.themeKey !== hex) {
+    var pair = mixerThemePair(hex);
+    mixerState.themeDay.set(pair.day);
+    mixerState.themeNight.set(pair.night);
+    mixerState.themeKey = hex;
+  }
+  return mixerState;
+}
+
 function mixerFeedUniforms(nowSec) {
   if (!mixerState.mat) return;
   var u = mixerState.mat.uniforms;
@@ -834,6 +884,10 @@ function mixerFeedUniforms(nowSec) {
   u.uNightMix.value = mixerClamp01(mixerParam('nightMix'));
   u.uGapGlow.value = Math.max(0, mixerParam('gapGlow'));
   u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
+  u.uThemeMix.value = mixerClamp01(mixerParam('themeMix'));
+  var theme = mixerThemeColors();
+  u.uDayCol.value.copy(theme.themeDay);
+  u.uNightCol.value.copy(theme.themeNight);
   mixerState.blitMat.uniforms.uVignette.value = 0.2;
   void nowSec;
 }

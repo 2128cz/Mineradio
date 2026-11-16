@@ -2200,6 +2200,13 @@ function runMixerDeskPresetCheck() {
     [/float ge=abs\(min\(ghs\.x-abs\(gp\.x\),ghs\.y-abs\(gp\.y\)\)\);/, 'the seam fog has to measure its distance from the plate border the reference cuts at .02'],
     [/\.4\*sin\(2\.\*iTime\+1\.\*fract\(pcg3df\(gc\)\.z\*28\.\)\+\.3\*\(gc\.x\+gc\.y\)\)/, 'the fog gate has to read the neighbour plate\'s own reference wave, so only staggered seams light'],
     [/col\+=gap\*vec3\(/, 'the seam light has to be added emissively, after the two lights'],
+    [/vec3 litc=mix\(c,uDayCol,uThemeMix\);/, 'the day panel has to keep the reference greyscale as the zero end of the theme knob'],
+    [/vec3 darkc=mix\(vec3\(\.04\),uNightCol,uThemeMix\);/, 'the night panel has to keep the reference black as the zero end too'],
+    [/basecol=mix\(darkc,litc,mtlp\)\*\(\.75\+\.5\*drv\);/, 'the engraving swap has to ride the themed colours, not a separate path'],
+    [/uDayCol:\s*\{\s*value:\s*new THREE\.Color\(/, 'the material needs the day colour in its initial block'],
+    [/u\.uDayCol\.value\.copy\(/, 'the theme colours have to reach the shader every frame'],
+    [/function mixerThemePair\(/, 'the day/night pair has to be derived in one place so the hue rule is judgeable'],
+    [/mixerState\.themeKey !== hex/, 'the pair has to be cached per song, because the cover palette already is'],
   ]) {
     if (!pattern.test(text)) fail(why);
   }
@@ -2281,11 +2288,13 @@ function runMixerDeskPresetCheck() {
   if (!fs.existsSync(nightTest)) fail('tests/mixer-day-night.test.js is missing; the day/night density needs a measured judge');
   const fogTest = path.join(appRoot, 'tests', 'mixer-gap-glow.test.js');
   if (!fs.existsSync(fogTest)) fail('tests/mixer-gap-glow.test.js is missing; the seam fog needs a measured judge');
-  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest, fogTest], { cwd: appRoot, encoding: 'utf8' });
+  const themeTest = path.join(appRoot, 'tests', 'mixer-theme-palette.test.js');
+  if (!fs.existsSync(themeTest)) fail('tests/mixer-theme-palette.test.js is missing; the 120-degree panel palette needs a measured judge');
+  const result = spawnSync(process.execPath, ['--test', levelTest, cameraTest, nightTest, fogTest, themeTest], { cwd: appRoot, encoding: 'utf8' });
   if (result.status !== 0) {
     process.stdout.write(result.stdout || '');
     process.stderr.write(result.stderr || '');
-    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest) + ', ' + rel(fogTest));
+    fail('the mixer regressions failed: ' + rel(levelTest) + ', ' + rel(cameraTest) + ', ' + rel(nightTest) + ', ' + rel(fogTest) + ', ' + rel(themeTest));
   }
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Mixer desk wired: preset ${index}, ported reference fragment (licence unverified), ${schema.size} knobs.`);

@@ -302,6 +302,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mixernightMix', '昼夜模式', '调音台 昼夜 白天 黑夜 夜间 模式 黑色 白色 反色 元件 数量 密度'),
         fxConsoleItem('fx-mixergapGlow', '缝隙圣光', '调音台 缝隙 圣光 丁达尔 体积 光 雾 错台 边缘 光柱'),
         fxConsoleItem('fx-mixergapFog', '圣光雾宽', '调音台 圣光 雾 宽度 范围 柔 扩散'),
+        fxConsoleItem('fx-mixerthemeMix', '主题色强度', '调音台 主题色 配色 颜色 封面 取色 色环 补色 白天 黑夜 面板 饱和度'),
         fxConsoleItem('fx-mixerrenderScale', '渲染分辨率', '调音台 渲染 分辨率 性能'),
         fxConsoleItem({ selector: '.fx-mixer-tuning .fx-actions' }, '恢复调音台默认', '调音台 重置 还原 默认')
       ] },
