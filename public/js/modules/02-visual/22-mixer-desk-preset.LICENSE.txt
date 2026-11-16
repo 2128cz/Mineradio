@@ -15,5 +15,8 @@ What was changed by the port:
     density of inverted black/white panels (the reference literal .1 is the day-mode end of it);
   - one emissive term was added: the crevice between two plates is lit, gated by the reference's
     own plate-stagger wave so only seams where the neighbours are out of step glow;
+  - the two plate colours are mixed towards the song's theme colour, and towards the colour 120
+    degrees round the hue wheel from it for the inverted panels; the reference's own .9 and .04
+    literals stay as the zero end of that mix, so at 0 the field is the reference greyscale;
   - the fragment writes alpha 1.0 so the post pass can copy it;
   - iChannel0 is fed an audio-driven level table (8 bands x 8 history steps).

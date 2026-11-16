@@ -8,7 +8,9 @@
 // march/shadow steps, max distance, and the share of panels that flip to the inverted palette —
 // the reference keeps 10%, which is what day mode, the default, still draws), one added emissive
 // term that lights the crevice between two staggered plates from the reference's own stagger wave,
-// and a 1.0 alpha so the post pass can copy it. The reference page was not reachable and carried
+// two mixes that move the plate colours from the reference's .9/.04 greyscale to the song's theme
+// colour and the colour a third of the way round the hue wheel from it (strength 0 is the reference
+// literals), and a 1.0 alpha so the post pass can copy it. The reference page was not reachable and carried
 // no licence header;
 // the licence is UNVERIFIED and must be confirmed with the author before this build is
 // distributed. See 22-mixer-desk-preset.LICENSE.txt, NOTICE.md and docs/THIRD_PARTY_PORTS.md.
