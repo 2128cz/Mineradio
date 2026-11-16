@@ -231,6 +231,16 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/gaps\.sort\(function \(x, y\) \{ return x - y; \}\)/.test(src), 'the fallback has to take the median gap of the map itself');
   assert.ok(/Number\(rtBeat\.tempoGap\)/.test(src), 'and the realtime tempo has to be the last resort');
   assert.ok(/step > 0\.15 && step <= 2/.test(src), 'a beat period outside 0.15..2 s is not a tempo');
+
+  // And it actually resolves in that order, given the app's own globals.
+  const beatStep = new Function('currentBeatMap', 'rtBeat', fn('mixerBeatStep') + '\nreturn mixerBeatStep;');
+  const at = (map, rt) => beatStep(map, rt)();
+  assert.equal(at({ gridStep: 0.5 }, { tempoGap: 0.9 }), 0.5, 'the beat map grid step wins');
+  assert.equal(at({ beats: [{ time: 0 }, { time: 0.42 }, { time: 0.84 }, { time: 1.26 }, { time: 1.68 }] }, { tempoGap: 0.9 }), 0.42,
+    'an older cache with no grid step has to fall back to the gaps between its own beats');
+  assert.equal(at(null, { tempoGap: 0.75 }), 0.75, 'with no map at all the realtime tracker answers');
+  assert.equal(at(null, null), 0, 'and with no tempo anywhere the answer is "unknown", not a guess');
+  assert.equal(at({ gridStep: 0.05 }, { tempoGap: 9 }), 0, 'implausible periods are rejected at every rung');
 }
 
 console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick lands on the origin crest and surges ${KICK_BOOST}x, amp/freq/phase move one thing each`);
