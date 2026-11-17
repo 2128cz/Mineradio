@@ -24,8 +24,10 @@
 // random phase, so the desk reads as a field of independent bumps. The plates now ride one shared
 // sine (cellWave) that travels in from the world origin along x+y — amplitude, wavelength and phase
 // are knobs, and the phase is a clock the JS side advances at one crest per beat of the song, so a
-// faster song sends crests more often. A kick re-anchors the phase so a crest sits on the origin and
-// surges that clock briefly, which is what makes the swell lurch on the drum.
+// faster song sends crests more often. A kick does three things on that wave: it re-anchors the
+// phase onto a crest at the origin, it shoves the pattern forward by a phase step that eases back
+// (移相), and it multiplies the wavenumber for a moment so the ridges bunch up under the hit and
+// spread out again (移频). Both beat operations have their own knobs and their own tails.
 
 var MIXER_PRESET_INDEX = 17;
 
@@ -51,6 +53,8 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickPhase: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickFreq: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
@@ -693,15 +697,27 @@ function mixerClamp01(value) {
 //
 // The desk's plates ride one shared sine (see cellWave in the ported body), so what used to be a
 // field of independent bumps is a swell that travels across the desk. The wave is anchored to the
-// world origin - the corner it rolls in from - and its speed comes from the song, not from the
+// world origin - the corner it rolls in from - and its clock comes from the song, not from the
 // camera's own drift: one crest passes the origin per beat, so a faster song sends crests more
-// often while the wavelength stays where the 频率 knob put it. A kick re-anchors the phase so a
-// crest sits exactly on the origin, and multiplies the angular speed for a short tail, which is
-// what makes the swell lurch forward on the drum instead of drifting at a constant rate.
+// often while the wavelength stays where the 频率 knob put it.
+//
+// A kick is two separate operations on that wave, not one:
+//   移相 (phase shift) - the phase is written back onto a crest at the origin, and a forward step
+//        is layered on top of it that eases back over a few tenths of a second, so the pattern is
+//        shoved ahead on the drum and slides home instead of the clock simply continuing;
+//   移频 (frequency shift) - the wavenumber is multiplied for a moment, so the ridges bunch up
+//        under the hit and spread back out. Speed alone would only slide the same pattern faster;
+//        this changes the pattern itself (and, because crest speed is omega/k, also how fast it
+//        travels in world units while it is compressed).
+// Both amounts are knobs, and both envelopes are driven by the same beat that anchors the phase.
 
 var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
 var MIXER_WAVE_KICK_BOOST = 1.8;     // extra angular speed at the instant of a kick
 var MIXER_WAVE_KICK_TAIL = 0.20;     // seconds for that surge to fall to 1/e
+var MIXER_WAVE_KICK_PHASE = Math.PI * 0.5; // full-scale phase step a kick injects (a quarter turn)
+var MIXER_WAVE_PHASE_TAIL = 0.30;    // seconds for that step to ease back onto the anchor
+var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
+var MIXER_WAVE_FREQ_TAIL = 0.45;     // seconds for the compressed ridges to relax
 var MIXER_WAVE_FALLBACK_STEP = 0.6;  // no tempo known yet: a neutral 100 BPM
 var MIXER_WAVE_CREST = Math.PI / 2;  // sin() is at its crest here, i.e. a crest on the origin
 
@@ -737,20 +753,29 @@ function mixerBeatStep() {
 }
 
 // One step of the wave. `phase` runs backwards, so crests travel towards +x+y - away from the
-// origin they are anchored to. A kick lands the phase exactly on a crest and lights the surge.
+// origin they are anchored to. `phaseOffset` is the 移相 step layered on that anchor and
+// `kScale` is this frame's 移频 gain on the wavenumber; both exist only to carry a kick and
+// both relax to nothing between beats.
 function mixerWaveStep(w, dt, o) {
   o = o || {};
   var step = Number(o.step) > 0 ? Number(o.step) : MIXER_WAVE_FALLBACK_STEP;
   w.beatStep = step;
+  w.phaseShiftAmt = mixerClamp01(o.phaseShift);
+  w.freqShiftAmt = mixerClamp01(o.freqShift);
   if (dt > 0) {
     var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST);
     w.phase = mixerWrapAngle(w.phase - omega * dt);
     w.kick *= Math.exp(-dt / MIXER_WAVE_KICK_TAIL);
+    w.phaseOffset *= Math.exp(-dt / MIXER_WAVE_PHASE_TAIL);
+    w.freqKick *= Math.exp(-dt / MIXER_WAVE_FREQ_TAIL);
   }
   if (o.onset) {
     w.phase = MIXER_WAVE_CREST;
     w.kick = 1;
+    w.phaseOffset = w.phaseShiftAmt * MIXER_WAVE_KICK_PHASE;
+    w.freqKick = 1;
   }
+  w.kScale = 1 + w.freqKick * w.freqShiftAmt * MIXER_WAVE_KICK_FREQ;
   return w;
 }
 
@@ -762,7 +787,9 @@ function mixerStepWave(w, dt, o) {
   var playing = o.playing !== false;
   var onset = false;
   if (playing) onset = !!o.onset || beat > w.prevBeat * 1.4 + 0.04;
-  mixerWaveStep(w, playing ? dt : 0, { step: o.step, onset: onset });
+  mixerWaveStep(w, playing ? dt : 0, {
+    step: o.step, onset: onset, phaseShift: o.phaseShift, freqShift: o.freqShift
+  });
   w.prevBeat = playing ? beat : 0;
   return w;
 }
@@ -844,7 +871,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0 },
   size: null
 };
 
@@ -1034,8 +1061,9 @@ function mixerFeedUniforms(nowSec) {
   u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
   var waveFreq = Math.max(0.05, mixerParam('waveFreq'));
   u.uWaveAmp.value = Math.max(0, mixerParam('waveAmp'));
-  u.uWaveK.value = (Math.PI * 2 * waveFreq) / MIXER_WAVE_BASE_UNITS;
-  u.uWavePhase.value = mixerWrapAngle(mixerState.wave.phase + Math.PI * 2 * mixerClamp01(mixerParam('wavePhase')));
+  u.uWaveK.value = ((Math.PI * 2 * waveFreq) / MIXER_WAVE_BASE_UNITS) * (mixerState.wave.kScale || 1);
+  u.uWavePhase.value = mixerWrapAngle(mixerState.wave.phase + mixerState.wave.phaseOffset +
+    Math.PI * 2 * mixerClamp01(mixerParam('wavePhase')));
   u.uThemeMix.value = mixerClamp01(mixerParam('themeMix'));
   var theme = mixerThemeColors();
   u.uDayCol.value.copy(theme.themeDay);
@@ -1230,6 +1258,8 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
   mixerUpdateLevels(sonicFrame, step, mixerParam('audioSmooth'));
   mixerStepWave(mixerState.wave, step, {
     step: mixerBeatStep(),
+    phaseShift: mixerParam('waveKickPhase'),
+    freqShift: mixerParam('waveKickFreq'),
     beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
     onset: (typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag) ? true : false,
     playing: !(typeof audio !== 'undefined' && audio && audio.paused)

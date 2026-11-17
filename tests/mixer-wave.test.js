@@ -39,19 +39,27 @@ function constant(name) {
 const BASE_UNITS = constant('MIXER_WAVE_BASE_UNITS');
 const KICK_BOOST = constant('MIXER_WAVE_KICK_BOOST');
 const KICK_TAIL = constant('MIXER_WAVE_KICK_TAIL');
+const KICK_PHASE = constant('MIXER_WAVE_KICK_PHASE');
+const PHASE_TAIL = constant('MIXER_WAVE_PHASE_TAIL');
+const KICK_FREQ = constant('MIXER_WAVE_KICK_FREQ');
+const FREQ_TAIL = constant('MIXER_WAVE_FREQ_TAIL');
 const FALLBACK_STEP = constant('MIXER_WAVE_FALLBACK_STEP');
 const CREST = constant('MIXER_WAVE_CREST');
 
 const wave = new Function(
-  'MIXER_WAVE_KICK_BOOST', 'MIXER_WAVE_KICK_TAIL', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST',
+  'MIXER_WAVE_KICK_BOOST', 'MIXER_WAVE_KICK_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
+  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST',
   [
-    fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
-    'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave };'
+    fn('mixerClamp01'), fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
+    'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(KICK_BOOST, KICK_TAIL, FALLBACK_STEP, CREST);
+)(KICK_BOOST, KICK_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, FALLBACK_STEP, CREST);
 
 const DT = 1 / 60;
-const fresh = () => ({ phase: CREST, kick: 0, beatStep: 0, prevBeat: 0 });
+const fresh = () => ({
+  phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0
+});
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
   return Math.min(d, Math.PI * 2 - d);
@@ -148,6 +156,49 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     'and the wave must keep its plain beat cadence, not jump');
 }
 
+// ---------------------------------------------------------------- 3b) the kick shifts phase and frequency, not just speed
+
+{
+  // 移相: the anchor lands on the origin crest AND a forward step of the knob's size is layered on
+  // top, easing back over its own tail - so the drum shoves the pattern ahead instead of the clock
+  // merely continuing.
+  const w = fresh();
+  wave.step(w, DT, { step: 0.5, onset: true, phaseShift: 0.5 });
+  assert.equal(w.phase, CREST, 'the anchor still lands on a crest at the origin');
+  assert.ok(Math.abs(w.phaseOffset - 0.5 * KICK_PHASE) < 1e-9,
+    `the 移相 knob has to inject half a quarter turn (${w.phaseOffset})`);
+  const atOnset = w.phaseOffset;
+  for (let t = 0; t < PHASE_TAIL * 3; t += DT) wave.step(w, DT, { step: 0.5, phaseShift: 0.5 });
+  assert.ok(w.phaseOffset < atOnset * 0.1, `the step has to ease back onto the anchor (${atOnset.toFixed(3)} -> ${w.phaseOffset.toFixed(3)})`);
+
+  // 移频: the same beat multiplies the wavenumber, so the ridges bunch up under the hit and spread
+  // back out. That changes the pattern itself; a speed multiplier alone cannot.
+  const f = fresh();
+  wave.step(f, DT, { step: 0.5, onset: true, freqShift: 0.5 });
+  assert.ok(Math.abs(f.kScale - (1 + 0.5 * KICK_FREQ)) < 1e-9, `the 移频 knob has to compress the wave on the hit (${f.kScale})`);
+  const scaleOnset = f.kScale;
+  for (let t = 0; t < FREQ_TAIL * 3; t += DT) wave.step(f, DT, { step: 0.5, freqShift: 0.5 });
+  assert.ok(f.kScale < 1 + (scaleOnset - 1) * 0.1, `and let the ridges spread back (${scaleOnset.toFixed(3)} -> ${f.kScale.toFixed(3)})`);
+
+  // Both knobs at zero leave the kick as the anchor plus the speed surge, and nothing else.
+  const zero = fresh();
+  wave.step(zero, DT, { step: 0.5, onset: true, phaseShift: 0, freqShift: 0 });
+  assert.equal(zero.phaseOffset, 0, 'no 移相 knob, no phase step');
+  assert.equal(zero.kScale, 1, 'no 移频 knob, no wavenumber change');
+
+  // The two operations have their own tails: the phase step is spent while the ridges are still
+  // relaxing, so they read as two motions rather than one.
+  const mix = fresh();
+  wave.step(mix, DT, { step: 0.5, onset: true, phaseShift: 1, freqShift: 1 });
+  for (let t = 0; t < PHASE_TAIL * 3; t += DT) wave.step(mix, DT, { step: 0.5, phaseShift: 1, freqShift: 1 });
+  assert.ok(mix.phaseOffset < KICK_PHASE * 0.1 && mix.kScale > 1.02,
+    `移相 has to be nearly spent while 移频 is still relaxing (offset ${mix.phaseOffset.toFixed(3)}, k ${mix.kScale.toFixed(3)})`);
+
+  // And the compressed wave really is denser: at the onset crests sit closer together along x+y.
+  const crestGap = (kScale) => (Math.PI * 2) / kScale;
+  assert.ok(crestGap(scaleOnset) < crestGap(1) * 0.8, 'a compressed wave has to shorten the distance between crests');
+}
+
 // ---------------------------------------------------------------- 4) paused is frozen, and no tempo still moves
 
 {
@@ -164,12 +215,14 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(FALLBACK_STEP > 0.3 && FALLBACK_STEP < 1, 'the fallback is a plain 100-ish BPM');
 }
 
-// ---------------------------------------------------------------- 5) the three knobs each move one thing
+// ---------------------------------------------------------------- 5) the knobs each move one thing
 
 {
   assert.ok(/waveAmp:\s*\{\s*def:\s*0\.4,\s*min:\s*0,\s*max:\s*1\.2/.test(src), 'waveAmp runs 0..1.2 and defaults to the reference lift');
   assert.ok(/waveFreq:\s*\{\s*def:\s*1,\s*min:\s*0\.3,\s*max:\s*3/.test(src), 'waveFreq runs 0.3..3');
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
+  assert.ok(/waveKickPhase:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickPhase scales the 移相 step');
+  assert.ok(/waveKickFreq:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickFreq scales the 移频 surge');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
@@ -196,9 +249,12 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/"uniform float uWaveAmp;"/.test(src) && /"uniform float uWaveK;"/.test(src) && /"uniform float uWavePhase;"/.test(src),
     'the wave needs its three uniforms declared in the ported body');
   assert.ok(/u\.uWaveAmp\.value\s*=\s*Math\.max\(0,\s*mixerParam\('waveAmp'\)\)/.test(src), 'waveAmp has to reach the shader');
-  assert.ok(/u\.uWaveK\.value\s*=\s*\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS/.test(src), 'waveFreq has to become a wavenumber');
-  assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
-    'the shader phase has to be the wave clock plus the 相位 knob, one full turn per 100%');
+  assert.ok(/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/.test(src),
+    'waveFreq has to become a wavenumber, times this frame\'s 移频 gain');
+  assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
+    'the shader phase has to be the clock plus the 移相 step plus the 相位 knob');
+  assert.ok(/phaseShift:\s*mixerParam\('waveKickPhase'\)/.test(src) && /freqShift:\s*mixerParam\('waveKickFreq'\)/.test(src),
+    'both beat operations have to be fed from their knobs every frame');
 
   // The clock is stepped every frame from the song, and the beat pulse is what launches it.
   assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,260}beat:\s*\(typeof beatPulse[\s\S]{0,120}onset:\s*\(typeof beatOnsetFlag/.test(src),
@@ -207,7 +263,13 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     'the wave has to freeze with the music');
 
   const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
-  for (const [id, key, min, max] of [['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'], ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'], ['fx-mixerwavePhase', 'wavePhase', '0', '1']]) {
+  for (const [id, key, min, max] of [
+    ['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'],
+    ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
+    ['fx-mixerwavePhase', 'wavePhase', '0', '1'],
+    ['fx-mixerwaveKickPhase', 'waveKickPhase', '0', '1'],
+    ['fx-mixerwaveKickFreq', 'waveKickFreq', '0', '1']
+  ]) {
     const at = html.indexOf('id="' + id + '"');
     assert.ok(at > 0, `${id} needs a row in the 调音台 panel`);
     const tag = html.slice(at, html.indexOf('>', at));
@@ -216,7 +278,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     assert.ok(src.includes(`'${key}'`), `${key} has to be in the tuning schema`);
   }
   const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
-  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase']) {
+  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase', 'fx-mixerwaveKickPhase', 'fx-mixerwaveKickFreq']) {
     assert.ok(consoleSrc.includes(`fxConsoleItem('${id}'`), `${id} must be listed in the console 调音台 group`);
   }
 }
@@ -243,4 +305,4 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(at({ gridStep: 0.05 }, { tempoGap: 9 }), 0, 'implausible periods are rejected at every rung');
 }
 
-console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick lands on the origin crest and surges ${KICK_BOOST}x, amp/freq/phase move one thing each`);
+console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick anchors the crest and shifts phase ${KICK_PHASE.toFixed(2)} rad + frequency ${(KICK_FREQ * 100).toFixed(0)}% (separate tails), amp/freq/phase move one thing each`);
