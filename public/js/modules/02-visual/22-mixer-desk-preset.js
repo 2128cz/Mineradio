@@ -54,8 +54,8 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickPhase: { def: 0.5, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickFreq: { def: 0.5, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickPhase: { def: 0.01, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickFreq: { def: -0.05, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   waveKickSpeed: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
@@ -731,7 +731,10 @@ function mixerClampBipolar(value) {
 var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
 var MIXER_WAVE_LEAD_CYCLES = 0.16;   // extra cycles the 加速 surge spends per beat at 100%
 var MIXER_WAVE_SPEED_TAIL = 0.30;    // beats for that surge to fall to 1/e
-var MIXER_WAVE_KICK_PHASE = Math.PI * 0.5; // full-scale phase step a kick injects (a quarter turn)
+var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injects (half a turn, so 1% reads 1%)
+var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
+var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
+var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -794,7 +797,7 @@ function mixerWaveStep(w, dt, o) {
   var beatDt = dt > 0 ? dt / step : 0;
   // A hit that lands inside the previous one's refractory window is a ghost (a 16th under a beat
   // map, a double-detected kick). Retriggering on those is what made dense passages thrash.
-  var acceptOnset = !!o.onset && (w.beatClock <= 0 || w.beatClock >= step * MIXER_WAVE_RETRIGGER);
+  var acceptOnset = !!o.onset && (w.beatClock <= 0 || w.beatClock + dt >= step * MIXER_WAVE_RETRIGGER);
   if (dt > 0) {
     var leadBoost = (MIXER_WAVE_LEAD_CYCLES / MIXER_WAVE_SPEED_TAIL) * w.speedShiftAmt;
     var omega = (Math.PI * 2 / step) * (1 + w.kick * leadBoost);
@@ -814,10 +817,13 @@ function mixerWaveStep(w, dt, o) {
     }
   }
   if (acceptOnset) {
-    w.beatClock = 0;
-    w.kick = 1;
-    w.phaseOffset = w.phaseShiftAmt * MIXER_WAVE_KICK_PHASE;
-    w.freqKick = 1;
+    // The move is animated, so it starts a hair early: seeding the envelopes at LEAD beats of age
+    // makes the visible recoil peak on the beat instead of a frame or two behind it.
+    var lead = MIXER_WAVE_LEAD_BEATS;
+    w.beatClock = lead * step;
+    w.kick = Math.exp(-lead / MIXER_WAVE_SPEED_TAIL);
+    w.phaseOffset = w.phaseShiftAmt * MIXER_WAVE_KICK_PHASE * Math.exp(-lead / MIXER_WAVE_PHASE_TAIL);
+    w.freqKick = Math.exp(-lead / MIXER_WAVE_FREQ_TAIL);
     // Whatever the surge and the knob pushed out of alignment is paid back over half a beat.
     w.anchorOffset = mixerSignedAngle(w.phase, MIXER_WAVE_CREST + w.phaseOffset);
   }
@@ -1050,6 +1056,9 @@ function mixerAlignPassSize() {
 
 function mixerUpdateLevels(frame, dt, smooth) {
   mixerFillSpectrum(mixerLevelState.level, frame, smooth);
+  var sum = 0;
+  for (var li = 0; li < mixerLevelState.level.length; li++) sum += mixerLevelState.level[li];
+  mixerState.levelAvg = sum / Math.max(1, mixerLevelState.level.length);
   mixerWriteSpectrum(mixerState.levelData, mixerLevelState.level);
   mixerState.levelTex.needsUpdate = true;
   return true;
@@ -1108,7 +1117,12 @@ function mixerFeedUniforms(nowSec) {
   u.uGapGlow.value = Math.max(0, mixerParam('gapGlow'));
   u.uGapFog.value = Math.max(0.03, mixerParam('gapFog'));
   var waveFreq = Math.max(0.05, mixerParam('waveFreq'));
-  u.uWaveAmp.value = Math.max(0, mixerParam('waveAmp'));
+  // The lift is not a constant: quiet passages ride low, and each drum stretches it further, so the
+  // height itself is part of the rhythm rather than a fixed size the beat only disturbs.
+  var waveLevel = mixerClamp01(mixerState.levelAvg || 0);
+  u.uWaveAmp.value = Math.max(0, mixerParam('waveAmp')) *
+    (MIXER_WAVE_AMP_FLOOR + (1 - MIXER_WAVE_AMP_FLOOR) * waveLevel) *
+    (1 + mixerState.wave.kick * MIXER_WAVE_AMP_KICK);
   u.uWaveK.value = ((Math.PI * 2 * waveFreq) / MIXER_WAVE_BASE_UNITS) * (mixerState.wave.kScale || 1);
   u.uWavePhase.value = mixerWrapAngle(mixerState.wave.phase + mixerState.wave.phaseOffset +
     Math.PI * 2 * mixerClamp01(mixerParam('wavePhase')));
