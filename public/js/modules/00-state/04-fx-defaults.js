@@ -50,7 +50,10 @@ var fxDefaults = {
   lyricLineHeight: 1.0,
   lyricWeight: 750,
   lyricTextureClarity: 1,
-  lyricLiveViewportFit: true,
+  // Off by default: a long line keeps its authored size and may run off the edge, instead of the
+  // whole row being scaled down every frame to fit the viewport. The console switch still turns
+  // the per-frame projection back on for anyone who prefers the old fit.
+  lyricLiveViewportFit: false,
   lyricContextHighQuality: true,
   lyricBackdropAdapt: true,
   coverBackdropAdapt: true,

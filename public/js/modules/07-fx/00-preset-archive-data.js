@@ -393,7 +393,7 @@ function normalizeFxArchiveSnapshot(raw) {
     lyricLineHeight: archiveNumber(raw, 'lyricLineHeight', fxDefaults.lyricLineHeight, 0.72, 1.80),
     lyricWeight: archiveNumber(raw, 'lyricWeight', fxDefaults.lyricWeight, 500, 900),
     lyricTextureClarity: normalizeLyricTextureClarity(raw.lyricTextureClarity),
-    lyricLiveViewportFit: raw.lyricLiveViewportFit !== false,
+    lyricLiveViewportFit: raw.lyricLiveViewportFit === true,
     lyricContextHighQuality: raw.lyricContextHighQuality !== false,
     lyricBackdropAdapt: raw.lyricBackdropAdapt !== false,
     coverBackdropAdapt: raw.coverBackdropAdapt !== false,

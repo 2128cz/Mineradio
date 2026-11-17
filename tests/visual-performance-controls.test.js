@@ -23,12 +23,19 @@ test('visual performance controls are visible and persisted without reordering o
 
   for (const key of keys) {
     assert.match(html, new RegExp(`id="t-${key}"`));
-    assert.match(defaults, new RegExp(`${key}: true`));
     assert.match(archive, new RegExp(`'${key}'`));
-    assert.match(archive, new RegExp(`${key}: raw\\.${key} !== false`));
     assert.match(consoleLayout, new RegExp(`t-${key}`));
     assert.match(bindings, new RegExp(`reason: key`));
   }
+  // Everything else on this panel starts on; the viewport fit is the one control that starts off,
+  // because it is what scales a long lyric line down to the screen width. It has to stay switchable
+  // and archived, and an archive that never carried the field must restore the new default.
+  for (const key of keys.slice(1)) {
+    assert.match(defaults, new RegExp(`${key}: true`));
+    assert.match(archive, new RegExp(`${key}: raw\\.${key} !== false`));
+  }
+  assert.match(defaults, /lyricLiveViewportFit: false/);
+  assert.match(archive, /lyricLiveViewportFit: raw\.lyricLiveViewportFit === true/);
 
   const oldTail = archive.indexOf("'lyricTextureClarity'");
   for (const key of keys) assert.ok(archive.indexOf(`'${key}'`) > oldTail, `${key} must stay append-only in MR2`);
