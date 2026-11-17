@@ -50,7 +50,7 @@ const wave = new Function(
   'MIXER_WAVE_KICK_BOOST', 'MIXER_WAVE_KICK_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
   'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST',
   [
-    fn('mixerClamp01'), fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
+    fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
     'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
 )(KICK_BOOST, KICK_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, FALLBACK_STEP, CREST);
@@ -202,6 +202,19 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(zero.phaseOffset, 0, 'no 移相 knob, no phase step');
   assert.equal(zero.kScale, 1, 'no 移频 knob, no wavenumber change');
 
+  // Both knobs are bipolar, and the negative side is a real direction, not a clamp to zero: the
+  // pattern is shoved backwards and the ridges are stretched instead of tightened.
+  const back = fresh();
+  wave.step(back, DT, { step: 0.5, onset: true, phaseShift: -0.5, freqShift: -0.5 });
+  assert.ok(Math.abs(back.phaseOffset + 0.5 * KICK_PHASE) < 1e-9, 'a negative 移相 has to push the pattern the other way');
+  assert.ok(Math.abs(back.kScale - (1 - 0.5 * KICK_FREQ)) < 1e-9, `a negative 移频 has to stretch the wave (${back.kScale})`);
+  assert.ok(back.kScale < 1 && (Math.PI * 2) / back.kScale > Math.PI * 2, 'stretched ridges sit further apart');
+
+  // And the stretch has a floor: past that the whole view is one slope and the desk would go dark.
+  const floorK = fresh();
+  wave.step(floorK, DT, { step: 0.5, onset: true, freqShift: -1 });
+  assert.ok(floorK.kScale >= 0.25 - 1e-9, `the stretched wavenumber has to stop at a printable floor (${floorK.kScale})`);
+
   // The two operations have their own tails: the phase step is spent while the ridges are still
   // relaxing, so they read as two motions rather than one.
   const mix = fresh();
@@ -237,8 +250,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/waveAmp:\s*\{\s*def:\s*0\.4,\s*min:\s*0,\s*max:\s*1\.2/.test(src), 'waveAmp runs 0..1.2 and defaults to the reference lift');
   assert.ok(/waveFreq:\s*\{\s*def:\s*1,\s*min:\s*0\.3,\s*max:\s*3/.test(src), 'waveFreq runs 0.3..3');
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
-  assert.ok(/waveKickPhase:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickPhase scales the 移相 step');
-  assert.ok(/waveKickFreq:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickFreq scales the 移频 surge');
+  assert.ok(/waveKickPhase:\s*\{\s*def:\s*0\.5,\s*min:\s*-1,\s*max:\s*1/.test(src), 'waveKickPhase is bipolar so the step can push back');
+  assert.ok(/waveKickFreq:\s*\{\s*def:\s*0\.5,\s*min:\s*-1,\s*max:\s*1/.test(src), 'waveKickFreq is bipolar so the ridges can stretch too');
   assert.ok(/waveKickSpeed:\s*\{\s*def:\s*1,\s*min:\s*0,\s*max:\s*2/.test(src), 'waveKickSpeed scales the 加速 surge, 100% being the old 1.8x');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
@@ -284,8 +297,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     ['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'],
     ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
     ['fx-mixerwavePhase', 'wavePhase', '0', '1'],
-    ['fx-mixerwaveKickPhase', 'waveKickPhase', '0', '1'],
-    ['fx-mixerwaveKickFreq', 'waveKickFreq', '0', '1'],
+    ['fx-mixerwaveKickPhase', 'waveKickPhase', '-1', '1'],
+    ['fx-mixerwaveKickFreq', 'waveKickFreq', '-1', '1'],
     ['fx-mixerwaveKickSpeed', 'waveKickSpeed', '0', '2']
   ]) {
     const at = html.indexOf('id="' + id + '"');

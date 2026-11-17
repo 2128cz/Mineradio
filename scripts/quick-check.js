@@ -2217,7 +2217,7 @@ function runMixerDeskPresetCheck() {
     [/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/, 'the wave has to freeze with the music, because iTime is the song clock'],
     [/w\.phaseOffset\s*=\s*w\.phaseShiftAmt\s*\*\s*MIXER_WAVE_KICK_PHASE;/, 'a kick has to inject its 移相 step on top of the anchor, not only re-anchor'],
     [/w\.freqKick\s*=\s*1;/, 'and light the 移频 envelope in the same instant'],
-    [/w\.kScale\s*=\s*1\s*\+\s*w\.freqKick\s*\*\s*w\.freqShiftAmt\s*\*\s*MIXER_WAVE_KICK_FREQ;/, 'the wavenumber gain has to be this frame\'s 移频 envelope times its knob'],
+    [/w\.kScale\s*=\s*Math\.max\(0\.25,\s*1\s*\+\s*w\.freqKick\s*\*\s*w\.freqShiftAmt\s*\*\s*MIXER_WAVE_KICK_FREQ\);/, 'the wavenumber gain has to be this frame\'s 移频 envelope times its knob, with a floor so a stretched wave cannot flatten the whole desk'],
     [/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/, 'the compressed wavenumber has to reach the shader'],
     [/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+/, 'the shader phase has to carry the clock, the 移相 step and the 相位 knob'],
     [/Number\(map\.gridStep\)[\s\S]{0,700}Number\(rtBeat\.tempoGap\)/, 'the wave speed has to trust the beat map first and the realtime tempo last'],

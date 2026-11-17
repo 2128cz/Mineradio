@@ -54,8 +54,8 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickPhase: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickFreq: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickPhase: { def: 0.5, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickFreq: { def: 0.5, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
   waveKickSpeed: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
@@ -695,6 +695,12 @@ function mixerClamp01(value) {
   return !isFinite(n) ? 0 : Math.min(1, Math.max(0, n));
 }
 
+// -1..1, for the beat knobs whose direction matters (push back / stretch out).
+function mixerClampBipolar(value) {
+  var n = Number(value);
+  return !isFinite(n) ? 0 : Math.min(1, Math.max(-1, n));
+}
+
 // ---------------------------------------------------------------- the wave clock
 //
 // The desk's plates ride one shared sine (see cellWave in the ported body), so what used to be a
@@ -757,13 +763,14 @@ function mixerBeatStep() {
 // One step of the wave. `phase` runs backwards, so crests travel towards +x+y - away from the
 // origin they are anchored to. `phaseOffset` is the 移相 step layered on that anchor and
 // `kScale` is this frame's 移频 gain on the wavenumber; both exist only to carry a kick and
-// both relax to nothing between beats.
+// both relax to nothing between beats. The 移相 and 移频 knobs are bipolar: negative values shove
+// the pattern backwards and stretch the ridges instead of tightening them.
 function mixerWaveStep(w, dt, o) {
   o = o || {};
   var step = Number(o.step) > 0 ? Number(o.step) : MIXER_WAVE_FALLBACK_STEP;
   w.beatStep = step;
-  w.phaseShiftAmt = mixerClamp01(o.phaseShift);
-  w.freqShiftAmt = mixerClamp01(o.freqShift);
+  w.phaseShiftAmt = mixerClampBipolar(o.phaseShift);
+  w.freqShiftAmt = mixerClampBipolar(o.freqShift);
   w.speedShiftAmt = Math.max(0, Number(o.speedShift) || 0);
   if (dt > 0) {
     var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST * w.speedShiftAmt);
@@ -778,7 +785,9 @@ function mixerWaveStep(w, dt, o) {
     w.phaseOffset = w.phaseShiftAmt * MIXER_WAVE_KICK_PHASE;
     w.freqKick = 1;
   }
-  w.kScale = 1 + w.freqKick * w.freqShiftAmt * MIXER_WAVE_KICK_FREQ;
+  // A stretched wave is fine, but past a quarter of the base wavenumber the whole view is one
+  // slope and every seam goes flush, so the desk would simply go dark.
+  w.kScale = Math.max(0.25, 1 + w.freqKick * w.freqShiftAmt * MIXER_WAVE_KICK_FREQ);
   return w;
 }
 
