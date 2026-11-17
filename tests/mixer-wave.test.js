@@ -58,7 +58,7 @@ const wave = new Function(
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -120,7 +120,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
 {
   const w = fresh();
   w.phase = 2.2;                    // mid-cycle, so the snap is visible
-  wave.step(w, DT, { step: 0.5, onset: true });
+  wave.step(w, DT, { step: 0.5, onset: true, speedShift: 1 });
   assert.equal(w.kick, 1, 'a kick has to light the surge');
   assert.equal(w.phase, CREST, 'and land the phase on a crest, with no half-applied step');
   assert.ok(Math.abs(Math.sin(w.phase) - 1) < 1e-12, 'the origin plate has to sit at the top of the wave');
@@ -128,29 +128,45 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   // The surge is a rate change, not a jump: the first tenth of a second after the kick turns the
   // clock by more than the beat cadence alone would.
   const kick = fresh(), quiet = fresh();
-  wave.step(kick, DT, { step: 0.5, onset: true });
-  wave.step(quiet, DT, { step: 0.5 });
+  wave.step(kick, DT, { step: 0.5, onset: true, speedShift: 1 });
+  wave.step(quiet, DT, { step: 0.5, speedShift: 1 });
   const kickStart = kick.phase, quietStart = quiet.phase;
-  for (let t = 0; t < 0.1; t += DT) { wave.step(kick, DT, { step: 0.5 }); wave.step(quiet, DT, { step: 0.5 }); }
+  for (let t = 0; t < 0.1; t += DT) {
+    wave.step(kick, DT, { step: 0.5, speedShift: 1 });
+    wave.step(quiet, DT, { step: 0.5, speedShift: 1 });
+  }
   const kicked = angleDiff(kick.phase, kickStart), plain = angleDiff(quiet.phase, quietStart);
   assert.ok(kicked > plain * 1.8, `a kick has to speed the wave up once (${plain.toFixed(3)} -> ${kicked.toFixed(3)})`);
 
+  // The 加速 knob scales that surge, and zero takes it away entirely. A tenth of a second is short
+  // enough that the measured turns stay below half a cycle and cannot wrap.
+  const turnAfter = (amt) => {
+    const a = fresh();
+    wave.step(a, DT, { step: 0.5, onset: true, speedShift: amt });
+    const from = a.phase;
+    for (let t = 0; t < 0.05; t += DT) wave.step(a, DT, { step: 0.5, speedShift: amt });
+    return angleDiff(a.phase, from);
+  };
+  const halfTurn = turnAfter(1), doubleTurn = turnAfter(2), noTurn = turnAfter(0);
+  assert.ok(doubleTurn > halfTurn * 1.3 && halfTurn > noTurn * 1.5,
+    `鼓点加速 has to scale the surge (0 -> ${noTurn.toFixed(3)}, 100% -> ${halfTurn.toFixed(3)}, 200% -> ${doubleTurn.toFixed(3)})`);
+
   // And it lets go: after a second the surge is spent, so the wave settles back onto the beat cadence.
   const rest = fresh();
-  wave.step(rest, DT, { step: 0.5, onset: true });
-  for (let t = 0; t < 1.2; t += DT) wave.step(rest, DT, { step: 0.5 });
+  wave.step(rest, DT, { step: 0.5, onset: true, speedShift: 1 });
+  for (let t = 0; t < 1.2; t += DT) wave.step(rest, DT, { step: 0.5, speedShift: 1 });
   assert.ok(rest.kick < 0.01, `the surge has to decay (kick ${rest.kick.toFixed(4)})`);
   assert.ok(Math.abs(rest.kick - 0) < 1e-9 || rest.kick === 0 || rest.kick < 0.01, 'and stay gone');
 
   // A rising beat pulse counts as a kick; a decaying one does not.
   const f = fresh();
   f.prevBeat = 0.2;
-  wave.frame(f, DT, { step: 0.5, beat: 0.55, playing: true });
+  wave.frame(f, DT, { step: 0.5, beat: 0.55, playing: true, speedShift: 1 });
   assert.equal(f.kick, 1, 'a rising beat pulse has to launch the wave');
   const g = fresh();
   g.prevBeat = 0.6;
   g.phase = 1.1;
-  wave.frame(g, DT, { step: 0.5, beat: 0.5, playing: true });
+  wave.frame(g, DT, { step: 0.5, beat: 0.5, playing: true, speedShift: 1 });
   assert.ok(g.kick === 0, 'a pulse that is only decaying must not launch the wave');
   assert.ok(angleDiff(g.phase, 1.1 - (Math.PI * 2) * DT / 0.5) < 1e-9,
     'and the wave must keep its plain beat cadence, not jump');
@@ -223,6 +239,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
   assert.ok(/waveKickPhase:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickPhase scales the 移相 step');
   assert.ok(/waveKickFreq:\s*\{\s*def:\s*0\.5,\s*min:\s*0,\s*max:\s*1/.test(src), 'waveKickFreq scales the 移频 surge');
+  assert.ok(/waveKickSpeed:\s*\{\s*def:\s*1,\s*min:\s*0,\s*max:\s*2/.test(src), 'waveKickSpeed scales the 加速 surge, 100% being the old 1.8x');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
@@ -253,8 +270,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     'waveFreq has to become a wavenumber, times this frame\'s 移频 gain');
   assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
     'the shader phase has to be the clock plus the 移相 step plus the 相位 knob');
-  assert.ok(/phaseShift:\s*mixerParam\('waveKickPhase'\)/.test(src) && /freqShift:\s*mixerParam\('waveKickFreq'\)/.test(src),
-    'both beat operations have to be fed from their knobs every frame');
+  assert.ok(/phaseShift:\s*mixerParam\('waveKickPhase'\)/.test(src) && /freqShift:\s*mixerParam\('waveKickFreq'\)/.test(src) && /speedShift:\s*mixerParam\('waveKickSpeed'\)/.test(src),
+    'all three beat operations have to be fed from their knobs every frame');
 
   // The clock is stepped every frame from the song, and the beat pulse is what launches it.
   assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,260}beat:\s*\(typeof beatPulse[\s\S]{0,120}onset:\s*\(typeof beatOnsetFlag/.test(src),
@@ -268,7 +285,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
     ['fx-mixerwavePhase', 'wavePhase', '0', '1'],
     ['fx-mixerwaveKickPhase', 'waveKickPhase', '0', '1'],
-    ['fx-mixerwaveKickFreq', 'waveKickFreq', '0', '1']
+    ['fx-mixerwaveKickFreq', 'waveKickFreq', '0', '1'],
+    ['fx-mixerwaveKickSpeed', 'waveKickSpeed', '0', '2']
   ]) {
     const at = html.indexOf('id="' + id + '"');
     assert.ok(at > 0, `${id} needs a row in the 调音台 panel`);
@@ -278,7 +296,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     assert.ok(src.includes(`'${key}'`), `${key} has to be in the tuning schema`);
   }
   const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
-  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase', 'fx-mixerwaveKickPhase', 'fx-mixerwaveKickFreq']) {
+  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase', 'fx-mixerwaveKickPhase', 'fx-mixerwaveKickFreq', 'fx-mixerwaveKickSpeed']) {
     assert.ok(consoleSrc.includes(`fxConsoleItem('${id}'`), `${id} must be listed in the console 调音台 group`);
   }
 }

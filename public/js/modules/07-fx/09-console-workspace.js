@@ -308,6 +308,7 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mixerwavePhase', '波浪相位', '调音台 波浪 相位 对齐 原点 节拍 海啸'),
         fxConsoleItem('fx-mixerwaveKickPhase', '鼓点移相', '调音台 波浪 鼓点 移相 相位 推 前进 回位 海啸'),
         fxConsoleItem('fx-mixerwaveKickFreq', '鼓点移频', '调音台 波浪 鼓点 移频 波距 压缩 变密 海啸'),
+        fxConsoleItem('fx-mixerwaveKickSpeed', '鼓点加速', '调音台 波浪 鼓点 加速 速度 频率 倍率 海啸'),
         fxConsoleItem('fx-mixerthemeMix', '主题色强度', '调音台 主题色 配色 颜色 封面 取色 色环 补色 白天 黑夜 面板 饱和度'),
         fxConsoleItem('fx-mixerrenderScale', '渲染分辨率', '调音台 渲染 分辨率 性能'),
         fxConsoleItem({ selector: '.fx-mixer-tuning .fx-actions' }, '恢复调音台默认', '调音台 重置 还原 默认')

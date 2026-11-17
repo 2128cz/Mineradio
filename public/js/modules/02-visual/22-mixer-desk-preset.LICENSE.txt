@@ -25,7 +25,7 @@ What was changed by the port:
     sine whose amplitude, wavelength and phase are knobs, and that sine's clock is advanced from the
     song's beat period (one crest per beat, re-anchored to the world origin on each kick, with a
     short speed surge on top, plus a phase step and a wavenumber surge that each have their own
-    tail), so the desk lifts in travelling ridges rather than independent bumps;
+    knob and tail), so the desk lifts in travelling ridges rather than independent bumps;
   - the two plate colours are mixed towards the song's theme colour, and towards the colour 120
     degrees round the hue wheel from it for the inverted panels; the reference's own .9 and .04
     literals stay as the zero end of that mix, so at 0 the field is the reference greyscale;

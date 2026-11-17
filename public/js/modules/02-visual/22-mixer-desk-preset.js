@@ -27,7 +27,8 @@
 // faster song sends crests more often. A kick does three things on that wave: it re-anchors the
 // phase onto a crest at the origin, it shoves the pattern forward by a phase step that eases back
 // (移相), and it multiplies the wavenumber for a moment so the ridges bunch up under the hit and
-// spread out again (移频). Both beat operations have their own knobs and their own tails.
+// spread out again (移频); on top of that it speeds the clock up for a shorter tail (加速). All three
+// have their own knobs and their own tails.
 
 var MIXER_PRESET_INDEX = 17;
 
@@ -55,6 +56,7 @@ var MIXER_TUNING_SCHEMA = {
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   waveKickPhase: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   waveKickFreq: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveKickSpeed: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
@@ -712,7 +714,7 @@ function mixerClamp01(value) {
 // Both amounts are knobs, and both envelopes are driven by the same beat that anchors the phase.
 
 var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
-var MIXER_WAVE_KICK_BOOST = 1.8;     // extra angular speed at the instant of a kick
+var MIXER_WAVE_KICK_BOOST = 1.8;     // extra angular speed at a kick, at 鼓点加速 100%
 var MIXER_WAVE_KICK_TAIL = 0.20;     // seconds for that surge to fall to 1/e
 var MIXER_WAVE_KICK_PHASE = Math.PI * 0.5; // full-scale phase step a kick injects (a quarter turn)
 var MIXER_WAVE_PHASE_TAIL = 0.30;    // seconds for that step to ease back onto the anchor
@@ -762,8 +764,9 @@ function mixerWaveStep(w, dt, o) {
   w.beatStep = step;
   w.phaseShiftAmt = mixerClamp01(o.phaseShift);
   w.freqShiftAmt = mixerClamp01(o.freqShift);
+  w.speedShiftAmt = Math.max(0, Number(o.speedShift) || 0);
   if (dt > 0) {
-    var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST);
+    var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST * w.speedShiftAmt);
     w.phase = mixerWrapAngle(w.phase - omega * dt);
     w.kick *= Math.exp(-dt / MIXER_WAVE_KICK_TAIL);
     w.phaseOffset *= Math.exp(-dt / MIXER_WAVE_PHASE_TAIL);
@@ -788,7 +791,7 @@ function mixerStepWave(w, dt, o) {
   var onset = false;
   if (playing) onset = !!o.onset || beat > w.prevBeat * 1.4 + 0.04;
   mixerWaveStep(w, playing ? dt : 0, {
-    step: o.step, onset: onset, phaseShift: o.phaseShift, freqShift: o.freqShift
+    step: o.step, onset: onset, phaseShift: o.phaseShift, freqShift: o.freqShift, speedShift: o.speedShift
   });
   w.prevBeat = playing ? beat : 0;
   return w;
@@ -1260,6 +1263,7 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
     step: mixerBeatStep(),
     phaseShift: mixerParam('waveKickPhase'),
     freqShift: mixerParam('waveKickFreq'),
+    speedShift: mixerParam('waveKickSpeed'),
     beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
     onset: (typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag) ? true : false,
     playing: !(typeof audio !== 'undefined' && audio && audio.paused)
