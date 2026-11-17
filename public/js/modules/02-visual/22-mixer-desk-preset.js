@@ -718,16 +718,35 @@ function mixerClampBipolar(value) {
 //        this changes the pattern itself (and, because crest speed is omega/k, also how fast it
 //        travels in world units while it is compressed).
 // Both amounts are knobs, and both envelopes are driven by the same beat that anchors the phase.
+//
+// Everything here is measured in BEATS, not seconds. The first cut used fixed 0.2/0.3/0.45 s tails
+// and a hard phase snap on every hit, which made the desk's behaviour depend on the tempo: at a
+// dense beat the tails were still running when the next drum landed (so two transients stacked and
+// every hit yanked the phase), and at a sparse beat the whole move was over in the first third of
+// the bar (so the wave then sat still and looked off the beat). One beat is the only unit that is
+// the same shape at every BPM: the envelopes below are fractions of the beat period, the surge is a
+// fixed phase budget per beat rather than a fixed rate, and the re-anchor is spread over half a beat
+// instead of jumping in one frame.
 
 var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
-var MIXER_WAVE_KICK_BOOST = 1.8;     // extra angular speed at a kick, at 鼓点加速 100%
-var MIXER_WAVE_KICK_TAIL = 0.20;     // seconds for that surge to fall to 1/e
+var MIXER_WAVE_LEAD_CYCLES = 0.16;   // extra cycles the 加速 surge spends per beat at 100%
+var MIXER_WAVE_SPEED_TAIL = 0.30;    // beats for that surge to fall to 1/e
 var MIXER_WAVE_KICK_PHASE = Math.PI * 0.5; // full-scale phase step a kick injects (a quarter turn)
-var MIXER_WAVE_PHASE_TAIL = 0.30;    // seconds for that step to ease back onto the anchor
+var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
-var MIXER_WAVE_FREQ_TAIL = 0.45;     // seconds for the compressed ridges to relax
+var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
+var MIXER_WAVE_ANCHOR_TAIL = 0.50;   // beats to walk the phase back onto the beat grid
+var MIXER_WAVE_RETRIGGER = 0.45;     // an onset inside this fraction of a beat is a ghost hit
 var MIXER_WAVE_FALLBACK_STEP = 0.6;  // no tempo known yet: a neutral 100 BPM
 var MIXER_WAVE_CREST = Math.PI / 2;  // sin() is at its crest here, i.e. a crest on the origin
+
+// Shortest signed angle from a to b, in (-PI, PI].
+function mixerSignedAngle(a, b) {
+  var d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d <= -Math.PI) d += Math.PI * 2;
+  return d;
+}
 
 function mixerWrapAngle(a) {
   var t = Math.PI * 2;
@@ -772,18 +791,35 @@ function mixerWaveStep(w, dt, o) {
   w.phaseShiftAmt = mixerClampBipolar(o.phaseShift);
   w.freqShiftAmt = mixerClampBipolar(o.freqShift);
   w.speedShiftAmt = Math.max(0, Number(o.speedShift) || 0);
+  var beatDt = dt > 0 ? dt / step : 0;
+  // A hit that lands inside the previous one's refractory window is a ghost (a 16th under a beat
+  // map, a double-detected kick). Retriggering on those is what made dense passages thrash.
+  var acceptOnset = !!o.onset && (w.beatClock <= 0 || w.beatClock >= step * MIXER_WAVE_RETRIGGER);
   if (dt > 0) {
-    var omega = (Math.PI * 2 / step) * (1 + w.kick * MIXER_WAVE_KICK_BOOST * w.speedShiftAmt);
+    var leadBoost = (MIXER_WAVE_LEAD_CYCLES / MIXER_WAVE_SPEED_TAIL) * w.speedShiftAmt;
+    var omega = (Math.PI * 2 / step) * (1 + w.kick * leadBoost);
     w.phase = mixerWrapAngle(w.phase - omega * dt);
-    w.kick *= Math.exp(-dt / MIXER_WAVE_KICK_TAIL);
-    w.phaseOffset *= Math.exp(-dt / MIXER_WAVE_PHASE_TAIL);
-    w.freqKick *= Math.exp(-dt / MIXER_WAVE_FREQ_TAIL);
+    w.kick *= Math.exp(-beatDt / MIXER_WAVE_SPEED_TAIL);
+    w.phaseOffset *= Math.exp(-beatDt / MIXER_WAVE_PHASE_TAIL);
+    w.freqKick *= Math.exp(-beatDt / MIXER_WAVE_FREQ_TAIL);
+    w.beatClock += dt;
+    // The anchor is walked in, not snapped: the pending correction is a phase the wave still owes
+    // the beat grid, paid out at an exponential rate over ANCHOR_TAIL beats. A locked tempo owes
+    // nothing, a drifted one is corrected smoothly and never in a single frame.
+    if (w.anchorOffset) {
+      var pay = w.anchorOffset * beatDt / MIXER_WAVE_ANCHOR_TAIL;
+      w.phase = mixerWrapAngle(w.phase + pay);
+      w.anchorOffset -= pay;
+      if (Math.abs(w.anchorOffset) < 1e-4) w.anchorOffset = 0;
+    }
   }
-  if (o.onset) {
-    w.phase = MIXER_WAVE_CREST;
+  if (acceptOnset) {
+    w.beatClock = 0;
     w.kick = 1;
     w.phaseOffset = w.phaseShiftAmt * MIXER_WAVE_KICK_PHASE;
     w.freqKick = 1;
+    // Whatever the surge and the knob pushed out of alignment is paid back over half a beat.
+    w.anchorOffset = mixerSignedAngle(w.phase, MIXER_WAVE_CREST + w.phaseOffset);
   }
   // A stretched wave is fine, but past a quarter of the base wavenumber the whole view is one
   // slope and every seam goes flush, so the desk would simply go dark.
@@ -883,7 +919,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0 },
   size: null
 };
 
