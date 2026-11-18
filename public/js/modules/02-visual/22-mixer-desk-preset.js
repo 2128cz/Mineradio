@@ -732,9 +732,10 @@ var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injec
 var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
 var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
 var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
-var MIXER_WAVE_REWIND_BEATS = 0.25;  // on a kick the wave time is wound back this many beats
-var MIXER_WAVE_REWIND_SPEED = 6;     // how many times real speed the rewind runs
-var MIXER_WAVE_CATCHUP_SPEED = 0.35; // then it runs this much faster until the lost time is repaid
+var MIXER_WAVE_REWIND_BEATS = 0.10;  // the backwards burst after a kick, in beats
+var MIXER_WAVE_REWIND_SPEED = 1.6;   // how fast that burst runs, backwards
+var MIXER_WAVE_RECOVER_SPEED = 0.75; // where the rate lands after the burst, easing back to 1
+var MIXER_WAVE_RECOVER_BEATS = 1.4;  // and how long that ease takes; longer than a beat, so kicks ACCUMULATE
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -793,20 +794,19 @@ function mixerWaveStep(w, dt, o) {
   w.beatStep = step;
   var beatDt = dt > 0 ? dt / step : 0;
   var acceptOnset = !!o.onset && (w.beatClock <= 0 || w.beatClock + dt >= step * MIXER_WAVE_RETRIGGER);
-  // The wave is driven by an animated clock: normally time runs forward at one beat per beat, a
-  // kick winds it BACK (crests visibly retrace), and the lost time is then repaid by running a
-  // little fast, so the next drum still lands on the same phase. Nothing here is a phase jump:
-  // wind-back and catch-up are both rates on the one clock, which is what keeps it from flickering.
+  // The phase is driven only by a rate (an animated speed), never written directly: a kick flips the
+  // rate negative for a short burst, and the rate then eases back to 1 over MORE than one beat, so
+  // consecutive drums do not cancel each other out - each one leaves the wave a little further back
+  // and the crests are pushed against the beat instead of snapping onto it.
   var rate = 1;
   if (dt > 0) {
     if (w.rewind > 0) {
       var back = Math.min(w.rewind, MIXER_WAVE_REWIND_SPEED * beatDt);
       w.rewind -= back;
       rate = -MIXER_WAVE_REWIND_SPEED;
-    } else if (w.debt > 0) {
-      var pay = Math.min(w.debt, MIXER_WAVE_CATCHUP_SPEED * beatDt);
-      w.debt -= pay;
-      rate = 1 + MIXER_WAVE_CATCHUP_SPEED;
+    } else {
+      w.speed += (1 - w.speed) * (1 - Math.exp(-beatDt / MIXER_WAVE_RECOVER_BEATS));
+      rate = w.speed;
     }
     w.phase = mixerWrapAngle(w.phase - (Math.PI * 2 / step) * rate * dt);
     w.kick *= Math.exp(-beatDt / MIXER_WAVE_SPEED_TAIL);
@@ -814,12 +814,11 @@ function mixerWaveStep(w, dt, o) {
     w.beatClock += dt;
   }
   if (acceptOnset) {
-    // The rewind runs a hair early, so its visible peak lands on the beat.
     w.beatClock = -MIXER_WAVE_LEAD_BEATS * step;
     w.kick = 1;
     w.freqKick = 1;
     w.rewind = MIXER_WAVE_REWIND_BEATS * step;
-    w.debt = w.rewind;
+    w.speed = MIXER_WAVE_RECOVER_SPEED;
   }
   w.kScale = 1;
   w.phaseOffset = 0;
@@ -919,7 +918,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, debt: 0 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1 },
   size: null
 };
 

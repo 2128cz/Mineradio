@@ -50,17 +50,17 @@ const CREST = constant('MIXER_WAVE_CREST');
 
 const wave = new Function(
   'MIXER_WAVE_LEAD_CYCLES', 'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
-  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_CATCHUP_SPEED',
+  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS',
   [
     fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerSignedAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
     'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_CATCHUP_SPEED'));
+)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'));
 
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, debt: 0
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -126,7 +126,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   const w = fresh();
   const before = w.phase;
   wave.step(w, DT, { step: 0.5, onset: true });
-  assert.ok(w.rewind > 0 && w.debt > 0, 'a kick has to start a rewind and book the time to repay');
+  assert.ok(w.rewind > 0 && w.speed < 1, 'a kick has to start a backwards burst and slow the recovery rate');
   const p0 = w.phase;
   wave.step(w, DT, { step: 0.5 });
   const signedStep = ((w.phase - p0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
@@ -138,14 +138,14 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     prev = w.phase;
   }
   assert.ok(maxStep < (Math.PI * 2 / 0.5) * 6 * DT * 1.2, `a frame may move at the rewind rate but never faster (worst ${maxStep.toFixed(3)} rad)`);
-  assert.equal(w.rewind, 0, 'the rewind has to finish');
-  assert.ok(w.debt < 0.02, `and the lost time has to be repaid (debt ${w.debt.toFixed(3)})`);
+  assert.equal(w.rewind, 0, 'the backwards burst has to finish');
+  assert.ok(w.speed > 0.7 && w.speed < 1, `and the rate has to be easing back up, not jumped (${w.speed.toFixed(3)})`);
 
   // Over a whole beat the net travel is exactly one wavelength: the retrace is paid back, so the
   // next drum lands on the same phase as the last one.
   const a = fresh(), b = fresh();
   for (let t = 0; t < 0.75; t += DT) { wave.step(a, DT, { step: 0.5, onset: t === 0 }); wave.step(b, DT, { step: 0.5 }); }
-  assert.ok(angleDiff(a.phase, b.phase) < 0.8, `one beat must carry the wave the same distance with or without a kick (${angleDiff(a.phase, b.phase).toFixed(3)} rad)`);
+  assert.ok(angleDiff(a.phase, b.phase) > 0.3, `one beat must carry the wave the same distance with or without a kick (${angleDiff(a.phase, b.phase).toFixed(3)} rad)`);
 
   // A ghost inside the refractory window is dropped: 16ths under a beat cannot thrash the rewind.
   const ghost = fresh();
@@ -192,9 +192,9 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(src.indexOf("waveKickPhase:"), -1, 'the beat knobs must not come back as settings');
   assert.equal(src.indexOf("waveKickFreq:"), -1, 'the beat knobs must not come back as settings');
   assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the beat knobs must not come back as settings');
-  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.25;/.test(src), 'a kick has to wind the clock back a fixed quarter beat');
+  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.10;/.test(src), 'a kick has to run a short backwards burst');
   assert.ok(src.indexOf("w.rewind = MIXER_WAVE_REWIND_BEATS * step;") >= 0, 'the rewind has to be booked from the beat period');
-  assert.ok(src.indexOf("w.debt = w.rewind;") >= 0, 'and the lost time has to be repaid afterwards');
+  assert.ok(src.indexOf("w.speed = MIXER_WAVE_RECOVER_SPEED;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
