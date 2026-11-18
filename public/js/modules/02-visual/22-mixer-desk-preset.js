@@ -54,7 +54,7 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveRewind: { def: 0.22, min: 0, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  waveRewind: { def: 0.05, min: 0, max: 0.2, kind: 'ratio', rebuild: 'live' },
   waveRewindSpeed: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
   waveRecover: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   waveRecoverBeats: { def: 2.2, min: 0.5, max: 6, kind: 'unit', rebuild: 'live' },
@@ -736,11 +736,12 @@ var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injec
 var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
 var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
 var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
-var MIXER_WAVE_REWIND_BEATS = 0.22;  // the backwards burst after a kick, in beats
+var MIXER_WAVE_REWIND_BEATS = 0.05;  // how far the wavenumber dips per kick: 5%, a roll, not a shudder
 var MIXER_WAVE_REWIND_SPEED = 2.6;   // how fast that burst runs, backwards
 var MIXER_WAVE_RECOVER_SPEED = 0.5;  // where the rate lands after the burst, easing back to 1
 var MIXER_WAVE_RECOVER_BEATS = 0.5;  // how fast the rate itself returns to 1 after a kick
 var MIXER_WAVE_DIP_TAIL = 2.5;       // beats for the wavenumber dip to relax: longer than a beat, so hits stack
+var MIXER_WAVE_DIP_RISE = 0.10;      // beats for the dip to REACH its target (slower = a gliding wave, not a jolt)
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -826,14 +827,16 @@ function mixerWaveStep(w, dt, o) {
     w.beatClock = -MIXER_WAVE_LEAD_BEATS * step;
     w.kick = 1;
     // The dip ADDS, so a hit inside the previous tail deepens it instead of restarting it.
-    w.freqKick = Math.min(2.5, w.freqKick + 1);
+    w.freqKick = Math.min(1.6, w.freqKick + 1);
     w.rewind = 0;
     w.speed = recoverSpeed;
   }
   // 移频 is the motion: a shrinking wavenumber slides every crest outwards at once, continuously.
   // The tail outlasts a beat, so the dips stack and repeated hits keep pushing the wave back.
   var dipAmt = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
-  w.kScale = Math.max(0.15, 1 - w.freqKick * dipAmt);
+  var kTarget = Math.max(0.25, 1 - w.freqKick * dipAmt);
+  var riseBeats = MIXER_WAVE_DIP_RISE / Math.max(0.25, rewindSpeed);
+  w.kScale += (kTarget - w.kScale) * (1 - Math.exp(-beatDt / riseBeats));
   w.phaseOffset = 0;
   w.anchorOffset = 0;
   return w;
