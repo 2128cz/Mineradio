@@ -54,6 +54,7 @@
     'js/modules/03-beat/04-beat-map-runtime.js',
     'js/modules/03-beat/05-cover-loading-crop.js',
     'js/modules/03-beat/06-sonic-audio-monitor.js',
+    'js/modules/03-beat/07-beat-trigger.js',
     'js/modules/04-shelf/00-layout-hover.js',
     'js/modules/04-shelf/01-manager-core.js',
     'js/modules/04-shelf/02-rebuild-panel-sync.js',

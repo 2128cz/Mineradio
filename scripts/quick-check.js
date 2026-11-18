@@ -1096,6 +1096,26 @@ function runBeatTempoCeilingCheck() {
   console.log('[OK] Beat tempos reach the map: 150 and 180 BPM keep their own beat spacing.');
 }
 
+// A long kick used to keep beatPulse fed for as long as the sound lasted. The live trigger
+// now fires on a rising edge, waits for the level to fall before re-arming, and re-fires a
+// held level on the BPM grid, so dense kicks land on the tempo instead of thrashing.
+function runBeatTriggerCheck() {
+  logStep('Live beat trigger (rising edge latch + BPM grid)');
+  const testFile = path.join(appRoot, 'tests', 'beat-trigger.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/beat-trigger.test.js is missing; the latch would only be checked by ear');
+    return;
+  }
+  const run = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (run.status !== 0) {
+    process.stdout.write(run.stdout || '');
+    process.stderr.write(run.stderr || '');
+    fail(`the beat trigger regression failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(run.stdout || '');
+  console.log('[OK] Live kicks are edge-latched and retriggered on the BPM grid.');
+}
+
 function runHaloPresetCheck() {
   logStep('HALO ring preset (layer, beat clock, lyric dial, virtualized panels)');
   const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '18-halo-ring-preset.js');
@@ -8308,6 +8328,7 @@ async function main() {
   runPvAspectSelectionRegressionCheck();
   runPvPresetCheck();
   runBeatTempoCeilingCheck();
+  runBeatTriggerCheck();
   runHaloPresetCheck();
   runBlackHolePresetCheck();
   runNeonFujiPresetCheck();

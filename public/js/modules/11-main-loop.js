@@ -424,11 +424,19 @@ function animate() {
     prevEnergy = prevEnergy * 0.88 + re * 0.12;
 
     var realtimeBeat = processRealtimeBeatEngine(audioStepDt);
+    var dj = djMode.active;
+    var djMapCoversCurrentTime = !dj || !currentDjBeatMap || !currentDjBeatMap.partialUntilSec || !audio || (audio.currentTime || 0) <= currentDjBeatMap.partialUntilSec - 1.25;
+    var djBeatMapReadyForCamera = dj && currentDjBeatMap && currentDjBeatMap.cameraBeats && currentDjBeatMap.cameraBeats.length >= 4 && djMapCoversCurrentTime;
+    var beatMapReadyForCamera = dj ? djBeatMapReadyForCamera : (currentBeatMap && currentBeatMap.cameraBeats && currentBeatMap.cameraBeats.length >= 4);
+    // 长音只能按 BPM 网格点拍：上升沿触发一次，持续高电平由网格重新触发，跌回释放阈值才重新武装。
+    var liveTrigger = realtimeBeat && typeof stepLiveBeatTrigger === 'function'
+      ? stepLiveBeatTrigger(realtimeBeat, audioStepDt)
+      : null;
+    if (liveTrigger && liveTrigger.triggered && !beatMapReadyForCamera && rtBeat.primedFrames >= 10 && (audio.currentTime || 0) >= rtBeat.warmupUntil) {
+      beatOnsetFlag = true;
+      beatPulse = Math.max(beatPulse, Math.min(dj ? 0.42 : 0.78, liveTrigger.pulse));
+    }
     if (realtimeBeat && realtimeBeat.hit) {
-      var dj = djMode.active;
-      var djMapCoversCurrentTime = !dj || !currentDjBeatMap || !currentDjBeatMap.partialUntilSec || !audio || (audio.currentTime || 0) <= currentDjBeatMap.partialUntilSec - 1.25;
-      var djBeatMapReadyForCamera = dj && currentDjBeatMap && currentDjBeatMap.cameraBeats && currentDjBeatMap.cameraBeats.length >= 4 && djMapCoversCurrentTime;
-      var beatMapReadyForCamera = dj ? djBeatMapReadyForCamera : (currentBeatMap && currentBeatMap.cameraBeats && currentBeatMap.cameraBeats.length >= 4);
       var waitingForBeatMap = dj ? !djBeatMapReadyForCamera : (!beatMapReadyForCamera && (!!beatMapBusy || !!beatAnalysisTimer || ((audio && audio.currentTime) || 0) < 18));
       var liveKickFrame = dj
         ? (realtimeBeat.low > 0.42 && rb > 0.32 && bassOnset > 0.040 && energyOnset > 0.006 && (realtimeBeat.lowDominance || 0) > 0.72)
@@ -461,14 +469,6 @@ function animate() {
           dj: dj
         }, 'live');
       }
-      if (!beatMapReadyForCamera && liveFallbackOk) {
-        var previewPulseScale = waitingForBeatMap && !dj ? 0.68 : 1;
-        var rtPulse = Math.min(dj ? 0.42 : (waitingForBeatMap ? 0.56 : 0.76), realtimeBeat.strength * (realtimeBeat.tempoAssist ? (dj ? 0.54 : 0.76) : (dj ? 0.62 : 0.84)) * previewPulseScale);
-        if (rtPulse > beatPulse + 0.09) beatOnsetFlag = true;
-        beatPulse = Math.max(beatPulse, rtPulse);
-      }
-    } else if (bassOnset > 0.075 && rb > 0.32 && energyOnset > 0.020) {
-      beatPulse = Math.max(beatPulse, Math.min(0.12, bassOnset * 0.18));
     }
     beatPulse *= Math.pow(0.36, audioStepDt);
 
@@ -538,6 +538,7 @@ function animate() {
     lyricSunEnergy += (lyricSunTarget - lyricSunEnergy) * (lyricSunTarget > lyricSunEnergy ? 0.075 : 0.030);
   } else {
     var audioIdleDecay = Math.max(1, audioStepDt * 60);
+    if (typeof beatTriggerReset === 'function') beatTriggerReset(beatTriggerState);
     if (typeof stepSonicAudioMonitor === 'function') stepSonicAudioMonitor(null, audioStepDt, { fx: fx, playing: false });
     smoothBass *= Math.pow(0.91, audioIdleDecay); smoothMid *= Math.pow(0.91, audioIdleDecay); smoothTreb *= Math.pow(0.91, audioIdleDecay); smoothEnergy *= Math.pow(0.91, audioIdleDecay); beatPulse *= Math.pow(0.82, audioIdleDecay);
     liveCamAvg *= Math.pow(0.94, audioIdleDecay);

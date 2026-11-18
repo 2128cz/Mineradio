@@ -221,6 +221,7 @@ function applyCinemaProfileFromBeatMap(map) {
 }
 
 function resetRealtimeBeatEngine() {
+  if (typeof beatTriggerReset === 'function') beatTriggerReset(beatTriggerState);
   rtBeat.subFast = rtBeat.subSlow = rtBeat.lowFast = rtBeat.lowSlow = 0;
   rtBeat.bodyFast = rtBeat.bodySlow = rtBeat.vocalFast = rtBeat.vocalSlow = rtBeat.snapFast = rtBeat.snapSlow = 0;
   rtBeat.prevSub = rtBeat.prevLow = rtBeat.prevBody = rtBeat.prevVocal = rtBeat.prevSnap = rtBeat.prevRms = 0;

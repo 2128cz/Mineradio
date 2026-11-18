@@ -75,7 +75,7 @@ Electron main  desktop/main.js (6058 行)
 | `01-scene` | 5 | 2387 | 155 |
 | `02-visual` | 16 | 12208 | 703 |
 | `public-root`（两个 sonic preset） | 2 | 1901 | 0（IIFE 包裹） |
-| `03-beat` | 7 | 3630 | 119 |
+| `03-beat` | 8 | 3779 | 133 |
 | `04-shelf` | 7 | 2722 | 50 |
 | `05-playback` | 22 | 13220 | 794 |
 | `06-lyrics` | 8 | 3757 | 259 |
@@ -157,13 +157,13 @@ graph LR
 - 歌词 16 文件链路见 §6。
 - `04-visual-settings-persistence.js` 是**持久化枢纽**：`clampRange` 等 39 个读取方的归一化函数住这里。
 
-### 03-beat（7 / 3630）—— 节拍分析与 beatmap 缓存
-`00-tempo-worker-cache-prefetch.js`（music-tempo worker + 磁盘缓存预取）、`01-audio-beat-analysis.js`、`02-podcast-dj-analysis.js`、`04-beat-map-runtime.js`（`tickBeatMap`/`beatMapNextIdx`）、`06-sonic-audio-monitor.js`（8 带精细频谱快照）。
+### 03-beat（8 / 3779）—— 节拍分析与 beatmap 缓存
+`00-tempo-worker-cache-prefetch.js`（music-tempo worker + 磁盘缓存预取）、`01-audio-beat-analysis.js`、`02-podcast-dj-analysis.js`、`04-beat-map-runtime.js`（`tickBeatMap`/`beatMapNextIdx`）、`06-sonic-audio-monitor.js`（8 带精细频谱快照）、`07-beat-trigger.js`（实时鼓点边沿锁存 + BPM 网格重触发）。
 
 **两条识别路径与范围（2026-10-27 实测，见 `tests/beat-tempo-ceiling.test.js`）**
 - **离线地图**：`music-tempo` worker 传 `minBeatInterval 0.22 / maxBeatInterval 1.2`（50–273 BPM）→ `normalizeMusicTempoBeats(times, duration, tempo)` 只去掉重复触发（按 tracker 自己锁定的间距，不再按 0.44 s 抽稀）→ `medianGap(…, 0.22, 1.20)` 得 `gridStep`；离线网格合成窗口同为 `0.22..1.20`。`tempoSource === 'music-tempo'` 的地图会**锁死**实时检测（`04-beat-map-runtime.js` 的 `gridTimingLocked`），并按歌缓存到磁盘（`/api/beatmap/cache`；`packLocalBeatMap` 的 `v` 是分析版本，旧版本读出来直接作废重算）。
 - **实时检测**：`processRealtimeBeatEngine`（`01-scene/02-beat-camera-runtime.js:392`）从 analyser 五带算 onset/flux；tempo 锁范围 `0.24..0.88 s`，间隔 < 0.24 s 才折半，命中最小间隔 0.22 s；相机在地图侧的步伐 `min(0.5, max(0.22, step*0.86))` 跟歌走。
-- **视觉消费**：相机冲击 ← `currentBeatMap.cameraBeats`（+ 实时合并）；背景脉冲 `beatPulse` ← `pulseBeats`；环 ← `sonicAudioMonitorState.frame`（8 带）+ `cameraBeats` + `gridStep`；PV 预设 13 **不吃节拍**（走档案计划）；舞台/桌面歌词只吃 `beatPulse`。
+- **视觉消费**：相机冲击 ← `currentBeatMap.cameraBeats`（+ 实时合并）；背景脉冲 `beatPulse` ← `pulseBeats`（无地图时走 `07-beat-trigger.js` 的边沿锁存 + BPM 网格：上升沿触发一次，持续高电平按 `rtBeat.tempoGap` 点拍，跌回释放阈值才重新武装）；环 ← `sonicAudioMonitorState.frame`（8 带）+ `cameraBeats` + `gridStep`；PV 预设 13 **不吃节拍**（走档案计划）；舞台/桌面歌词只吃 `beatPulse`。
 - **已知旧上限（已修）**：worker 0.36（166.7 BPM）与抽稀 0.44（143 BPM）曾让 150–160 BPM 变成精确半速、167+ 变成不精确半速（180 BPM 图上是 0.670 s，每拍差 1%）。修后实测 70→70.0/0.860 s、100→100.0/0.600 s、150→150.0/0.400 s、180→180.1/0.330 s。
 
 ### 04-shelf（7 / 2722，仅 50 个顶层声明）—— 3D 歌单架
