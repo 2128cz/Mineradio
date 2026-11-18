@@ -1314,12 +1314,10 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
   mixerUpdateLevels(sonicFrame, step, mixerParam('audioSmooth'));
   mixerStepWave(mixerState.wave, step, {
     step: mixerBeatStep(),
-    // The beat response is computed here, not tuned by hand: the frequency dips by a fixed rate for
-    // the hit, the phase is realigned onto the grid at every kick, and the amount is whatever keeps
-    // the two segments continuous.
+    // The beat response lives in the wave clock now (rewind + catch-up), so nothing is shifted here.
     phaseShift: 0,
-    freqShift: MIXER_WAVE_BEAT_DIP,
-    speedShift: 1,
+    freqShift: 0,
+    speedShift: 0,
     beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
     onset: (typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag) ? true : false,
     playing: !(typeof audio !== 'undefined' && audio && audio.paused)

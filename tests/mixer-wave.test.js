@@ -226,6 +226,13 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
     'the shader phase has to be the clock plus the 移相 step plus the 相位 knob');
 
+  // A reference to a constant that no longer exists throws every frame and the desk goes black, so
+  // every MIXER_WAVE_* name the file uses is swept for a declaration - the rewind rewrite black-screened
+  // exactly this way once.
+  for (const name of [...new Set((src.match(/MIXER_WAVE_[A-Z_]+/g) || []))]) {
+    assert.ok(new RegExp('var ' + name + '\\s*=').test(src), name + ' is used but never declared');
+  }
+
   // The clock is stepped every frame from the song, and the beat pulse is what launches it.
   assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,700}beat:\s*\(typeof beatPulse[\s\S]{0,200}onset:\s*\(typeof beatOnsetFlag/.test(src),
     'the desk frame has to advance the wave from the live beat');
