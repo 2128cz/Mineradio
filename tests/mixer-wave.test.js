@@ -37,21 +37,31 @@ function constant(name) {
 }
 
 const BASE_UNITS = constant('MIXER_WAVE_BASE_UNITS');
-const KICK_BOOST = constant('MIXER_WAVE_KICK_BOOST');
-const KICK_TAIL = constant('MIXER_WAVE_KICK_TAIL');
+const LEAD_CYCLES = constant('MIXER_WAVE_LEAD_CYCLES');
+const SPEED_TAIL = constant('MIXER_WAVE_SPEED_TAIL');
+const KICK_PHASE = constant('MIXER_WAVE_KICK_PHASE');
+const PHASE_TAIL = constant('MIXER_WAVE_PHASE_TAIL');
+const ANCHOR_TAIL = constant('MIXER_WAVE_ANCHOR_TAIL');
+const RETRIGGER = constant('MIXER_WAVE_RETRIGGER');
+const KICK_FREQ = constant('MIXER_WAVE_KICK_FREQ');
+const FREQ_TAIL = constant('MIXER_WAVE_FREQ_TAIL');
 const FALLBACK_STEP = constant('MIXER_WAVE_FALLBACK_STEP');
 const CREST = constant('MIXER_WAVE_CREST');
 
 const wave = new Function(
-  'MIXER_WAVE_KICK_BOOST', 'MIXER_WAVE_KICK_TAIL', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST',
+  'MIXER_WAVE_LEAD_CYCLES', 'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
+  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS', 'MIXER_WAVE_DIP_TAIL', 'MIXER_WAVE_DIP_RISE',
   [
-    fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
-    'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave };'
+    fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerSignedAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
+    'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(KICK_BOOST, KICK_TAIL, FALLBACK_STEP, CREST);
+)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'), constant('MIXER_WAVE_DIP_TAIL'), constant('MIXER_WAVE_DIP_RISE'));
 
 const DT = 1 / 60;
-const fresh = () => ({ phase: CREST, kick: 0, beatStep: 0, prevBeat: 0 });
+const fresh = () => ({
+  phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0, onsets: 0
+});
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
   return Math.min(d, Math.PI * 2 - d);
@@ -107,45 +117,63 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(src.indexOf('uCamPan*(c.x'), -1, 'the wave speed may not be borrowed from the camera pan');
 }
 
-// ---------------------------------------------------------------- 3) a kick launches the wave at the origin
+// ---------------------------------------------------------------- 3) a kick compresses the wave, and hits stack
 
 {
+  // 移频 is the motion: with k shrinking every crest slides outwards at once and continuously, so the
+  // wave retraces itself. A phase step can only snap, which is why it never read as a wave.
   const w = fresh();
-  w.phase = 2.2;                    // mid-cycle, so the snap is visible
   wave.step(w, DT, { step: 0.5, onset: true });
-  assert.equal(w.kick, 1, 'a kick has to light the surge');
-  assert.equal(w.phase, CREST, 'and land the phase on a crest, with no half-applied step');
-  assert.ok(Math.abs(Math.sin(w.phase) - 1) < 1e-12, 'the origin plate has to sit at the top of the wave');
+  for (let t = 0; t < 0.15; t += DT) wave.step(w, DT, { step: 0.5 });
+  assert.ok(w.freqKick > 0.8 && w.kScale < 0.98, `a kick has to compress the wavenumber (${w.kScale.toFixed(3)})`);
 
-  // The surge is a rate change, not a jump: the first tenth of a second after the kick turns the
-  // clock by more than the beat cadence alone would.
-  const kick = fresh(), quiet = fresh();
-  wave.step(kick, DT, { step: 0.5, onset: true });
-  wave.step(quiet, DT, { step: 0.5 });
-  const kickStart = kick.phase, quietStart = quiet.phase;
-  for (let t = 0; t < 0.1; t += DT) { wave.step(kick, DT, { step: 0.5 }); wave.step(quiet, DT, { step: 0.5 }); }
-  const kicked = angleDiff(kick.phase, kickStart), plain = angleDiff(quiet.phase, quietStart);
-  assert.ok(kicked > plain * 1.8, `a kick has to speed the wave up once (${plain.toFixed(3)} -> ${kicked.toFixed(3)})`);
+  // The tail outlasts a beat, so a second hit lands while the first is still open: dips stack and the
+  // wave keeps being pushed outwards for as long as the drums continue.
+  const one = fresh(), two = fresh();
+  for (let t = 0; t < 0.5; t += DT) {
+    const second = t > 0.29 && t < 0.31;
+    wave.step(one, DT, { step: 0.5, onset: t === 0 });
+    wave.step(two, DT, { step: 0.5, onset: t === 0 || second });
+  }
+  assert.ok(two.kScale < one.kScale - 0.01,
+    `a second hit inside the tail has to deepen the dip (${one.kScale.toFixed(3)} vs ${two.kScale.toFixed(3)})`);
 
-  // And it lets go: after a second the surge is spent, so the wave settles back onto the beat cadence.
-  const rest = fresh();
-  wave.step(rest, DT, { step: 0.5, onset: true });
-  for (let t = 0; t < 1.2; t += DT) wave.step(rest, DT, { step: 0.5 });
-  assert.ok(rest.kick < 0.01, `the surge has to decay (kick ${rest.kick.toFixed(4)})`);
-  assert.ok(Math.abs(rest.kick - 0) < 1e-9 || rest.kick === 0 || rest.kick < 0.01, 'and stay gone');
+  // Nothing writes the phase - only the rate does - so the waveform cannot jump.
+  const p0 = fresh();
+  wave.step(p0, DT, { step: 0.5, onset: true });
+  let maxStep = 0, prev = p0.phase;
+  for (let t = 0; t < 0.5; t += DT) {
+    wave.step(p0, DT, { step: 0.5 });
+    maxStep = Math.max(maxStep, angleDiff(p0.phase, prev));
+    prev = p0.phase;
+  }
+  assert.ok(maxStep < (Math.PI * 2 / 0.5) * DT * 1.2, `no frame may jump (worst ${maxStep.toFixed(3)} rad)`);
 
-  // A rising beat pulse counts as a kick; a decaying one does not.
-  const f = fresh();
-  f.prevBeat = 0.2;
-  wave.frame(f, DT, { step: 0.5, beat: 0.55, playing: true });
-  assert.equal(f.kick, 1, 'a rising beat pulse has to launch the wave');
-  const g = fresh();
-  g.prevBeat = 0.6;
-  g.phase = 1.1;
-  wave.frame(g, DT, { step: 0.5, beat: 0.5, playing: true });
-  assert.ok(g.kick === 0, 'a pulse that is only decaying must not launch the wave');
-  assert.ok(angleDiff(g.phase, 1.1 - (Math.PI * 2) * DT / 0.5) < 1e-9,
-    'and the wave must keep its plain beat cadence, not jump');
+  // Each hit also re-anchors the phase onto the origin crest, paid out with the same rise as the
+  // dip, so consecutive hits start from the same phase and the shock is repeatable, not stuttered.
+  const anchor = fresh();
+  anchor.phase = 1.1;
+  wave.step(anchor, DT, { step: 0.5, onset: true });
+  assert.ok(Math.abs(anchor.anchorOffset) > 0.05, 'a kick has to queue the phase re-anchor');
+  for (let t = 0; t < 0.2; t += DT) wave.step(anchor, DT, { step: 0.5 });
+  assert.equal(anchor.anchorOffset, 0, 'and pay it off within the rise, so the next hit starts from the origin again');
+
+  // A ghost inside the refractory window is dropped: 16ths under a beat cannot thump the dip.
+  const ghost = fresh();
+  wave.step(ghost, DT, { step: 0.5, onset: true });
+  const f0 = ghost.freqKick;
+  wave.step(ghost, DT, { step: 0.5, onset: true });
+  assert.ok(ghost.freqKick < f0 + 1e-9, 'an onset inside the refractory window must not add another dip');
+
+  // A rising beat pulse launches it; a decaying one does not.
+  const f2 = fresh();
+  f2.prevBeat = 0.2;
+  wave.frame(f2, DT, { step: 0.5, beat: 0.55, playing: true });
+  assert.ok(f2.freqKick > 0.8, 'a rising beat pulse has to dip the wavenumber');
+  const g2 = fresh();
+  g2.prevBeat = 0.6;
+  wave.frame(g2, DT, { step: 0.5, beat: 0.5, playing: true });
+  assert.equal(g2.freqKick, 0, 'a pulse that is only decaying must not dip it');
 }
 
 // ---------------------------------------------------------------- 4) paused is frozen, and no tempo still moves
@@ -164,12 +192,33 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(FALLBACK_STEP > 0.3 && FALLBACK_STEP < 1, 'the fallback is a plain 100-ish BPM');
 }
 
-// ---------------------------------------------------------------- 5) the three knobs each move one thing
+// ---------------------------------------------------------------- 5) the knobs each move one thing
 
 {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
   assert.ok(/waveAmp:\s*\{\s*def:\s*0\.4,\s*min:\s*0,\s*max:\s*1\.2/.test(src), 'waveAmp runs 0..1.2 and defaults to the reference lift');
   assert.ok(/waveFreq:\s*\{\s*def:\s*1,\s*min:\s*0\.3,\s*max:\s*3/.test(src), 'waveFreq runs 0.3..3');
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
+  // The beat response is not a knob any more: the drum's dip, its realignment and its lift are
+  // worked out in code, so there is nothing for the listener to tune per song.
+  assert.equal(src.indexOf("waveKickPhase:"), -1, 'the beat knobs must not come back as settings');
+  assert.equal(src.indexOf("waveKickFreq:"), -1, 'the beat knobs must not come back as settings');
+  assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the old beat knobs must not come back');
+  for (const [key, def, min, max] of [['waveRewind', '0.05', '0', '0.2'], ['waveRewindSpeed', '2.6', '0', '6'], ['waveRecover', '0.5', '0', '1'], ['waveRecoverBeats', '2.2', '0.5', '6']]) {
+    assert.ok(new RegExp(key + ':\\s*\\{\\s*def:\\s*' + def.replace('.', '\\.')).test(src), key + ' has to be a tuning knob');
+  }
+  for (const [id, key] of [['fx-mixerwaveRewind', 'waveRewind'], ['fx-mixerwaveRewindSpeed', 'waveRewindSpeed'], ['fx-mixerwaveRecover', 'waveRecover'], ['fx-mixerwaveRecoverBeats', 'waveRecoverBeats']]) {
+    assert.ok(html.indexOf('id="' + id + '"') > 0, id + ' needs a row in the 调音台 panel');
+    assert.ok(html.indexOf("setMixerTuning('" + key + "'") > 0, id + ' has to write ' + key);
+    assert.ok(consoleSrc.indexOf("fxConsoleItem('" + id + "'") > 0, id + ' needs a console entry');
+  }
+  assert.ok(/rewindBeats: mixerParam\('waveRewind'\)/.test(src) && /recoverBeats: mixerParam\('waveRecoverBeats'\)/.test(src),
+    'the four beat-shape knobs have to reach the wave clock');
+  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.05;/.test(src), 'a kick has to dip the wavenumber gently (5%), so the desk rolls instead of shuddering');
+  assert.ok(src.indexOf("var kTarget = Math.max(0.25, 1 - w.freqKick * dipAmt);") >= 0, 'the drum has to compress the wavenumber: that is what moves every crest at once');
+  assert.ok(src.indexOf("w.freqKick = Math.min(1.6, w.freqKick + 1);") >= 0, 'and the dips have to add up instead of restarting');
+  assert.ok(src.indexOf("w.speed = recoverSpeed;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
@@ -196,18 +245,36 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/"uniform float uWaveAmp;"/.test(src) && /"uniform float uWaveK;"/.test(src) && /"uniform float uWavePhase;"/.test(src),
     'the wave needs its three uniforms declared in the ported body');
   assert.ok(/u\.uWaveAmp\.value\s*=\s*Math\.max\(0,\s*mixerParam\('waveAmp'\)\)/.test(src), 'waveAmp has to reach the shader');
-  assert.ok(/u\.uWaveK\.value\s*=\s*\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS/.test(src), 'waveFreq has to become a wavenumber');
-  assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
-    'the shader phase has to be the wave clock plus the 相位 knob, one full turn per 100%');
+  assert.ok(/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/.test(src),
+    'waveFreq has to become a wavenumber, times this frame\'s 移频 gain');
+  assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
+    'the shader phase has to be the clock plus the 移相 step plus the 相位 knob');
+
+  // A reference to a constant that no longer exists throws every frame and the desk goes black, so
+  // every MIXER_WAVE_* name the file uses is swept for a declaration - the rewind rewrite black-screened
+  // exactly this way once.
+  for (const name of [...new Set((src.match(/MIXER_WAVE_[A-Z_]+/g) || []))]) {
+    assert.ok(new RegExp('var ' + name + '\\s*=').test(src), name + ' is used but never declared');
+  }
 
   // The clock is stepped every frame from the song, and the beat pulse is what launches it.
-  assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,260}beat:\s*\(typeof beatPulse[\s\S]{0,120}onset:\s*\(typeof beatOnsetFlag/.test(src),
+  assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,700}beat:\s*\(typeof beatPulse[\s\S]{0,200}onset:\s*\(typeof beatOnsetFlag/.test(src),
     'the desk frame has to advance the wave from the live beat');
   assert.ok(/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/.test(src),
     'the wave has to freeze with the music');
 
-  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
-  for (const [id, key, min, max] of [['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'], ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'], ['fx-mixerwavePhase', 'wavePhase', '0', '1']]) {
+  // The lift is rhythmic too: it rides the live level and stretches further on the drum, and the
+  // beat move starts a hair early so its visible peak lands on the beat rather than behind it.
+  assert.ok(/var waveLevel = mixerClamp01\(mixerState\.levelAvg \|\| 0\)/.test(src), 'the lift has to read the live level');
+  assert.ok(/\(1 \+ mixerState\.wave\.kick \* MIXER_WAVE_AMP_KICK\)/.test(src), 'a kick has to stretch the lift further');
+  assert.ok(constant('MIXER_WAVE_AMP_FLOOR') > 0.1 && constant('MIXER_WAVE_AMP_FLOOR') < 0.6, 'silence keeps a floor of height, not zero');
+  assert.ok(constant('MIXER_WAVE_LEAD_BEATS') > 0 && constant('MIXER_WAVE_LEAD_BEATS') < 0.2, 'the beat move has a small lead');
+
+  for (const [id, key, min, max] of [
+    ['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'],
+    ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
+    ['fx-mixerwavePhase', 'wavePhase', '0', '1']
+  ]) {
     const at = html.indexOf('id="' + id + '"');
     assert.ok(at > 0, `${id} needs a row in the 调音台 panel`);
     const tag = html.slice(at, html.indexOf('>', at));
@@ -215,7 +282,6 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     assert.ok(html.includes(`setMixerTuning('${key}', this.value)`), `${id} must write ${key}`);
     assert.ok(src.includes(`'${key}'`), `${key} has to be in the tuning schema`);
   }
-  const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
   for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase']) {
     assert.ok(consoleSrc.includes(`fxConsoleItem('${id}'`), `${id} must be listed in the console 调音台 group`);
   }
@@ -243,4 +309,4 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(at({ gridStep: 0.05 }, { tempoGap: 9 }), 0, 'implausible periods are rejected at every rung');
 }
 
-console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick lands on the origin crest and surges ${KICK_BOOST}x, amp/freq/phase move one thing each`);
+console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick anchors the crest and shifts phase ${KICK_PHASE.toFixed(2)} rad + frequency ${(KICK_FREQ * 100).toFixed(0)}% (separate tails), amp/freq/phase move one thing each`);
