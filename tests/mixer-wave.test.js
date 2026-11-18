@@ -139,7 +139,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   }
   assert.ok(maxStep < (Math.PI * 2 / 0.5) * 6 * DT * 1.2, `a frame may move at the rewind rate but never faster (worst ${maxStep.toFixed(3)} rad)`);
   assert.equal(w.rewind, 0, 'the backwards burst has to finish');
-  assert.ok(w.speed > 0.7 && w.speed < 1, `and the rate has to be easing back up, not jumped (${w.speed.toFixed(3)})`);
+  assert.ok(w.speed > 0.5 && w.speed < 1, `and the rate has to be easing back up, not jumped (${w.speed.toFixed(3)})`);
 
   // Over a whole beat the net travel is exactly one wavelength: the retrace is paid back, so the
   // next drum lands on the same phase as the last one.
@@ -184,6 +184,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
 // ---------------------------------------------------------------- 5) the knobs each move one thing
 
 {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
   assert.ok(/waveAmp:\s*\{\s*def:\s*0\.4,\s*min:\s*0,\s*max:\s*1\.2/.test(src), 'waveAmp runs 0..1.2 and defaults to the reference lift');
   assert.ok(/waveFreq:\s*\{\s*def:\s*1,\s*min:\s*0\.3,\s*max:\s*3/.test(src), 'waveFreq runs 0.3..3');
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
@@ -191,10 +193,20 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   // worked out in code, so there is nothing for the listener to tune per song.
   assert.equal(src.indexOf("waveKickPhase:"), -1, 'the beat knobs must not come back as settings');
   assert.equal(src.indexOf("waveKickFreq:"), -1, 'the beat knobs must not come back as settings');
-  assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the beat knobs must not come back as settings');
-  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.10;/.test(src), 'a kick has to run a short backwards burst');
-  assert.ok(src.indexOf("w.rewind = MIXER_WAVE_REWIND_BEATS * step;") >= 0, 'the rewind has to be booked from the beat period');
-  assert.ok(src.indexOf("w.speed = MIXER_WAVE_RECOVER_SPEED;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
+  assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the old beat knobs must not come back');
+  for (const [key, def, min, max] of [['waveRewind', '0.22', '0', '0.6'], ['waveRewindSpeed', '2.6', '0', '6'], ['waveRecover', '0.5', '0', '1'], ['waveRecoverBeats', '2.2', '0.5', '6']]) {
+    assert.ok(new RegExp(key + ':\\s*\\{\\s*def:\\s*' + def.replace('.', '\\.')).test(src), key + ' has to be a tuning knob');
+  }
+  for (const [id, key] of [['fx-mixerwaveRewind', 'waveRewind'], ['fx-mixerwaveRewindSpeed', 'waveRewindSpeed'], ['fx-mixerwaveRecover', 'waveRecover'], ['fx-mixerwaveRecoverBeats', 'waveRecoverBeats']]) {
+    assert.ok(html.indexOf('id="' + id + '"') > 0, id + ' needs a row in the 调音台 panel');
+    assert.ok(html.indexOf("setMixerTuning('" + key + "'") > 0, id + ' has to write ' + key);
+    assert.ok(consoleSrc.indexOf("fxConsoleItem('" + id + "'") > 0, id + ' needs a console entry');
+  }
+  assert.ok(/rewindBeats: mixerParam\('waveRewind'\)/.test(src) && /recoverBeats: mixerParam\('waveRecoverBeats'\)/.test(src),
+    'the four beat-shape knobs have to reach the wave clock');
+  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.22;/.test(src), 'a kick has to run a backwards burst long enough to be seen');
+  assert.ok(src.indexOf("w.rewind = (o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS") >= 0, 'the rewind has to be booked from the beat period, with the knob overriding it');
+  assert.ok(src.indexOf("w.speed = recoverSpeed;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
@@ -246,7 +258,6 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(constant('MIXER_WAVE_AMP_FLOOR') > 0.1 && constant('MIXER_WAVE_AMP_FLOOR') < 0.6, 'silence keeps a floor of height, not zero');
   assert.ok(constant('MIXER_WAVE_LEAD_BEATS') > 0 && constant('MIXER_WAVE_LEAD_BEATS') < 0.2, 'the beat move has a small lead');
 
-  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
   for (const [id, key, min, max] of [
     ['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'],
     ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
@@ -259,7 +270,6 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     assert.ok(html.includes(`setMixerTuning('${key}', this.value)`), `${id} must write ${key}`);
     assert.ok(src.includes(`'${key}'`), `${key} has to be in the tuning schema`);
   }
-  const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
   for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase']) {
     assert.ok(consoleSrc.includes(`fxConsoleItem('${id}'`), `${id} must be listed in the console 调音台 group`);
   }

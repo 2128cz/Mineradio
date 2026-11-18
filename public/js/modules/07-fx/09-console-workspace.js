@@ -306,6 +306,10 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-mixerwaveAmp', '波浪振幅', '调音台 波浪 振幅 起伏 高度 面板 抬升 海啸'),
         fxConsoleItem('fx-mixerwaveFreq', '波浪频率', '调音台 波浪 频率 波长 疏密 周期 海啸'),
         fxConsoleItem('fx-mixerwavePhase', '波浪相位', '调音台 波浪 相位 对齐 原点 节拍 海啸'),
+        fxConsoleItem('fx-mixerwaveRewind', '鼓点反推', '调音台 鼓点 反推 倒退 时长 拍'),
+        fxConsoleItem('fx-mixerwaveRewindSpeed', '反推速度', '调音台 鼓点 反推 速度 倒退 快'),
+        fxConsoleItem('fx-mixerwaveRecover', '恢复速度', '调音台 鼓点 恢复 速度 慢 累积'),
+        fxConsoleItem('fx-mixerwaveRecoverBeats', '恢复时长', '调音台 鼓点 恢复 时长 拍 累积'),
         fxConsoleItem('fx-mixerthemeMix', '主题色强度', '调音台 主题色 配色 颜色 封面 取色 色环 补色 白天 黑夜 面板 饱和度'),
         fxConsoleItem('fx-mixerrenderScale', '渲染分辨率', '调音台 渲染 分辨率 性能'),
         fxConsoleItem({ selector: '.fx-mixer-tuning .fx-actions' }, '恢复调音台默认', '调音台 重置 还原 默认')

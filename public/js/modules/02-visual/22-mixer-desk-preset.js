@@ -54,6 +54,10 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveRewind: { def: 0.22, min: 0, max: 0.6, kind: 'ratio', rebuild: 'live' },
+  waveRewindSpeed: { def: 2.6, min: 0, max: 6, kind: 'ratio', rebuild: 'live' },
+  waveRecover: { def: 0.5, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  waveRecoverBeats: { def: 2.2, min: 0.5, max: 6, kind: 'unit', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
@@ -732,10 +736,10 @@ var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injec
 var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
 var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
 var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
-var MIXER_WAVE_REWIND_BEATS = 0.10;  // the backwards burst after a kick, in beats
-var MIXER_WAVE_REWIND_SPEED = 1.6;   // how fast that burst runs, backwards
-var MIXER_WAVE_RECOVER_SPEED = 0.75; // where the rate lands after the burst, easing back to 1
-var MIXER_WAVE_RECOVER_BEATS = 1.4;  // and how long that ease takes; longer than a beat, so kicks ACCUMULATE
+var MIXER_WAVE_REWIND_BEATS = 0.22;  // the backwards burst after a kick, in beats
+var MIXER_WAVE_REWIND_SPEED = 2.6;   // how fast that burst runs, backwards
+var MIXER_WAVE_RECOVER_SPEED = 0.5;  // where the rate lands after the burst, easing back to 1
+var MIXER_WAVE_RECOVER_BEATS = 2.2;  // and how long that ease takes; longer than a beat, so kicks ACCUMULATE
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -798,14 +802,17 @@ function mixerWaveStep(w, dt, o) {
   // rate negative for a short burst, and the rate then eases back to 1 over MORE than one beat, so
   // consecutive drums do not cancel each other out - each one leaves the wave a little further back
   // and the crests are pushed against the beat instead of snapping onto it.
+  var rewindSpeed = o.rewindSpeed == null ? MIXER_WAVE_REWIND_SPEED : Math.max(0, Number(o.rewindSpeed) || 0);
+  var recoverSpeed = o.recoverSpeed == null ? MIXER_WAVE_RECOVER_SPEED : Math.min(1, Math.max(0, Number(o.recoverSpeed) || 0));
+  var recoverBeats = o.recoverBeats == null ? MIXER_WAVE_RECOVER_BEATS : Math.max(0.1, Number(o.recoverBeats) || MIXER_WAVE_RECOVER_BEATS);
   var rate = 1;
   if (dt > 0) {
     if (w.rewind > 0) {
-      var back = Math.min(w.rewind, MIXER_WAVE_REWIND_SPEED * beatDt);
+      var back = Math.min(w.rewind, rewindSpeed * beatDt);
       w.rewind -= back;
-      rate = -MIXER_WAVE_REWIND_SPEED;
+      rate = -rewindSpeed;
     } else {
-      w.speed += (1 - w.speed) * (1 - Math.exp(-beatDt / MIXER_WAVE_RECOVER_BEATS));
+      w.speed += (1 - w.speed) * (1 - Math.exp(-beatDt / recoverBeats));
       rate = w.speed;
     }
     w.phase = mixerWrapAngle(w.phase - (Math.PI * 2 / step) * rate * dt);
@@ -817,8 +824,8 @@ function mixerWaveStep(w, dt, o) {
     w.beatClock = -MIXER_WAVE_LEAD_BEATS * step;
     w.kick = 1;
     w.freqKick = 1;
-    w.rewind = MIXER_WAVE_REWIND_BEATS * step;
-    w.speed = MIXER_WAVE_RECOVER_SPEED;
+    w.rewind = (o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0)) * step;
+    w.speed = recoverSpeed;
   }
   w.kScale = 1;
   w.phaseOffset = 0;
@@ -1313,7 +1320,11 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
   mixerUpdateLevels(sonicFrame, step, mixerParam('audioSmooth'));
   mixerStepWave(mixerState.wave, step, {
     step: mixerBeatStep(),
-    // The beat response lives in the wave clock now (rewind + catch-up), so nothing is shifted here.
+    // The beat response is an animated rate on the phase; these four are its shape.
+    rewindBeats: mixerParam('waveRewind'),
+    rewindSpeed: mixerParam('waveRewindSpeed'),
+    recoverSpeed: mixerParam('waveRecover'),
+    recoverBeats: mixerParam('waveRecoverBeats'),
     phaseShift: 0,
     freqShift: 0,
     speedShift: 0,
