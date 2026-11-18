@@ -37,30 +37,24 @@ function constant(name) {
 }
 
 const BASE_UNITS = constant('MIXER_WAVE_BASE_UNITS');
-const LEAD_CYCLES = constant('MIXER_WAVE_LEAD_CYCLES');
 const SPEED_TAIL = constant('MIXER_WAVE_SPEED_TAIL');
-const KICK_PHASE = constant('MIXER_WAVE_KICK_PHASE');
-const PHASE_TAIL = constant('MIXER_WAVE_PHASE_TAIL');
-const ANCHOR_TAIL = constant('MIXER_WAVE_ANCHOR_TAIL');
 const RETRIGGER = constant('MIXER_WAVE_RETRIGGER');
-const KICK_FREQ = constant('MIXER_WAVE_KICK_FREQ');
-const FREQ_TAIL = constant('MIXER_WAVE_FREQ_TAIL');
 const FALLBACK_STEP = constant('MIXER_WAVE_FALLBACK_STEP');
 const CREST = constant('MIXER_WAVE_CREST');
+const REWIND_SPEED = constant('MIXER_WAVE_REWIND_SPEED');
 
 const wave = new Function(
-  'MIXER_WAVE_LEAD_CYCLES', 'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
-  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS', 'MIXER_WAVE_DIP_TAIL', 'MIXER_WAVE_DIP_RISE',
+  'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_REWIND_MIN_BEATS', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS', 'MIXER_WAVE_DIP_TAIL', 'MIXER_WAVE_DIP_RISE',
   [
-    fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerSignedAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
+    fn('mixerClamp01'), fn('mixerWrapAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
     'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'), constant('MIXER_WAVE_DIP_TAIL'), constant('MIXER_WAVE_DIP_RISE'));
+)(SPEED_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, RETRIGGER, constant('MIXER_WAVE_REWIND_BEATS'), REWIND_SPEED, constant('MIXER_WAVE_REWIND_MIN_BEATS'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'), constant('MIXER_WAVE_DIP_TAIL'), constant('MIXER_WAVE_DIP_RISE'));
 
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0, onsets: 0
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, rewind: 0, speed: 1, offset: 0, onsets: 0
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -120,8 +114,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
 // ---------------------------------------------------------------- 3) a kick compresses the wave, and hits stack
 
 {
-  // 移频 is the motion: with k shrinking every crest slides outwards at once and continuously, so the
-  // wave retraces itself. A phase step can only snap, which is why it never read as a wave.
+  // 移频 and 反推 are the motion: the clock winds back for a moment and the wavenumber shrinks, so
+  // the crests retrace and the ridges bunch up under the hit.
   const w = fresh();
   wave.step(w, DT, { step: 0.5, onset: true });
   for (let t = 0; t < 0.15; t += DT) wave.step(w, DT, { step: 0.5 });
@@ -138,25 +132,47 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(two.kScale < one.kScale - 0.01,
     `a second hit inside the tail has to deepen the dip (${one.kScale.toFixed(3)} vs ${two.kScale.toFixed(3)})`);
 
-  // Nothing writes the phase - only the rate does - so the waveform cannot jump.
+  // Nothing writes the phase directly - only the rate does - so the waveform cannot jump. Measured
+  // without a rewind so the bound is the plain clock rate.
   const p0 = fresh();
-  wave.step(p0, DT, { step: 0.5, onset: true });
+  wave.step(p0, DT, { step: 0.5, onset: true, rewindBeats: 0 });
   let maxStep = 0, prev = p0.phase;
   for (let t = 0; t < 0.5; t += DT) {
-    wave.step(p0, DT, { step: 0.5 });
+    wave.step(p0, DT, { step: 0.5, rewindBeats: 0 });
     maxStep = Math.max(maxStep, angleDiff(p0.phase, prev));
     prev = p0.phase;
   }
   assert.ok(maxStep < (Math.PI * 2 / 0.5) * DT * 1.2, `no frame may jump (worst ${maxStep.toFixed(3)} rad)`);
 
-  // Each hit also re-anchors the phase onto the origin crest, paid out with the same rise as the
-  // dip, so consecutive hits start from the same phase and the shock is repeatable, not stuttered.
-  const anchor = fresh();
-  anchor.phase = 1.1;
-  wave.step(anchor, DT, { step: 0.5, onset: true });
-  assert.ok(Math.abs(anchor.anchorOffset) > 0.05, 'a kick has to queue the phase re-anchor');
-  for (let t = 0; t < 0.2; t += DT) wave.step(anchor, DT, { step: 0.5 });
-  assert.equal(anchor.anchorOffset, 0, 'and pay it off within the rise, so the next hit starts from the origin again');
+  // 反推 is a real negative rate: right after a kick the clock runs backwards for a short burst, so
+  // the crests retrace. The burst is spread over several frames instead of one snap, and with the
+  // amount at 0 the clock keeps running forward.
+  const back = fresh();
+  wave.step(back, DT, { step: 0.5, onset: true });
+  let backTotal = 0;
+  for (let i = 0; i < 10 && back.rewind > 0; i++) {
+    const at = back.phase;
+    wave.step(back, DT, { step: 0.5 });
+    let d = wave.wrap(back.phase - at);
+    if (d > Math.PI) d -= Math.PI * 2;
+    backTotal += d;
+  }
+  assert.ok(backTotal > 0.25, `a kick has to wind the clock backwards (${backTotal.toFixed(3)} rad)`);
+  assert.ok(back.rewind <= 0, 'the burst is finite, not a permanent reversal');
+  assert.ok(src.indexOf('MIXER_WAVE_REWIND_MIN_BEATS') >= 0, 'the retrace may not fit in a single frame');
+
+  const forward = fresh();
+  wave.step(forward, DT, { step: 0.5, onset: true, rewindBeats: 0 });
+  const fwdAt = forward.phase;
+  wave.step(forward, DT, { step: 0.5, rewindBeats: 0 });
+  let fwdStep = wave.wrap(forward.phase - fwdAt);
+  if (fwdStep > Math.PI) fwdStep -= Math.PI * 2;
+  assert.ok(fwdStep < 0, 'with 反推 at 0 the clock must not reverse');
+
+  // The phase reference at the world origin does not depend on k, so the frequency change is
+  // aligned to the old one there without snapping a crest back (the old anchorOffset).
+  assert.ok(/sin\(uWaveK\*\(c\.x\+c\.y\)\+uWavePhase\)/.test(src), 'the origin phase is the wave clock alone');
+  assert.ok(src.indexOf('anchorOffset') === -1, 'no crest snap may erase the rewind');
 
   // A ghost inside the refractory window is dropped: 16ths under a beat cannot thump the dip.
   const ghost = fresh();
@@ -346,4 +362,4 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(quick.speed > slow.speed + 0.1, `恢复时长 has to set how long the rate takes to return (${quick.speed.toFixed(3)} vs ${slow.speed.toFixed(3)})`);
 }
 
-console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick anchors the crest and shifts phase ${KICK_PHASE.toFixed(2)} rad + frequency ${(KICK_FREQ * 100).toFixed(0)}% (separate tails), amp/freq/phase move one thing each`);
+console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick winds the clock back ${(constant('MIXER_WAVE_REWIND_BEATS') * 100).toFixed(0)}% and dips the wavenumber (separate tails), amp/freq/phase move one thing each`);

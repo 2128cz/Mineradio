@@ -2237,10 +2237,12 @@ function runMixerDeskPresetCheck() {
     [/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/, 'the wave has to freeze with the music, because iTime is the song clock'],
     [/var kTarget\s*=\s*Math\.max\(0\.25, 1 - w\.freqKick \* dipAmt\);/, 'the drum has to compress the wavenumber, which is what moves every crest at once'],
     [/w\.kScale \+= \(kTarget - w\.kScale\) \* riseK;/, 'and the dip has to be eased in, never stepped: a step moves every crest inside one frame'],
-    [/w\.anchorOffset\s*=\s*mixerSignedAngle\(w\.phase, MIXER_WAVE_CREST\);/, 'every hit has to re-anchor the phase onto the origin crest, so consecutive hits start from the same phase'],
+    [/w\.rewind\s*=\s*dipAmt;/, 'a kick has to wind the clock back by the rewind amount, not snap the phase onto a crest'],
+    [/var dipAmt = o\.rewindBeats == null \? MIXER_WAVE_REWIND_BEATS/, 'the rewind amount has to be the 鼓点反推 knob, shared with the wavenumber dip'],
     [/w\.freqKick\s*=\s*Math\.min\(1\.6, w\.freqKick \+ 1\);/, 'and the dips have to add up instead of restarting'],
     [/w\.speed\s*=\s*recoverSpeed;/, 'and drop the rate below 1 so the recovery outlasts the beat and kicks accumulate'],
-    [/if \(w\.rewind > 0\) \{[\s\S]{0,200}rate = -rewindSpeed;/, 'the clock has to run backwards while the rewind lasts'],
+    [/if \(w\.rewind > 0\) \{[\s\S]{0,700}rate = -burstRate;/, 'the clock has to run backwards while the rewind lasts'],
+    [/MIXER_WAVE_REWIND_MIN_BEATS/, 'the retrace has to be spread over more than one frame, not snapped in a single step'],
     [/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/, 'the compressed wavenumber has to reach the shader'],
     [/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+/, 'the shader phase has to carry the clock, the 移相 step and the 相位 knob'],
     [/Number\(map\.gridStep\)[\s\S]{0,700}Number\(rtBeat\.tempoGap\)/, 'the wave speed has to trust the beat map first and the realtime tempo last'],
@@ -2250,6 +2252,9 @@ function runMixerDeskPresetCheck() {
     [/mixerState\.themeKey !== hex/, 'the pair has to be cached per song, because the cover palette already is'],
   ]) {
     if (!pattern.test(text)) fail(why);
+  }
+  if (text.indexOf('anchorOffset') >= 0) {
+    fail('the old crest snap (anchorOffset) must stay deleted: snapping the phase back onto a crest erases the rewind');
   }
   // A GLSL body that does not balance its brackets cannot compile, and the only symptom in the app is
   // a black desk. The ported body has no string literals and its comments carry no brackets, so a

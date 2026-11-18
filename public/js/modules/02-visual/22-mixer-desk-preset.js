@@ -24,11 +24,13 @@
 // random phase, so the desk reads as a field of independent bumps. The plates now ride one shared
 // sine (cellWave) that travels in from the world origin along x+y — amplitude, wavelength and phase
 // are knobs, and the phase is a clock the JS side advances at one crest per beat of the song, so a
-// faster song sends crests more often. A kick does three things on that wave: it re-anchors the
-// phase onto a crest at the origin, it shoves the pattern forward by a phase step that eases back
-// (移相), and it multiplies the wavenumber for a moment so the ridges bunch up under the hit and
-// spread out again (移频); on top of that it speeds the clock up for a shorter tail (加速). All three
-// have their own knobs and their own tails.
+// faster song sends crests more often. The wave's phase reference is the diagonal x+y=0 through
+// the world origin: changing the wavenumber leaves sin(phase) on that line untouched, so a new
+// frequency is aligned to the old one there without a phase snap. A kick does three things: it
+// winds the clock back a little (反推) so the crests retrace, it dips the wavenumber by a few
+// percent (移频) so the ridges bunch up under the hit and spread back out, and it lands the clock
+// below its normal rate before easing back (恢复), so repeated hits leave the wave a little
+// further behind each time.
 
 var MIXER_PRESET_INDEX = 17;
 
@@ -696,12 +698,6 @@ function mixerClamp01(value) {
   return !isFinite(n) ? 0 : Math.min(1, Math.max(0, n));
 }
 
-// -1..1, for the beat knobs whose direction matters (push back / stretch out).
-function mixerClampBipolar(value) {
-  var n = Number(value);
-  return !isFinite(n) ? 0 : Math.min(1, Math.max(-1, n));
-}
-
 // ---------------------------------------------------------------- the wave clock
 //
 // The desk's plates ride one shared sine (see cellWave in the ported body), so what used to be a
@@ -710,53 +706,38 @@ function mixerClampBipolar(value) {
 // camera's own drift: one crest passes the origin per beat, so a faster song sends crests more
 // often while the wavelength stays where the 频率 knob put it.
 //
-// A kick is two separate operations on that wave, not one:
-//   移相 (phase shift) - the phase is written back onto a crest at the origin, and a forward step
-//        is layered on top of it that eases back over a few tenths of a second, so the pattern is
-//        shoved ahead on the drum and slides home instead of the clock simply continuing;
-//   移频 (frequency shift) - the wavenumber is multiplied for a moment, so the ridges bunch up
-//        under the hit and spread back out. Speed alone would only slide the same pattern faster;
-//        this changes the pattern itself (and, because crest speed is omega/k, also how fast it
-//        travels in world units while it is compressed).
-// Both amounts are knobs, and both envelopes are driven by the same beat that anchors the phase.
+// A kick is three operations on that wave, not one:
+//   反推 (rewind) - the clock is wound BACK for a moment, so the crests visibly retrace and the
+//        wave reads as time stepping backwards at the hit;
+//   移频 (frequency shift) - the wavenumber is multiplied down for a moment, so the ridges bunch
+//        up under the hit and spread back out. Changing k leaves the phase on x+y=0 untouched,
+//        which is what aligns the new frequency to the old one at the world origin;
+//   恢复 (recover) - the clock lands below its normal rate and eases back, so a run of hits keeps
+//        leaving the wave further behind instead of snapping it onto a grid.
+// The amounts are knobs, and every envelope is driven by the same beat.
 //
 // Everything here is measured in BEATS, not seconds. The first cut used fixed 0.2/0.3/0.45 s tails
 // and a hard phase snap on every hit, which made the desk's behaviour depend on the tempo: at a
 // dense beat the tails were still running when the next drum landed (so two transients stacked and
 // every hit yanked the phase), and at a sparse beat the whole move was over in the first third of
 // the bar (so the wave then sat still and looked off the beat). One beat is the only unit that is
-// the same shape at every BPM: the envelopes below are fractions of the beat period, the surge is a
-// fixed phase budget per beat rather than a fixed rate, and the re-anchor is spread over half a beat
-// instead of jumping in one frame.
+// the same shape at every BPM: the envelopes below are fractions of the beat period.
 
 var MIXER_WAVE_BASE_UNITS = 12;       // world units per crest at 频率 100%
-var MIXER_WAVE_LEAD_CYCLES = 0.16;   // extra cycles the 加速 surge spends per beat at 100%
-var MIXER_WAVE_SPEED_TAIL = 0.30;    // beats for that surge to fall to 1/e
-var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injects (half a turn, so 1% reads 1%)
+var MIXER_WAVE_SPEED_TAIL = 0.30;    // beats for the drum's lift envelope to fall to 1/e
 var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
 var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
 var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
-var MIXER_WAVE_REWIND_BEATS = 0.05;  // how far the wavenumber dips per kick: 5%, a roll, not a shudder
+var MIXER_WAVE_REWIND_BEATS = 0.05;  // how far the clock is wound back per kick: 5%, a roll, not a shudder
 var MIXER_WAVE_REWIND_SPEED = 2.6;   // how fast that burst runs, backwards
 var MIXER_WAVE_RECOVER_SPEED = 0.5;  // where the rate lands after the burst, easing back to 1
-var MIXER_WAVE_RECOVER_BEATS = 0.5;  // how fast the rate itself returns to 1 after a kick
+var MIXER_WAVE_RECOVER_BEATS = 2.2;  // how fast the rate itself returns to 1 after a kick
 var MIXER_WAVE_DIP_TAIL = 2.5;       // beats for the wavenumber dip to relax: longer than a beat, so hits stack
 var MIXER_WAVE_DIP_RISE = 0.10;      // beats for the dip to REACH its target (slower = a gliding wave, not a jolt)
-var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
-var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
-var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
-var MIXER_WAVE_ANCHOR_TAIL = 0.50;   // beats to walk the phase back onto the beat grid
+var MIXER_WAVE_REWIND_MIN_BEATS = 0.12; // the retrace never fits in one frame: spread it over at least this
 var MIXER_WAVE_RETRIGGER = 0.45;     // an onset inside this fraction of a beat is a ghost hit
 var MIXER_WAVE_FALLBACK_STEP = 0.6;  // no tempo known yet: a neutral 100 BPM
 var MIXER_WAVE_CREST = Math.PI / 2;  // sin() is at its crest here, i.e. a crest on the origin
-
-// Shortest signed angle from a to b, in (-PI, PI].
-function mixerSignedAngle(a, b) {
-  var d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d <= -Math.PI) d += Math.PI * 2;
-  return d;
-}
 
 function mixerWrapAngle(a) {
   var t = Math.PI * 2;
@@ -789,11 +770,11 @@ function mixerBeatStep() {
   return (rt > 0.15 && rt <= 2) ? rt : 0;
 }
 
-// One step of the wave. `phase` runs backwards, so crests travel towards +x+y - away from the
-// origin they are anchored to. `phaseOffset` is the 移相 step layered on that anchor and
-// `kScale` is this frame's 移频 gain on the wavenumber; both exist only to carry a kick and
-// both relax to nothing between beats. The 移相 and 移频 knobs are bipolar: negative values shove
-// the pattern backwards and stretch the ridges instead of tightening them.
+// One step of the wave. `phase` normally runs backwards, so crests travel towards +x+y - away from
+// the origin the sine is anchored to. A kick flips the rate negative for a short burst (反推), then
+// lands it below 1 and eases home (恢复); `kScale` is this frame's 移频 gain on the wavenumber and
+// relaxes to 1 between beats. The phase on x+y=0 is the reference: multiplying k does not move it,
+// so the new frequency is aligned to the old one at the world origin without a phase snap.
 function mixerWaveStep(w, dt, o) {
   o = o || {};
   var step = Number(o.step) > 0 ? Number(o.step) : MIXER_WAVE_FALLBACK_STEP;
@@ -807,12 +788,18 @@ function mixerWaveStep(w, dt, o) {
   var rewindSpeed = o.rewindSpeed == null ? MIXER_WAVE_REWIND_SPEED : Math.max(0, Number(o.rewindSpeed) || 0);
   var recoverSpeed = o.recoverSpeed == null ? MIXER_WAVE_RECOVER_SPEED : Math.min(1, Math.max(0, Number(o.recoverSpeed) || 0));
   var recoverBeats = o.recoverBeats == null ? MIXER_WAVE_RECOVER_BEATS : Math.max(0.1, Number(o.recoverBeats) || MIXER_WAVE_RECOVER_BEATS);
+  var dipAmt = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
   var rate = 1;
   if (dt > 0) {
     if (w.rewind > 0) {
-      var back = Math.min(w.rewind, rewindSpeed * beatDt);
+      // Cap the backwards rate so the whole retrace cannot happen inside one frame: a 5% step at
+      // 2.6x is over in 10 ms, which reads as a phase snap, not as the wave rolling back. The cap
+      // comes from the knob's amount, not the remaining budget, or the burst would taper forever.
+      var burstRate = Math.min(rewindSpeed, Math.max(0.0001, dipAmt / MIXER_WAVE_REWIND_MIN_BEATS));
+      var back = Math.min(w.rewind, burstRate * beatDt);
       w.rewind -= back;
-      rate = -rewindSpeed;
+      if (w.rewind < 1e-6) w.rewind = 0;
+      rate = -burstRate;
     } else {
       w.speed += (1 - w.speed) * (1 - Math.exp(-beatDt / recoverBeats));
       rate = w.speed;
@@ -828,26 +815,17 @@ function mixerWaveStep(w, dt, o) {
     w.kick = 1;
     // The dip ADDS, so a hit inside the previous tail deepens it instead of restarting it.
     w.freqKick = Math.min(1.6, w.freqKick + 1);
-    w.rewind = 0;
+    // Wind the clock back by the same amount the ridges are compressed: the reversal and the
+    // alignment are one gesture at the world origin, where changing k leaves the phase untouched.
+    w.rewind = dipAmt;
     w.speed = recoverSpeed;
-    // Every hit re-anchors the wave's phase 0 onto the origin, and pays it out over the same rise
-    // as the dip: the compression and the alignment are one gesture, so each drum unfurls a clean
-    // shock from the origin instead of leaving the next hit to land wherever the last one ended.
-    w.anchorOffset = mixerSignedAngle(w.phase, MIXER_WAVE_CREST);
   }
   // 移频 is the motion: a shrinking wavenumber slides every crest outwards at once, continuously.
   // The tail outlasts a beat, so the dips stack and repeated hits keep pushing the wave back.
-  var dipAmt = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
   var kTarget = Math.max(0.25, 1 - w.freqKick * dipAmt);
   var riseBeats = MIXER_WAVE_DIP_RISE / Math.max(0.25, rewindSpeed);
   var riseK = 1 - Math.exp(-beatDt / riseBeats);
   w.kScale += (kTarget - w.kScale) * riseK;
-  if (w.anchorOffset) {
-    var pay = w.anchorOffset * riseK;
-    w.phase = mixerWrapAngle(w.phase + pay);
-    w.anchorOffset -= pay;
-    if (Math.abs(w.anchorOffset) < 1e-4) w.anchorOffset = 0;
-  }
   w.phaseOffset = 0;
   return w;
 }
@@ -946,7 +924,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0, onsets: 0 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, rewind: 0, speed: 1, offset: 0, onsets: 0 },
   size: null
 };
 
