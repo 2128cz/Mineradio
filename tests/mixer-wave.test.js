@@ -60,7 +60,7 @@ const wave = new Function(
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -205,7 +205,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/rewindBeats: mixerParam\('waveRewind'\)/.test(src) && /recoverBeats: mixerParam\('waveRecoverBeats'\)/.test(src),
     'the four beat-shape knobs have to reach the wave clock');
   assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.22;/.test(src), 'a kick has to run a backwards burst long enough to be seen');
-  assert.ok(src.indexOf("w.rewind = (o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS") >= 0, 'the rewind has to be booked from the beat period, with the knob overriding it');
+  assert.ok(src.indexOf("w.offset = mixerWrapAngle(w.offset + pushBeats * Math.PI * 2);") >= 0, 'each drum has to ADD its push to the phase instead of lerping it away');
+  assert.ok(src.indexOf("w.rewind = pushBeats * step;") >= 0, 'and still run the backwards burst for the same amount');
   assert.ok(src.indexOf("w.speed = recoverSpeed;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.

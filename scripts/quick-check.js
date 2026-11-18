@@ -2215,7 +2215,7 @@ function runMixerDeskPresetCheck() {
     [/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/, 'the shader phase has to be the BPM wave clock, this frame\'s 移相 step and the 相位 knob'],
     [/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,700}onset:\s*\(typeof beatOnsetFlag/, 'the desk frame has to advance the wave from the live beat pulse and its onset flag'],
     [/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/, 'the wave has to freeze with the music, because iTime is the song clock'],
-    [/w\.rewind\s*=\s*\(o\.rewindBeats == null \? MIXER_WAVE_REWIND_BEATS[^;]*\* step;/, 'a kick has to wind the wave clock back by the 鼓点反推 knob, defaulting to a fraction of the beat'],
+    [/w\.offset\s*=\s*mixerWrapAngle\(w\.offset \+ pushBeats \* Math\.PI \* 2\);/, 'each drum has to ADD its push to the phase instead of lerping it away'],
     [/w\.speed\s*=\s*recoverSpeed;/, 'and drop the rate below 1 so the recovery outlasts the beat and kicks accumulate'],
     [/if \(w\.rewind > 0\) \{[\s\S]{0,200}rate = -rewindSpeed;/, 'the clock has to run backwards while the rewind lasts'],
     [/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/, 'the compressed wavenumber has to reach the shader'],

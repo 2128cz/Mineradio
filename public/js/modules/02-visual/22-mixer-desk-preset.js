@@ -739,7 +739,7 @@ var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the vi
 var MIXER_WAVE_REWIND_BEATS = 0.22;  // the backwards burst after a kick, in beats
 var MIXER_WAVE_REWIND_SPEED = 2.6;   // how fast that burst runs, backwards
 var MIXER_WAVE_RECOVER_SPEED = 0.5;  // where the rate lands after the burst, easing back to 1
-var MIXER_WAVE_RECOVER_BEATS = 2.2;  // and how long that ease takes; longer than a beat, so kicks ACCUMULATE
+var MIXER_WAVE_RECOVER_BEATS = 0.5;  // how fast the rate itself returns to 1 after a kick
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -821,14 +821,18 @@ function mixerWaveStep(w, dt, o) {
     w.beatClock += dt;
   }
   if (acceptOnset) {
+    // The push is ADDED, not lerped: the phase the drum takes away stays taken away, so repeated
+    // drums stack and the wave is pushed back by the beat instead of easing back onto it.
+    var pushBeats = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
+    w.offset = mixerWrapAngle(w.offset + pushBeats * Math.PI * 2);
     w.beatClock = -MIXER_WAVE_LEAD_BEATS * step;
     w.kick = 1;
     w.freqKick = 1;
-    w.rewind = (o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0)) * step;
+    w.rewind = pushBeats * step;
     w.speed = recoverSpeed;
   }
   w.kScale = 1;
-  w.phaseOffset = 0;
+  w.phaseOffset = w.offset;
   w.anchorOffset = 0;
   return w;
 }
@@ -925,7 +929,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0 },
   size: null
 };
 
