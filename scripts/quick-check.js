@@ -2213,7 +2213,7 @@ function runMixerDeskPresetCheck() {
     [/uniform float uWaveAmp;[\s\S]{0,120}uniform float uWaveK;[\s\S]{0,120}uniform float uWavePhase;/, 'the wave needs its amplitude, wavenumber and phase as uniforms so the console can tune it'],
     [/u\.uWaveK\.value\s*=\s*\(\(Math\.PI \* 2 \* waveFreq\)\s*\/\s*MIXER_WAVE_BASE_UNITS\)\s*\*\s*\(mixerState\.wave\.kScale \|\| 1\)/, 'the 频率 knob has to become a wavenumber, scaled by this frame\'s 移频 gain, so one crest per base wavelength at 100%'],
     [/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/, 'the shader phase has to be the BPM wave clock, this frame\'s 移相 step and the 相位 knob'],
-    [/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,280}onset:\s*\(typeof beatOnsetFlag/, 'the desk frame has to advance the wave from the live beat pulse and its onset flag'],
+    [/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,700}onset:\s*\(typeof beatOnsetFlag/, 'the desk frame has to advance the wave from the live beat pulse and its onset flag'],
     [/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/, 'the wave has to freeze with the music, because iTime is the song clock'],
     [/w\.phaseOffset\s*=\s*w\.phaseShiftAmt\s*\*\s*MIXER_WAVE_KICK_PHASE\s*\*\s*Math\.exp\(-lead \/ MIXER_WAVE_PHASE_TAIL\);/, 'a kick has to inject its 移相 step on top of the anchor, seeded with the lead so it peaks on the beat'],
     [/w\.freqKick\s*=\s*Math\.exp\(-lead \/ MIXER_WAVE_FREQ_TAIL\);/, 'and light the 移频 envelope in the same instant, with the same lead'],

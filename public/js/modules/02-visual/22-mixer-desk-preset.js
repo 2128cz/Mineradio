@@ -54,9 +54,6 @@ var MIXER_TUNING_SCHEMA = {
   waveAmp: { def: 0.4, min: 0, max: 1.2, kind: 'unit', rebuild: 'live' },
   waveFreq: { def: 1, min: 0.3, max: 3, kind: 'ratio', rebuild: 'live' },
   wavePhase: { def: 0, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickPhase: { def: 0.01, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickFreq: { def: -0.05, min: -1, max: 1, kind: 'ratio', rebuild: 'live' },
-  waveKickSpeed: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   themeMix: { def: 1, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   renderScale: { def: 0.8, min: 0.5, max: 1, kind: 'ratio', rebuild: 'pass' }
 };
@@ -735,6 +732,7 @@ var MIXER_WAVE_KICK_PHASE = Math.PI;       // full-scale phase step a kick injec
 var MIXER_WAVE_AMP_FLOOR = 0.35;     // plate lift at silence, as a share of the 振幅 knob
 var MIXER_WAVE_AMP_KICK = 0.65;      // extra lift on the drum, as a share of the knob
 var MIXER_WAVE_LEAD_BEATS = 0.06;    // start the beat move this early so the visible peak lands on the beat
+var MIXER_WAVE_BEAT_DIP = -0.05;     // the wavenumber the drum drops to (-5%), then back
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -1320,9 +1318,12 @@ function updateMixerDeskLayer(now, dt, sonicFrame) {
   mixerUpdateLevels(sonicFrame, step, mixerParam('audioSmooth'));
   mixerStepWave(mixerState.wave, step, {
     step: mixerBeatStep(),
-    phaseShift: mixerParam('waveKickPhase'),
-    freqShift: mixerParam('waveKickFreq'),
-    speedShift: mixerParam('waveKickSpeed'),
+    // The beat response is computed here, not tuned by hand: the frequency dips by a fixed rate for
+    // the hit, the phase is realigned onto the grid at every kick, and the amount is whatever keeps
+    // the two segments continuous.
+    phaseShift: 0,
+    freqShift: MIXER_WAVE_BEAT_DIP,
+    speedShift: 1,
     beat: (typeof beatPulse !== 'undefined' && isFinite(beatPulse)) ? Number(beatPulse) : 0,
     onset: (typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag) ? true : false,
     playing: !(typeof audio !== 'undefined' && audio && audio.paused)

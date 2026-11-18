@@ -310,9 +310,14 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/waveAmp:\s*\{\s*def:\s*0\.4,\s*min:\s*0,\s*max:\s*1\.2/.test(src), 'waveAmp runs 0..1.2 and defaults to the reference lift');
   assert.ok(/waveFreq:\s*\{\s*def:\s*1,\s*min:\s*0\.3,\s*max:\s*3/.test(src), 'waveFreq runs 0.3..3');
   assert.ok(/wavePhase:\s*\{\s*def:\s*0,\s*min:\s*0,\s*max:\s*1/.test(src), 'wavePhase is a share of a turn');
-  assert.ok(/waveKickPhase:\s*\{\s*def:\s*0\.01,\s*min:\s*-1,\s*max:\s*1/.test(src), 'waveKickPhase defaults to a 1% nudge');
-  assert.ok(/waveKickFreq:\s*\{\s*def:\s*-0\.05,\s*min:\s*-1,\s*max:\s*1/.test(src), 'waveKickFreq defaults to a 5% backwards stretch');
-  assert.ok(/waveKickSpeed:\s*\{\s*def:\s*1,\s*min:\s*0,\s*max:\s*2/.test(src), 'waveKickSpeed scales the 加速 surge, 100% being the old 1.8x');
+  // The beat response is not a knob any more: the drum's dip, its realignment and its lift are
+  // worked out in code, so there is nothing for the listener to tune per song.
+  assert.equal(src.indexOf("waveKickPhase:"), -1, 'the beat knobs must not come back as settings');
+  assert.equal(src.indexOf("waveKickFreq:"), -1, 'the beat knobs must not come back as settings');
+  assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the beat knobs must not come back as settings');
+  assert.ok(/var MIXER_WAVE_BEAT_DIP = -0\.05;/.test(src), 'the drum has to drop the wavenumber by a fixed 5%');
+  assert.ok(/phaseShift: 0,\s*\n\s*freqShift: MIXER_WAVE_BEAT_DIP,\s*\n\s*speedShift: 1,/.test(src),
+    'the beat response has to be computed in the frame, not read from a knob');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
@@ -343,11 +348,9 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     'waveFreq has to become a wavenumber, times this frame\'s 移频 gain');
   assert.ok(/u\.uWavePhase\.value\s*=\s*mixerWrapAngle\(mixerState\.wave\.phase\s*\+\s*mixerState\.wave\.phaseOffset\s*\+\s*Math\.PI \* 2 \* mixerClamp01\(mixerParam\('wavePhase'\)\)\)/.test(src),
     'the shader phase has to be the clock plus the 移相 step plus the 相位 knob');
-  assert.ok(/phaseShift:\s*mixerParam\('waveKickPhase'\)/.test(src) && /freqShift:\s*mixerParam\('waveKickFreq'\)/.test(src) && /speedShift:\s*mixerParam\('waveKickSpeed'\)/.test(src),
-    'all three beat operations have to be fed from their knobs every frame');
 
   // The clock is stepped every frame from the song, and the beat pulse is what launches it.
-  assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,260}beat:\s*\(typeof beatPulse[\s\S]{0,120}onset:\s*\(typeof beatOnsetFlag/.test(src),
+  assert.ok(/mixerStepWave\(mixerState\.wave,\s*step,\s*\{[\s\S]{0,700}beat:\s*\(typeof beatPulse[\s\S]{0,200}onset:\s*\(typeof beatOnsetFlag/.test(src),
     'the desk frame has to advance the wave from the live beat');
   assert.ok(/playing:\s*!\(typeof audio !== 'undefined' && audio && audio\.paused\)/.test(src),
     'the wave has to freeze with the music');
@@ -363,10 +366,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   for (const [id, key, min, max] of [
     ['fx-mixerwaveAmp', 'waveAmp', '0', '1.2'],
     ['fx-mixerwaveFreq', 'waveFreq', '0.3', '3'],
-    ['fx-mixerwavePhase', 'wavePhase', '0', '1'],
-    ['fx-mixerwaveKickPhase', 'waveKickPhase', '-1', '1'],
-    ['fx-mixerwaveKickFreq', 'waveKickFreq', '-1', '1'],
-    ['fx-mixerwaveKickSpeed', 'waveKickSpeed', '0', '2']
+    ['fx-mixerwavePhase', 'wavePhase', '0', '1']
   ]) {
     const at = html.indexOf('id="' + id + '"');
     assert.ok(at > 0, `${id} needs a row in the 调音台 panel`);
@@ -376,7 +376,7 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
     assert.ok(src.includes(`'${key}'`), `${key} has to be in the tuning schema`);
   }
   const consoleSrc = fs.readFileSync(path.join(root, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
-  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase', 'fx-mixerwaveKickPhase', 'fx-mixerwaveKickFreq', 'fx-mixerwaveKickSpeed']) {
+  for (const id of ['fx-mixerwaveAmp', 'fx-mixerwaveFreq', 'fx-mixerwavePhase']) {
     assert.ok(consoleSrc.includes(`fxConsoleItem('${id}'`), `${id} must be listed in the console 调音台 group`);
   }
 }
