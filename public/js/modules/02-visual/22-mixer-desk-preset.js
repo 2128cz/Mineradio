@@ -830,15 +830,25 @@ function mixerWaveStep(w, dt, o) {
     w.freqKick = Math.min(1.6, w.freqKick + 1);
     w.rewind = 0;
     w.speed = recoverSpeed;
+    // Every hit re-anchors the wave's phase 0 onto the origin, and pays it out over the same rise
+    // as the dip: the compression and the alignment are one gesture, so each drum unfurls a clean
+    // shock from the origin instead of leaving the next hit to land wherever the last one ended.
+    w.anchorOffset = mixerSignedAngle(w.phase, MIXER_WAVE_CREST);
   }
   // 移频 is the motion: a shrinking wavenumber slides every crest outwards at once, continuously.
   // The tail outlasts a beat, so the dips stack and repeated hits keep pushing the wave back.
   var dipAmt = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
   var kTarget = Math.max(0.25, 1 - w.freqKick * dipAmt);
   var riseBeats = MIXER_WAVE_DIP_RISE / Math.max(0.25, rewindSpeed);
-  w.kScale += (kTarget - w.kScale) * (1 - Math.exp(-beatDt / riseBeats));
+  var riseK = 1 - Math.exp(-beatDt / riseBeats);
+  w.kScale += (kTarget - w.kScale) * riseK;
+  if (w.anchorOffset) {
+    var pay = w.anchorOffset * riseK;
+    w.phase = mixerWrapAngle(w.phase + pay);
+    w.anchorOffset -= pay;
+    if (Math.abs(w.anchorOffset) < 1e-4) w.anchorOffset = 0;
+  }
   w.phaseOffset = 0;
-  w.anchorOffset = 0;
   return w;
 }
 

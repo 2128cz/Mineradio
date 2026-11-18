@@ -149,6 +149,15 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   }
   assert.ok(maxStep < (Math.PI * 2 / 0.5) * DT * 1.2, `no frame may jump (worst ${maxStep.toFixed(3)} rad)`);
 
+  // Each hit also re-anchors the phase onto the origin crest, paid out with the same rise as the
+  // dip, so consecutive hits start from the same phase and the shock is repeatable, not stuttered.
+  const anchor = fresh();
+  anchor.phase = 1.1;
+  wave.step(anchor, DT, { step: 0.5, onset: true });
+  assert.ok(Math.abs(anchor.anchorOffset) > 0.05, 'a kick has to queue the phase re-anchor');
+  for (let t = 0; t < 0.2; t += DT) wave.step(anchor, DT, { step: 0.5 });
+  assert.equal(anchor.anchorOffset, 0, 'and pay it off within the rise, so the next hit starts from the origin again');
+
   // A ghost inside the refractory window is dropped: 16ths under a beat cannot thump the dip.
   const ghost = fresh();
   wave.step(ghost, DT, { step: 0.5, onset: true });
