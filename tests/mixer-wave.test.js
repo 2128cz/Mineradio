@@ -309,4 +309,41 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(at({ gridStep: 0.05 }, { tempoGap: 9 }), 0, 'implausible periods are rejected at every rung');
 }
 
+// ---------------------------------------------------------------- 7) the four beat-shape knobs reach the clock
+
+{
+  // The panel writes waveRewind / waveRewindSpeed / waveRecover / waveRecoverBeats into the tuning
+  // store; mixerStepWave has to carry them through to mixerWaveStep, or the rows move nothing.
+  // (The old front door rebuilt its options object and silently dropped all four.)
+  assert.ok(/rewindBeats: o\.rewindBeats, rewindSpeed: o\.rewindSpeed/.test(src), 'the front door must forward the rewind knobs');
+  assert.ok(/recoverSpeed: o\.recoverSpeed, recoverBeats: o\.recoverBeats/.test(src), 'and the recovery knobs');
+  assert.ok(src.indexOf('phaseShift: o.phaseShift, freqShift: o.freqShift') === -1, 'the dead shift options must not linger');
+
+  const once = (opts) => {
+    const w = fresh();
+    wave.frame(w, DT, { step: 0.5, beat: 0.6, playing: true, ...opts });
+    return w;
+  };
+  const flat = once({ rewindBeats: 0 });
+  const dipped = once({ rewindBeats: 0.2 });
+  assert.ok(dipped.kScale < flat.kScale - 0.05, `鼓点反推 has to change the wavenumber (${flat.kScale.toFixed(3)} vs ${dipped.kScale.toFixed(3)})`);
+
+  const gentle = once({ rewindBeats: 0.2, rewindSpeed: 0 });
+  const abrupt = once({ rewindBeats: 0.2, rewindSpeed: 6 });
+  assert.ok(abrupt.kScale < gentle.kScale - 0.1, `反推速度 has to set how fast the dip arrives (${gentle.kScale.toFixed(3)} vs ${abrupt.kScale.toFixed(3)})`);
+
+  const hard = once({ recoverSpeed: 0 });
+  const soft = once({ recoverSpeed: 1 });
+  assert.equal(hard.speed, 0, '恢复速度 0 has to land the clock at 0');
+  assert.equal(soft.speed, 1, '恢复速度 1 has to keep it at full speed');
+
+  const quick = once({ recoverBeats: 0.5 });
+  const slow = once({ recoverBeats: 6 });
+  for (let i = 0; i < 20; i++) {
+    wave.frame(quick, DT, { step: 0.5, beat: 0, playing: true, recoverBeats: 0.5 });
+    wave.frame(slow, DT, { step: 0.5, beat: 0, playing: true, recoverBeats: 6 });
+  }
+  assert.ok(quick.speed > slow.speed + 0.1, `恢复时长 has to set how long the rate takes to return (${quick.speed.toFixed(3)} vs ${slow.speed.toFixed(3)})`);
+}
+
 console.log(`OK mixer wave: one shared sine on the wavefront, one crest per beat (${(60 / 0.5).toFixed(0)} BPM -> ${(2 * Math.PI / 0.5).toFixed(2)} rad/s), a kick anchors the crest and shifts phase ${KICK_PHASE.toFixed(2)} rad + frequency ${(KICK_FREQ * 100).toFixed(0)}% (separate tails), amp/freq/phase move one thing each`);

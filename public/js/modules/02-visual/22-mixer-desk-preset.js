@@ -861,7 +861,9 @@ function mixerStepWave(w, dt, o) {
   var onset = false;
   if (playing) onset = !!o.onset || beat > w.prevBeat * 1.4 + 0.04;
   mixerWaveStep(w, playing ? dt : 0, {
-    step: o.step, onset: onset, phaseShift: o.phaseShift, freqShift: o.freqShift, speedShift: o.speedShift
+    step: o.step, onset: onset,
+    rewindBeats: o.rewindBeats, rewindSpeed: o.rewindSpeed,
+    recoverSpeed: o.recoverSpeed, recoverBeats: o.recoverBeats
   });
   w.prevBeat = playing ? beat : 0;
   return w;
