@@ -16,6 +16,7 @@ const builtIn = read('public/js/modules/02-visual/10-lyrics-mask-textures.js');
 const nyan = read('public/js/modules/02-visual/23-nyan-town-preset.js');
 const glitch = read('public/js/modules/02-visual/24-glitch-art-preset.js');
 const blackHole = read('public/js/modules/02-visual/19-galaxy-blackhole-preset.js');
+const desktopLyrics = read('public/desktop-lyrics.html');
 
 // ---------------------------------------------------------------- built-in stage lyrics
 
@@ -40,4 +41,10 @@ assert.ok(/mainCanvas\.width \/ 1536/.test(glitch), 'and the plate rect follows 
 
 assert.ok(!/widthNdc > 1\.45/.test(blackHole), 'the black hole may not cap a wide sign back into the frame by shrinking it');
 
-console.log('OK lyric fixed size: built-in row + nyan town + glitch art + black hole keep the authored type size');
+// ---------------------------------------------------------------- desktop lyrics
+
+assert.ok(/var size = baseFontSize;/.test(desktopLyrics), 'desktop lyrics keep the console size');
+assert.ok(!/size = Math\.max\(minSize, size -/.test(desktopLyrics), 'no shrink-to-fit loop on the desktop overlay');
+assert.ok(!/fitScaleX = clamp\(maxRenderedWidth/.test(desktopLyrics), 'no horizontal squeeze on the desktop overlay; long lines scroll');
+
+console.log('OK lyric fixed size: built-in row + nyan town + glitch art + black hole + desktop overlay keep the authored type size');

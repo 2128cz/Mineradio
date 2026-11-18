@@ -588,8 +588,6 @@
       var edgeWidth = Math.round(clamp(safeWidth * .085, 54, 116, 92));
       var viewportWidth = Math.round(Math.max(280, Math.min(safeWidth - 12, innerWidth - Math.min(240, Math.max(88, innerWidth * .13)))));
       var clearWidth = Math.max(160, viewportWidth - edgeWidth * 2);
-      var readableWidth = clearWidth;
-      var maxHeight = Math.max(64, innerHeight - 188);
       var nextLayoutKey = [
         line.textContent || '',
         baseFontSize,
@@ -609,19 +607,9 @@
       setRootVar('--lyric-edge-width', edgeWidth + 'px');
       var size = baseFontSize;
       fitScaleX = 1;
-      var minSize = Math.max(24, Math.min(32, baseFontSize * .55));
-      var maxScrollableWidth = readableWidth * 1.76;
-      for (var i = 0; i < 24; i++) {
-        var width = measureLineWidth(size);
-        var height = size * state.lineHeight;
-        if ((width <= maxScrollableWidth && height <= maxHeight) || size <= minSize) break;
-        size = Math.max(minSize, size - Math.max(1.25, size * .062));
-      }
+      // Keep the size the console asked for. A long line scrolls (the viewport already masks and
+      // travels); it is never shrunk to fit, so consecutive lines stay the same size.
       var measuredWidth = measureLineWidth(size);
-      var maxRenderedWidth = readableWidth * 1.82;
-      if (measuredWidth > maxRenderedWidth) {
-        fitScaleX = clamp(maxRenderedWidth / measuredWidth, .72, 1, 1);
-      }
       var scaledWidth = measuredWidth * fitScaleX;
       var travelWidth = Math.max(0, scaledWidth - clearWidth);
       var clearTailMargin = Math.max(58, Math.min(edgeWidth * 1.18, size * 1.08));
