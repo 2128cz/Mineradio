@@ -50,17 +50,17 @@ const CREST = constant('MIXER_WAVE_CREST');
 
 const wave = new Function(
   'MIXER_WAVE_LEAD_CYCLES', 'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
-  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER',
+  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_CATCHUP_SPEED',
   [
     fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerSignedAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
     'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'));
+)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_CATCHUP_SPEED'));
 
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, debt: 0
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -117,175 +117,52 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(src.indexOf('uCamPan*(c.x'), -1, 'the wave speed may not be borrowed from the camera pan');
 }
 
-// ---------------------------------------------------------------- 3) a kick launches the wave at the origin
+// ---------------------------------------------------------------- 3) a kick winds the wave clock back
 
 {
+  // One clock, three rates: forward at one beat per beat, backwards on a kick, and slightly fast
+  // until the rewound time is repaid. Every change is a rate on the same continuous clock, so the
+  // waveform retraces itself without a single phase jump.
   const w = fresh();
-  w.phase = 2.2;                    // mid-cycle, so the correction has work to do
-  wave.step(w, DT, { step: 0.5, onset: true, speedShift: 1 });
-  assert.ok(w.kick > 0.8, 'a kick has to light the surge');
-  // No snap: the phase is left alone and the distance to the beat grid is queued as a correction.
-  assert.ok(Math.abs(w.anchorOffset) > 0.1, `a kick has to owe the grid a real correction (${w.anchorOffset.toFixed(3)})`);
-  const owed = Math.abs(w.anchorOffset);
-  const payStart = w.phase;
-  let biggestStep = 0;
-  for (let t = 0; t < ANCHOR_TAIL * 2.2 * 0.5; t += DT) {
-    const before = w.phase;
-    wave.step(w, DT, { step: 0.5, speedShift: 1 });
-    biggestStep = Math.max(biggestStep, Math.abs(angleDiff(w.phase, before)));
+  const before = w.phase;
+  wave.step(w, DT, { step: 0.5, onset: true });
+  assert.ok(w.rewind > 0 && w.debt > 0, 'a kick has to start a rewind and book the time to repay');
+  const p0 = w.phase;
+  wave.step(w, DT, { step: 0.5 });
+  const signedStep = ((w.phase - p0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  assert.ok(signedStep > 0, 'while the rewind is on the phase has to run the other way');
+  let maxStep = Math.abs(signedStep), prev = w.phase;
+  for (let t2 = 0; t2 < 0.5; t2 += DT) {
+    wave.step(w, DT, { step: 0.5 });
+    maxStep = Math.max(maxStep, angleDiff(w.phase, prev));
+    prev = w.phase;
   }
-  assert.ok(Math.abs(w.anchorOffset) < owed * 0.2, `the correction has to be paid off inside its tail (owed ${owed.toFixed(3)}, left ${w.anchorOffset.toFixed(3)})`);
-  assert.ok(biggestStep < 0.35, `paying it back may never look like a jump (worst frame ${biggestStep.toFixed(3)} rad)`);
-  assert.ok(angleDiff(w.phase, payStart) > 0.2, 'the wave keeps travelling while it corrects');
-  void owed;
+  assert.ok(maxStep < (Math.PI * 2 / 0.5) * 6 * DT * 1.2, `a frame may move at the rewind rate but never faster (worst ${maxStep.toFixed(3)} rad)`);
+  assert.equal(w.rewind, 0, 'the rewind has to finish');
+  assert.ok(w.debt < 0.02, `and the lost time has to be repaid (debt ${w.debt.toFixed(3)})`);
 
-  // The surge is a rate change, not a jump: the first tenth of a second after the kick turns the
-  // clock by more than the beat cadence alone would.
-  const kick = fresh(), quiet = fresh();
-  wave.step(kick, DT, { step: 0.5, onset: true, speedShift: 1 });
-  wave.step(quiet, DT, { step: 0.5, speedShift: 1 });
-  const kickStart = kick.phase, quietStart = quiet.phase;
-  for (let t = 0; t < 0.1; t += DT) {
-    wave.step(kick, DT, { step: 0.5, speedShift: 1 });
-    wave.step(quiet, DT, { step: 0.5, speedShift: 1 });
-  }
-  const kicked = angleDiff(kick.phase, kickStart), plain = angleDiff(quiet.phase, quietStart);
-  assert.ok(kicked > plain * 1.15, `a kick has to speed the wave up once (${plain.toFixed(3)} -> ${kicked.toFixed(3)})`);
+  // Over a whole beat the net travel is exactly one wavelength: the retrace is paid back, so the
+  // next drum lands on the same phase as the last one.
+  const a = fresh(), b = fresh();
+  for (let t = 0; t < 0.75; t += DT) { wave.step(a, DT, { step: 0.5, onset: t === 0 }); wave.step(b, DT, { step: 0.5 }); }
+  assert.ok(angleDiff(a.phase, b.phase) < 0.8, `one beat must carry the wave the same distance with or without a kick (${angleDiff(a.phase, b.phase).toFixed(3)} rad)`);
 
-  // The 加速 knob scales that surge, and zero takes it away entirely. A tenth of a second is short
-  // enough that the measured turns stay below half a cycle and cannot wrap.
-  const turnAfter = (amt) => {
-    const a = fresh();
-    wave.step(a, DT, { step: 0.5, onset: true, speedShift: amt });
-    const from = a.phase;
-    for (let t = 0; t < 0.05; t += DT) wave.step(a, DT, { step: 0.5, speedShift: amt });
-    return angleDiff(a.phase, from);
-  };
-  const halfTurn = turnAfter(1), doubleTurn = turnAfter(2), noTurn = turnAfter(0);
-  assert.ok(doubleTurn > halfTurn * 1.15 && halfTurn > noTurn * 1.15,
-    `鼓点加速 has to scale the surge (0 -> ${noTurn.toFixed(3)}, 100% -> ${halfTurn.toFixed(3)}, 200% -> ${doubleTurn.toFixed(3)})`);
-
-  // And it lets go: after a second the surge is spent, so the wave settles back onto the beat cadence.
-  const rest = fresh();
-  wave.step(rest, DT, { step: 0.5, onset: true, speedShift: 1 });
-  for (let t = 0; t < 1.2; t += DT) wave.step(rest, DT, { step: 0.5, speedShift: 1 });
-  assert.ok(rest.kick < 0.01, `the surge has to decay (kick ${rest.kick.toFixed(4)})`);
-  assert.ok(Math.abs(rest.kick - 0) < 1e-9 || rest.kick === 0 || rest.kick < 0.01, 'and stay gone');
-
-  // A rising beat pulse counts as a kick; a decaying one does not.
-  const f = fresh();
-  f.prevBeat = 0.2;
-  wave.frame(f, DT, { step: 0.5, beat: 0.55, playing: true, speedShift: 1 });
-  assert.ok(f.kick > 0.8, 'a rising beat pulse has to launch the wave');
-  const g = fresh();
-  g.prevBeat = 0.6;
-  g.phase = 1.1;
-  wave.frame(g, DT, { step: 0.5, beat: 0.5, playing: true, speedShift: 1 });
-  assert.ok(g.kick === 0, 'a pulse that is only decaying must not launch the wave');
-  assert.ok(angleDiff(g.phase, 1.1 - (Math.PI * 2) * DT / 0.5) < 1e-9,
-    'and the wave must keep its plain beat cadence, not jump');
-}
-
-// ---------------------------------------------------------------- 3b) the kick shifts phase and frequency, not just speed
-
-{
-  // 移相: the anchor lands on the origin crest AND a forward step of the knob's size is layered on
-  // top, easing back over its own tail - so the drum shoves the pattern ahead instead of the clock
-  // merely continuing.
-  const w = fresh();
-  wave.step(w, DT, { step: 0.5, onset: true, phaseShift: 0.5 });
-  assert.ok(Math.abs(w.anchorOffset) > 0.1, 'the anchor is queued as a correction instead of snapping the phase');
-  assert.ok(w.phaseOffset > 0.4 * KICK_PHASE,
-    `the 移相 knob has to inject half a quarter turn (${w.phaseOffset})`);
-  const atOnset = w.phaseOffset;
-  for (let t = 0; t < PHASE_TAIL * 3 * 0.5; t += DT) wave.step(w, DT, { step: 0.5, phaseShift: 0.5 });
-  assert.ok(w.phaseOffset < atOnset * 0.1, `the step has to ease back onto the anchor (${atOnset.toFixed(3)} -> ${w.phaseOffset.toFixed(3)})`);
-
-  // 移频: the same beat multiplies the wavenumber, so the ridges bunch up under the hit and spread
-  // back out. That changes the pattern itself; a speed multiplier alone cannot.
-  const f = fresh();
-  wave.step(f, DT, { step: 0.5, onset: true, freqShift: 0.5 });
-  assert.ok(f.kScale > 1.3 && f.kScale < 1 + 0.5 * KICK_FREQ, `the 移频 knob has to compress the wave on the hit (${f.kScale})`);
-  const scaleOnset = f.kScale;
-  for (let t = 0; t < FREQ_TAIL * 3 * 0.5; t += DT) wave.step(f, DT, { step: 0.5, freqShift: 0.5 });
-  assert.ok(f.kScale < 1 + (scaleOnset - 1) * 0.1, `and let the ridges spread back (${scaleOnset.toFixed(3)} -> ${f.kScale.toFixed(3)})`);
-
-  // Both knobs at zero leave the kick as the anchor plus the speed surge, and nothing else.
-  const zero = fresh();
-  wave.step(zero, DT, { step: 0.5, onset: true, phaseShift: 0, freqShift: 0 });
-  assert.equal(zero.phaseOffset, 0, 'no 移相 knob, no phase step');
-  assert.equal(zero.kScale, 1, 'no 移频 knob, no wavenumber change');
-
-  // Both knobs are bipolar, and the negative side is a real direction, not a clamp to zero: the
-  // pattern is shoved backwards and the ridges are stretched instead of tightened.
-  const back = fresh();
-  wave.step(back, DT, { step: 0.5, onset: true, phaseShift: -0.5, freqShift: -0.5 });
-  assert.ok(back.phaseOffset < -0.4 * KICK_PHASE, 'a negative 移相 has to push the pattern the other way');
-  assert.ok(back.kScale < 0.7, `a negative 移频 has to stretch the wave (${back.kScale})`);
-  assert.ok(back.kScale < 1 && (Math.PI * 2) / back.kScale > Math.PI * 2, 'stretched ridges sit further apart');
-
-  // And the stretch has a floor: past that the whole view is one slope and the desk would go dark.
-  const floorK = fresh();
-  wave.step(floorK, DT, { step: 0.5, onset: true, freqShift: -1 });
-  assert.ok(floorK.kScale >= 0.25 - 1e-9, `the stretched wavenumber has to stop at a printable floor (${floorK.kScale})`);
-
-  // The two operations have their own tails: the phase step is spent while the ridges are still
-  // relaxing, so they read as two motions rather than one.
-  const mix = fresh();
-  wave.step(mix, DT, { step: 0.5, onset: true, phaseShift: 1, freqShift: 1 });
-  for (let t = 0; t < PHASE_TAIL * 3 * 0.5; t += DT) wave.step(mix, DT, { step: 0.5, phaseShift: 1, freqShift: 1 });
-  assert.ok(mix.phaseOffset < KICK_PHASE * 0.1 && mix.kScale > 1.02,
-    `移相 has to be nearly spent while 移频 is still relaxing (offset ${mix.phaseOffset.toFixed(3)}, k ${mix.kScale.toFixed(3)})`);
-
-  // And the compressed wave really is denser: at the onset crests sit closer together along x+y.
-  const crestGap = (kScale) => (Math.PI * 2) / kScale;
-  assert.ok(crestGap(scaleOnset) < crestGap(1) * 0.8, 'a compressed wave has to shorten the distance between crests');
-}
-
-// ---------------------------------------------------------------- 3c) one beat is one beat, at any tempo
-
-{
-  // The complaint this section pins down: the first cut had fixed second-long tails, so a dense
-  // beat stacked two transients and a sparse one finished its move in the first third of the bar.
-  // Every envelope is now measured in beats, so the state after one beat is the same at any BPM.
-  const afterOneBeat = (step) => {
-    const s = fresh();
-    wave.step(s, DT, { step, onset: true, phaseShift: 0.5, freqShift: 0.5, speedShift: 1 });
-    for (let t = 0; t < step - 1e-9; t += DT) wave.step(s, DT, { step, phaseShift: 0.5, freqShift: 0.5, speedShift: 1 });
-    return s;
-  };
-  const slow = afterOneBeat(0.9), fast = afterOneBeat(0.375);
-  for (const key of ['kick', 'phaseOffset', 'freqKick']) {
-    assert.ok(Math.abs(slow[key] - fast[key]) < 0.08,
-      key + ' after one beat must not depend on the tempo (' + slow[key].toFixed(3) + ' at 67 BPM vs ' + fast[key].toFixed(3) + ' at 160 BPM)');
-  }
-
-  // ...and the surge's whole travel per beat is the same budget, ~0.16 of a cycle.
-  const surgeTurn = (step) => {
-    const s = fresh();
-    wave.step(s, DT, { step, onset: true, speedShift: 1 });
-    const from = s.phase;
-    let total = 0, prev = s.phase;
-    for (let t = 0; t < step - 1e-9; t += DT) {
-      wave.step(s, DT, { step, speedShift: 1 });
-      total += angleDiff(s.phase, prev);
-      prev = s.phase;
-    }
-    return total - Math.PI * 2;
-  };
-  const leadSlow = surgeTurn(0.9), leadFast = surgeTurn(0.375);
-  assert.ok(Math.abs(leadSlow - leadFast) < 0.25,
-    'the 加速 budget per beat must be tempo-independent (' + leadSlow.toFixed(3) + ' vs ' + leadFast.toFixed(3) + ' rad)');
-
-  // A ghost hit inside the refractory window is ignored, so 16ths under a beat do not retrigger.
+  // A ghost inside the refractory window is dropped: 16ths under a beat cannot thrash the rewind.
   const ghost = fresh();
   wave.step(ghost, DT, { step: 0.5, onset: true });
-  const kickBefore = ghost.kick, offsetBefore = ghost.phaseOffset;
+  const kick0 = ghost.kick;
   wave.step(ghost, DT, { step: 0.5, onset: true });
-  assert.ok(ghost.kick < kickBefore + 1e-9 && Math.abs(ghost.phaseOffset - offsetBefore) < 1e-9,
-    'an onset inside the refractory window must not restart the envelopes');
-  wave.step(ghost, DT * 30, { step: 0.5, onset: true });
-  assert.ok(ghost.kick > 0.8, 'a hit past the window still retriggers');
+  assert.ok(ghost.kick < kick0 + 1e-9, 'an onset inside the refractory window must not retrigger');
+
+  // A rising beat pulse launches it; a decaying one does not.
+  const f2 = fresh();
+  f2.prevBeat = 0.2;
+  wave.frame(f2, DT, { step: 0.5, beat: 0.55, playing: true });
+  assert.ok(f2.rewind > 0, 'a rising beat pulse has to wind the clock back');
+  const g2 = fresh();
+  g2.prevBeat = 0.6;
+  wave.frame(g2, DT, { step: 0.5, beat: 0.5, playing: true });
+  assert.equal(g2.rewind, 0, 'a pulse that is only decaying must not rewind');
 }
 
 // ---------------------------------------------------------------- 4) paused is frozen, and no tempo still moves
@@ -315,9 +192,9 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(src.indexOf("waveKickPhase:"), -1, 'the beat knobs must not come back as settings');
   assert.equal(src.indexOf("waveKickFreq:"), -1, 'the beat knobs must not come back as settings');
   assert.equal(src.indexOf("waveKickSpeed:"), -1, 'the beat knobs must not come back as settings');
-  assert.ok(/var MIXER_WAVE_BEAT_DIP = -0\.05;/.test(src), 'the drum has to drop the wavenumber by a fixed 5%');
-  assert.ok(/phaseShift: 0,\s*\n\s*freqShift: MIXER_WAVE_BEAT_DIP,\s*\n\s*speedShift: 1,/.test(src),
-    'the beat response has to be computed in the frame, not read from a knob');
+  assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.25;/.test(src), 'a kick has to wind the clock back a fixed quarter beat');
+  assert.ok(src.indexOf("w.rewind = MIXER_WAVE_REWIND_BEATS * step;") >= 0, 'the rewind has to be booked from the beat period');
+  assert.ok(src.indexOf("w.debt = w.rewind;") >= 0, 'and the lost time has to be repaid afterwards');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
   const kAt = (freq) => (Math.PI * 2 * freq) / BASE_UNITS;
