@@ -230,6 +230,22 @@ function runLyricParseFormatsCheck() {
   console.log('[OK] lyric timestamps parse in both the dot and colon centisecond forms.');
 }
 
+function runLyricFixedSizeCheck() {
+  logStep('Lyric type stays at the authored size (built-in row, presets)');
+  const testFile = path.join(appRoot, 'tests', 'lyric-fixed-size.test.js');
+  if (!fs.existsSync(testFile)) {
+    fail('tests/lyric-fixed-size.test.js is missing; a line that fit the canvas would silently change size again');
+  }
+  const result = spawnSync(process.execPath, [testFile], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`lyric fixed size failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(result.stdout || '');
+  console.log('[OK] built-in rows and the preset plates keep the type size; long lines widen the plate.');
+}
+
 function runJizuraVendorCheck() {
   logStep('Vendored JIZURA engine integrity (single-file, licence, packaging)');
   const vendorDir = path.join(appRoot, 'vendor', 'jizura');
@@ -4016,8 +4032,11 @@ function checkLyricScrollPerformanceGuard() {
   if (!/function lyricTextureClarityScale/.test(maskText) || !/lyricTextureClarity/.test(maskText + stageText) || !/function lyricRowTextureWidthBudget/.test(maskText) || !/function compactLyricLineMaskTexture/.test(maskText) || !/renderer\.domElement\.width/.test(maskText) || !/profile && profile\.lowSpec/.test(maskText) || !/mask\.rasterScale/.test(maskText) || !/compactLyricLineMaskTexture\(makeLyricMask/.test(rowText) || !/var glowRaster = lyricGlowRasterMetrics\(row\.lineMask\);[\s\S]{0,420}beginLyricGlowTextureBuild\([\s\S]{0,360}null,\s*glowRaster\.scale\);/.test(rowText) || !/pixelScale/.test(maskText)) {
     fail('row lyric textures must scale to the physical render width and preserve glow/readability proportions');
   }
-  if (!/var lyricTextMeasureCache/.test(fontText) || !/function lyricMeasuredCharacterWidth/.test(fontText) || !/fontKerning/.test(fontText) || !/probeSpacing = 0\.001/.test(fontText) || !/function scheduleLyricTextMeasureWarmup/.test(fontText) || !/requestIdleCallback/.test(fontText) || !/layoutMeasureBaseSize:\s*128/.test(maskText) || !/layoutBaseWidthCache/.test(maskText) || !/function measureWidestAtSize/.test(maskText) || !/estimatedFont/.test(maskText)) {
-    fail('lyric font fitting must keep bounded character-width caching and coarse-to-exact size selection');
+  if (!/var lyricTextMeasureCache/.test(fontText) || !/function lyricMeasuredCharacterWidth/.test(fontText) || !/fontKerning/.test(fontText) || !/probeSpacing = 0\.001/.test(fontText) || !/function scheduleLyricTextMeasureWarmup/.test(fontText) || !/requestIdleCallback/.test(fontText) || !/layoutMeasureBaseSize:\s*128/.test(maskText) || !/layoutBaseWidthCache/.test(maskText) || /minimumStepFont/.test(maskText) || /estimatedFont/.test(maskText)) {
+    fail('lyric text measurement must keep bounded character-width caching without shrinking the font to fit the canvas');
+  }
+  if (!/var fontSize = isFinite\(state\.lockedFontSize\)[^;]*: 128;/.test(maskText) || !/var fitScaleX = 1;/.test(maskText)) {
+    fail('the row raster has to keep the authored font size and must not squeeze glyphs horizontally');
   }
   if (!/function scheduleStageLyricCooperativeWork/.test(stageText) || !/stageLyricPrewarm\.workRaf/.test(stageText) || !/requestAnimationFrame\(function \(\)/.test(stageText) || !/function stageLyricShouldYieldToPendingInput/.test(stageText) || !/isInputPending/.test(stageText)) {
     fail('lyric cooperative work must run after a rendered frame and yield to pending continuous input');
@@ -8333,6 +8352,7 @@ async function main() {
   runPvArchiveRegressionCheck();
   runPvLyricFormatCheck();
   runLyricParseFormatsCheck();
+  runLyricFixedSizeCheck();
   runRenderSleepStaleCheck();
   runJizuraVendorCheck();
   runPvPlannerCheck();

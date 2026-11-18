@@ -766,18 +766,10 @@ function nyanTownDrawLyricRow(row, item, current, palette, styleKey) {
   var spacing = nyanTownLyricLetterSpacingPx(raster);
   ctx.font = font;
   if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
-  // One line, never wrapped: the plate is a danmaku strip and a wrapped block would read as a
-  // paragraph. A very long line shrinks instead of breaking, so it still fits one texture.
+  // One line, never wrapped and never shrunk: the plate is a danmaku strip, and the line keeps the
+  // size the console asked for. A long line makes the plate wider instead.
   var mainText = String(item.text || '');
   var mainWidth = ctx.measureText(mainText).width || 0;
-  if (mainWidth > 1900) {
-    raster = Math.max(18, raster * 1900 / mainWidth);
-    font = nyanTownLyricFontCss(raster);
-    spacing = nyanTownLyricLetterSpacingPx(raster);
-    ctx.font = font;
-    if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
-    mainWidth = ctx.measureText(mainText).width || 0;
-  }
   var subText = nyanTownLyricTranslationShown() ? String(item.sub || '') : '';
   var subPx = Math.max(10, Math.round(raster * nyanTownLyricTranslationScale()));
   var subFont = '400 ' + subPx.toFixed(1) + 'px ' + nyanTownLyricFontStack();
@@ -789,7 +781,7 @@ function nyanTownDrawLyricRow(row, item, current, palette, styleKey) {
   var subH = subPx * 1.55;
   var gap = raster * 0.18;
   var textWidth = Math.max(mainWidth, subWidth);
-  var canvasWidth = Math.max(raster * 3, Math.min(2048, Math.ceil(textWidth + pad * 2)));
+  var canvasWidth = Math.max(raster * 3, Math.min(4096, Math.ceil(textWidth + pad * 2)));
   var canvasHeight = Math.ceil(pad * 2 + mainH + (subText ? gap + subH : 0));
   if (row.canvas.width !== canvasWidth || row.canvas.height !== canvasHeight) {
     row.canvas.width = canvasWidth;

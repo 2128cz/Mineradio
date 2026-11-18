@@ -2757,12 +2757,10 @@ function bhPlaceLyrics(frame, dt) {
     // A speck, not a vanishing point: the far half shrinks by perspective until it is unreadable,
     // and that is the point - but it may not disappear while it is still turning.
     worldH = Math.max(worldH, 0.0008 * bhClamp(bhParam('lyricSpeck'), 0, 2) * 2 * rowAlong * tanHalf);
-    var widthNdc = worldH * (row.widthRatio || 4) / (rowAlong * tanHalf * aspect);
-    // The near side is allowed to overflow the frame: capping the sign at 86% of the screen is what
-    // flattened the near/far difference - a near object should be too big for the frame.
-    var fit = widthNdc > 1.45 ? 1.45 / widthNdc : 1;
-    var worldW = worldH * (row.widthRatio || 4) * fit;
-    var worldHH = worldH * fit;
+    // No width-based downscale: a wide sign overflows the frame rather than rendering its glyphs
+    // smaller than the size knob asked for.
+    var worldW = worldH * (row.widthRatio || 4);
+    var worldHH = worldH;
     // The arch is the orbit itself: its radius of curvature is the row's distance to the hole, so at
     // the front it hugs the disc and, as it falls, it closes in with the hole. A short line is
     // stretched along the orbit until the arch is actually visible (a 40 cm line on a 2.4 m orbit

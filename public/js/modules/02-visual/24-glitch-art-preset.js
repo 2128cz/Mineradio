@@ -1126,25 +1126,27 @@ function glitchLyricSpacing(px) {
   return 0;
 }
 
-function glitchDrawPlate(canvas, text, fontPx, color, glow) {
+function glitchDrawPlate(canvas, text, fontPx, color, glow, baseWidth) {
   if (!canvas || !text) return false;
   var ctx = canvas.getContext('2d');
-  var w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
   var size = fontPx;
   var font = glitchLyricFontCss(size);
   ctx.font = font;
   var spacing = glitchLyricSpacing(size);
   if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
   var width = ctx.measureText(text).width || 0;
-  var limit = w * 0.94;
-  if (width > limit && width > 0) {
-    size *= limit / width;
-    font = glitchLyricFontCss(size);
-    ctx.font = font;
-    spacing = glitchLyricSpacing(size);
-    if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
-  }
+  // The glyphs keep the authored size; a long line widens the texture (and the plate) instead of
+  // shrinking. The rect in glitchUpdateStyle follows the canvas aspect, so the type is not squashed.
+  var maxTex = (typeof renderer !== 'undefined' && renderer && renderer.capabilities && renderer.capabilities.maxTextureSize)
+    ? Math.min(4096, renderer.capabilities.maxTextureSize)
+    : 4096;
+  var base = Math.min(maxTex, Math.max(64, Number(baseWidth) || 1536));
+  var nextWidth = Math.max(base, Math.min(maxTex, Math.ceil(width + size * 0.6)));
+  if (canvas.width !== nextWidth) canvas.width = nextWidth;
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = font;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = spacing.toFixed(2) + 'px';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
@@ -1176,7 +1178,7 @@ function glitchUpdateLyrics(clock) {
   if (item) {
     var mainKey = palette.signature + '|' + item.text;
     if (glitchState.mainKey !== mainKey) {
-      glitchDrawPlate(glitchState.mainCanvas, item.text, 118, palette.highlight, palette.glow);
+      glitchDrawPlate(glitchState.mainCanvas, item.text, 118, palette.highlight, palette.glow, 1536);
       glitchState.mainKey = mainKey;
       glitchState.mainTex.needsUpdate = true;
     }
@@ -1187,7 +1189,7 @@ function glitchUpdateLyrics(clock) {
   }
   var subKey = palette.signature + '|' + subText;
   if (glitchState.subKey !== subKey) {
-    if (subText) glitchDrawPlate(glitchState.subCanvas, subText, 54, palette.context, palette.glow);
+    if (subText) glitchDrawPlate(glitchState.subCanvas, subText, 54, palette.context, palette.glow, 1024);
     else glitchState.subCanvas.getContext('2d').clearRect(0, 0, glitchState.subCanvas.width, glitchState.subCanvas.height);
     glitchState.subKey = subKey;
     glitchState.subTex.needsUpdate = true;
@@ -1206,11 +1208,19 @@ function glitchUpdateStyle(clock) {
   cu.uLyricOn.value = glitchParam('lyricOn') > 0 ? 1 : 0;
   var aspect = cu.uAspect.value || 1.78;
   var scale = glitchParam('lyricSize');
-  var mainW = Math.min(1.35, 0.92 * scale);
-  var mainH = mainW * aspect / (1536 / 224);
+  // The plate follows the texture's real aspect and grows with a long line, so the type keeps its
+  // size instead of being squeezed into a fixed rectangle.
+  var mainCanvas = glitchState.mainCanvas;
+  var subCanvas = glitchState.subCanvas;
+  var mainTexAspect = mainCanvas ? mainCanvas.width / mainCanvas.height : 1536 / 224;
+  var subTexAspect = subCanvas ? subCanvas.width / subCanvas.height : 1024 / 112;
+  var mainGrow = mainCanvas ? mainCanvas.width / 1536 : 1;
+  var subGrow = subCanvas ? subCanvas.width / 1024 : 1;
+  var mainW = Math.min(2.4, 0.92 * scale * Math.max(1, mainGrow));
+  var mainH = mainW * aspect / mainTexAspect;
   var mainY = Math.min(0.64, 0.97 - mainH);
-  var subW = Math.min(1.1, 0.62 * scale);
-  var subH = subW * aspect / (1024 / 112);
+  var subW = Math.min(1.8, 0.62 * scale * Math.max(1, subGrow));
+  var subH = subW * aspect / subTexAspect;
   var subY = Math.max(0.03, Math.min(0.16, 0.33 - subH));
   cu.uMainRect.value.set(0.5 - mainW / 2, mainY, mainW, mainH);
   cu.uSubRect.value.set(0.5 - subW / 2, subY, subW, subH);

@@ -47,7 +47,7 @@ function beginLyricMaskLayoutBuild(input, layoutOverride) {
   if (!payload) payload = { entries: [{ text: '', role: 'current', alpha: 1, scale: 1 }], activeLine: 0, text: '', combinedText: '' };
   var baseCanvasW = 2048;
   var rendererMaxTexture = renderer && renderer.capabilities && renderer.capabilities.maxTextureSize ? renderer.capabilities.maxTextureSize : 4096;
-  var maxCanvasW = Math.max(baseCanvasW, Math.min(6144, rendererMaxTexture || 4096));
+  var maxCanvasW = Math.max(baseCanvasW, Math.min(8192, rendererMaxTexture || 4096));
   var entries = payload && payload.entries && payload.entries.length ? payload.entries : [{ text: '', role: 'current', alpha: 1, scale: 1 }];
   var desiredLines = Math.max(1, entries.length);
   var H = desiredLines > 9 ? 1344 : (desiredLines > 8 ? 1216 : (desiredLines > 7 ? 1088 : (desiredLines > 6 ? 960 : (desiredLines > 5 ? 832 : (desiredLines > 4 ? 704 : (desiredLines > 3 ? 608 : (desiredLines > 2 ? 512 : 384)))))));
@@ -132,45 +132,11 @@ function finalizeLyricMaskLayoutBuild(state) {
   var maxCanvasW = state.maxCanvasW;
   var H = state.canvasHeight;
   var ctx = state.ctx;
-  var maxWidth = baseCanvasW - 88;
   var fontSize = isFinite(state.lockedFontSize) && state.lockedFontSize > 0 ? clampRange(state.lockedFontSize, 42, 160) : 128;
   var widest = 1;
-  function measureWidestAtSize(size) {
-    var measured = 1;
-    for (var li = 0; li < fitMeasureIndexes.length; li++) {
-      measured = Math.max(measured, scaledLyricMaskLayoutWidth(state, fitMeasureIndexes[li], size));
-    }
-    return measured;
-  }
-  function lyricMaskLayoutFits(size, measuredWidth) {
-    var testLineHeight = size * (lines.length > 1 ? 0.98 : 1.0) * lyricLineHeightFactor();
-    var testBlockH = size + (lines.length - 1) * testLineHeight;
-    return measuredWidth <= maxWidth && testBlockH <= H - 76;
-  }
-  if (!isFinite(state.lockedFontSize) || state.lockedFontSize <= 0) {
-    var minFont = state.maxLines > 2 ? 46 : 42;
-    var fitBaseSize = 128;
-    var minimumStepFont = fitBaseSize;
-    while (minimumStepFont > minFont) minimumStepFont -= 4;
-    var baseWidest = measureWidestAtSize(fitBaseSize);
-    var baseLineHeight = fitBaseSize * (lines.length > 1 ? 0.98 : 1.0) * lyricLineHeightFactor();
-    var baseBlockH = fitBaseSize + (lines.length - 1) * baseLineHeight;
-    var fitRatio = Math.min(1, maxWidth / Math.max(1, baseWidest), (H - 76) / Math.max(1, baseBlockH));
-    var estimatedFont = Math.floor((fitBaseSize * Math.max(0.01, fitRatio)) / 4) * 4;
-    fontSize = Math.max(minimumStepFont, Math.min(fitBaseSize, estimatedFont || minimumStepFont));
-    widest = measureWidestAtSize(fontSize);
-    while (fontSize + 4 <= fitBaseSize) {
-      var nextFontSize = fontSize + 4;
-      var nextWidest = measureWidestAtSize(nextFontSize);
-      if (!lyricMaskLayoutFits(nextFontSize, nextWidest)) break;
-      fontSize = nextFontSize;
-      widest = nextWidest;
-    }
-    while (fontSize > minimumStepFont && !lyricMaskLayoutFits(fontSize, widest)) {
-      fontSize -= 4;
-      widest = measureWidestAtSize(fontSize);
-    }
-  }
+  // The raster keeps the authored size: the canvas grows to the line (up to maxCanvasW) instead of
+  // the glyphs shrinking to the canvas. A line longer than the cap may run off the texture edge;
+  // that is preferable to silently rendering one line at a different size.
   ctx.font = lyricFontCss(fontSize);
   widest = 1;
   var widestMeasureIndex = fitMeasureIndexes[0];
@@ -190,8 +156,8 @@ function finalizeLyricMaskLayoutBuild(state) {
   var drawMaxWidth = W - 48;
   ctx.font = lyricFontCss(fontSize);
   var width = Math.min(drawMaxWidth, widest);
-  var fitScaleX = widest > drawMaxWidth ? Math.max(0.01, drawMaxWidth / widest) : 1;
-  if (fitScaleX < 1) width = Math.min(drawMaxWidth, widest * fitScaleX);
+  // No horizontal squeeze either: a long line keeps the glyph width the console asked for.
+  var fitScaleX = 1;
   var lockedLineHeight = Number(layoutOverride.lineHeight);
   var lineHeight = isFinite(lockedLineHeight) && lockedLineHeight > 0
     ? lockedLineHeight
