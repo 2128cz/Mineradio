@@ -740,6 +740,7 @@ var MIXER_WAVE_REWIND_BEATS = 0.22;  // the backwards burst after a kick, in bea
 var MIXER_WAVE_REWIND_SPEED = 2.6;   // how fast that burst runs, backwards
 var MIXER_WAVE_RECOVER_SPEED = 0.5;  // where the rate lands after the burst, easing back to 1
 var MIXER_WAVE_RECOVER_BEATS = 0.5;  // how fast the rate itself returns to 1 after a kick
+var MIXER_WAVE_DIP_TAIL = 2.5;       // beats for the wavenumber dip to relax: longer than a beat, so hits stack
 var MIXER_WAVE_PHASE_TAIL = 0.55;    // beats for that step to ease back onto the anchor
 var MIXER_WAVE_KICK_FREQ = 0.9;      // full-scale wavenumber surge at a kick (+90%)
 var MIXER_WAVE_FREQ_TAIL = 0.90;     // beats for the compressed ridges to relax
@@ -797,7 +798,7 @@ function mixerWaveStep(w, dt, o) {
   var step = Number(o.step) > 0 ? Number(o.step) : MIXER_WAVE_FALLBACK_STEP;
   w.beatStep = step;
   var beatDt = dt > 0 ? dt / step : 0;
-  var acceptOnset = !!o.onset && (w.beatClock <= 0 || w.beatClock + dt >= step * MIXER_WAVE_RETRIGGER);
+  var acceptOnset = !!o.onset && (!w.onsets || w.beatClock + dt >= step * MIXER_WAVE_RETRIGGER);
   // The phase is driven only by a rate (an animated speed), never written directly: a kick flips the
   // rate negative for a short burst, and the rate then eases back to 1 over MORE than one beat, so
   // consecutive drums do not cancel each other out - each one leaves the wave a little further back
@@ -817,22 +818,23 @@ function mixerWaveStep(w, dt, o) {
     }
     w.phase = mixerWrapAngle(w.phase - (Math.PI * 2 / step) * rate * dt);
     w.kick *= Math.exp(-beatDt / MIXER_WAVE_SPEED_TAIL);
-    w.freqKick *= Math.exp(-beatDt / MIXER_WAVE_FREQ_TAIL);
+    w.freqKick *= Math.exp(-beatDt / MIXER_WAVE_DIP_TAIL);
     w.beatClock += dt;
   }
   if (acceptOnset) {
-    // The push is ADDED, not lerped: the phase the drum takes away stays taken away, so repeated
-    // drums stack and the wave is pushed back by the beat instead of easing back onto it.
-    var pushBeats = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
-    w.offset = mixerWrapAngle(w.offset + pushBeats * Math.PI * 2);
+    w.onsets = (w.onsets || 0) + 1;
     w.beatClock = -MIXER_WAVE_LEAD_BEATS * step;
     w.kick = 1;
-    w.freqKick = 1;
-    w.rewind = pushBeats * step;
+    // The dip ADDS, so a hit inside the previous tail deepens it instead of restarting it.
+    w.freqKick = Math.min(2.5, w.freqKick + 1);
+    w.rewind = 0;
     w.speed = recoverSpeed;
   }
-  w.kScale = 1;
-  w.phaseOffset = w.offset;
+  // 移频 is the motion: a shrinking wavenumber slides every crest outwards at once, continuously.
+  // The tail outlasts a beat, so the dips stack and repeated hits keep pushing the wave back.
+  var dipAmt = o.rewindBeats == null ? MIXER_WAVE_REWIND_BEATS : Math.max(0, Number(o.rewindBeats) || 0);
+  w.kScale = Math.max(0.15, 1 - w.freqKick * dipAmt);
+  w.phaseOffset = 0;
   w.anchorOffset = 0;
   return w;
 }
@@ -929,7 +931,7 @@ var mixerState = {
   lyricScene: null, lyricGroup: null, lyricCam: null, lyricLayerChecked: false, lyricLayerWasOff: false,
   frames: 0, lastCostMs: 0, error: '',
   themeKey: '', themeDay: null, themeNight: null,
-  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0 },
+  wave: { phase: MIXER_WAVE_CREST, kick: 0, beatStep: 0, prevBeat: 0, phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0, onsets: 0 },
   size: null
 };
 

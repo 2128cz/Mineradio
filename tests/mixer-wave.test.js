@@ -50,17 +50,17 @@ const CREST = constant('MIXER_WAVE_CREST');
 
 const wave = new Function(
   'MIXER_WAVE_LEAD_CYCLES', 'MIXER_WAVE_SPEED_TAIL', 'MIXER_WAVE_KICK_PHASE', 'MIXER_WAVE_PHASE_TAIL',
-  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS',
+  'MIXER_WAVE_KICK_FREQ', 'MIXER_WAVE_FREQ_TAIL', 'MIXER_WAVE_ANCHOR_TAIL', 'MIXER_WAVE_LEAD_BEATS', 'MIXER_WAVE_FALLBACK_STEP', 'MIXER_WAVE_CREST', 'MIXER_WAVE_RETRIGGER', 'MIXER_WAVE_REWIND_BEATS', 'MIXER_WAVE_REWIND_SPEED', 'MIXER_WAVE_RECOVER_SPEED', 'MIXER_WAVE_RECOVER_BEATS', 'MIXER_WAVE_DIP_TAIL',
   [
     fn('mixerClamp01'), fn('mixerClampBipolar'), fn('mixerWrapAngle'), fn('mixerSignedAngle'), fn('mixerWaveStep'), fn('mixerStepWave'),
     'return { wrap: mixerWrapAngle, step: mixerWaveStep, frame: mixerStepWave, clamp: mixerClamp01 };'
   ].join('\n')
-)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'));
+)(LEAD_CYCLES, SPEED_TAIL, KICK_PHASE, PHASE_TAIL, KICK_FREQ, FREQ_TAIL, ANCHOR_TAIL, constant('MIXER_WAVE_LEAD_BEATS'), FALLBACK_STEP, CREST, constant('MIXER_WAVE_RETRIGGER'), constant('MIXER_WAVE_REWIND_BEATS'), constant('MIXER_WAVE_REWIND_SPEED'), constant('MIXER_WAVE_RECOVER_SPEED'), constant('MIXER_WAVE_RECOVER_BEATS'), constant('MIXER_WAVE_DIP_TAIL'));
 
 const DT = 1 / 60;
 const fresh = () => ({
   phase: CREST, kick: 0, beatStep: 0, prevBeat: 0,
-  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0
+  phaseOffset: 0, freqKick: 0, kScale: 1, phaseShiftAmt: 0, freqShiftAmt: 0, speedShiftAmt: 0, beatClock: 0, anchorOffset: 0, rewind: 0, speed: 1, offset: 0, onsets: 0
 });
 const angleDiff = (a, b) => {
   const d = Math.abs(wave.wrap(a) - wave.wrap(b));
@@ -117,52 +117,53 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.equal(src.indexOf('uCamPan*(c.x'), -1, 'the wave speed may not be borrowed from the camera pan');
 }
 
-// ---------------------------------------------------------------- 3) a kick winds the wave clock back
+// ---------------------------------------------------------------- 3) a kick compresses the wave, and hits stack
 
 {
-  // One clock, three rates: forward at one beat per beat, backwards on a kick, and slightly fast
-  // until the rewound time is repaid. Every change is a rate on the same continuous clock, so the
-  // waveform retraces itself without a single phase jump.
+  // 移频 is the motion: with k shrinking every crest slides outwards at once and continuously, so the
+  // wave retraces itself. A phase step can only snap, which is why it never read as a wave.
   const w = fresh();
-  const before = w.phase;
   wave.step(w, DT, { step: 0.5, onset: true });
-  assert.ok(w.rewind > 0 && w.speed < 1, 'a kick has to start a backwards burst and slow the recovery rate');
-  const p0 = w.phase;
-  wave.step(w, DT, { step: 0.5 });
-  const signedStep = ((w.phase - p0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-  assert.ok(signedStep > 0, 'while the rewind is on the phase has to run the other way');
-  let maxStep = Math.abs(signedStep), prev = w.phase;
-  for (let t2 = 0; t2 < 0.5; t2 += DT) {
-    wave.step(w, DT, { step: 0.5 });
-    maxStep = Math.max(maxStep, angleDiff(w.phase, prev));
-    prev = w.phase;
+  assert.ok(w.freqKick > 0.8 && w.kScale < 0.85, `a kick has to compress the wavenumber (${w.kScale.toFixed(3)})`);
+
+  // The tail outlasts a beat, so a second hit lands while the first is still open: dips stack and the
+  // wave keeps being pushed outwards for as long as the drums continue.
+  const one = fresh(), two = fresh();
+  for (let t = 0; t < 0.5; t += DT) {
+    const second = t > 0.29 && t < 0.31;
+    wave.step(one, DT, { step: 0.5, onset: t === 0 });
+    wave.step(two, DT, { step: 0.5, onset: t === 0 || second });
   }
-  assert.ok(maxStep < (Math.PI * 2 / 0.5) * 6 * DT * 1.2, `a frame may move at the rewind rate but never faster (worst ${maxStep.toFixed(3)} rad)`);
-  assert.equal(w.rewind, 0, 'the backwards burst has to finish');
-  assert.ok(w.speed > 0.5 && w.speed < 1, `and the rate has to be easing back up, not jumped (${w.speed.toFixed(3)})`);
+  assert.ok(two.kScale < one.kScale - 0.05,
+    `a second hit inside the tail has to deepen the dip (${one.kScale.toFixed(3)} vs ${two.kScale.toFixed(3)})`);
 
-  // Over a whole beat the net travel is exactly one wavelength: the retrace is paid back, so the
-  // next drum lands on the same phase as the last one.
-  const a = fresh(), b = fresh();
-  for (let t = 0; t < 0.75; t += DT) { wave.step(a, DT, { step: 0.5, onset: t === 0 }); wave.step(b, DT, { step: 0.5 }); }
-  assert.ok(angleDiff(a.phase, b.phase) > 0.3, `one beat must carry the wave the same distance with or without a kick (${angleDiff(a.phase, b.phase).toFixed(3)} rad)`);
+  // Nothing writes the phase - only the rate does - so the waveform cannot jump.
+  const p0 = fresh();
+  wave.step(p0, DT, { step: 0.5, onset: true });
+  let maxStep = 0, prev = p0.phase;
+  for (let t = 0; t < 0.5; t += DT) {
+    wave.step(p0, DT, { step: 0.5 });
+    maxStep = Math.max(maxStep, angleDiff(p0.phase, prev));
+    prev = p0.phase;
+  }
+  assert.ok(maxStep < (Math.PI * 2 / 0.5) * DT * 1.2, `no frame may jump (worst ${maxStep.toFixed(3)} rad)`);
 
-  // A ghost inside the refractory window is dropped: 16ths under a beat cannot thrash the rewind.
+  // A ghost inside the refractory window is dropped: 16ths under a beat cannot thump the dip.
   const ghost = fresh();
   wave.step(ghost, DT, { step: 0.5, onset: true });
-  const kick0 = ghost.kick;
+  const k0 = ghost.kScale;
   wave.step(ghost, DT, { step: 0.5, onset: true });
-  assert.ok(ghost.kick < kick0 + 1e-9, 'an onset inside the refractory window must not retrigger');
+  assert.ok(ghost.kScale >= k0, 'an onset inside the refractory window must not re-dip');
 
   // A rising beat pulse launches it; a decaying one does not.
   const f2 = fresh();
   f2.prevBeat = 0.2;
   wave.frame(f2, DT, { step: 0.5, beat: 0.55, playing: true });
-  assert.ok(f2.rewind > 0, 'a rising beat pulse has to wind the clock back');
+  assert.ok(f2.freqKick > 0.8, 'a rising beat pulse has to dip the wavenumber');
   const g2 = fresh();
   g2.prevBeat = 0.6;
   wave.frame(g2, DT, { step: 0.5, beat: 0.5, playing: true });
-  assert.equal(g2.rewind, 0, 'a pulse that is only decaying must not rewind');
+  assert.equal(g2.freqKick, 0, 'a pulse that is only decaying must not dip it');
 }
 
 // ---------------------------------------------------------------- 4) paused is frozen, and no tempo still moves
@@ -205,8 +206,8 @@ const lift = (c, phase, amp, k) => amp * Math.sin(k * (c[0] + c[1]) + phase);
   assert.ok(/rewindBeats: mixerParam\('waveRewind'\)/.test(src) && /recoverBeats: mixerParam\('waveRecoverBeats'\)/.test(src),
     'the four beat-shape knobs have to reach the wave clock');
   assert.ok(/var MIXER_WAVE_REWIND_BEATS = 0\.22;/.test(src), 'a kick has to run a backwards burst long enough to be seen');
-  assert.ok(src.indexOf("w.offset = mixerWrapAngle(w.offset + pushBeats * Math.PI * 2);") >= 0, 'each drum has to ADD its push to the phase instead of lerping it away');
-  assert.ok(src.indexOf("w.rewind = pushBeats * step;") >= 0, 'and still run the backwards burst for the same amount');
+  assert.ok(src.indexOf("w.kScale = Math.max(0.15, 1 - w.freqKick * dipAmt);") >= 0, 'the drum has to compress the wavenumber: that is what moves every crest at once');
+  assert.ok(src.indexOf("w.freqKick = Math.min(2.5, w.freqKick + 1);") >= 0, 'and the dips have to add up instead of restarting');
   assert.ok(src.indexOf("w.speed = recoverSpeed;") >= 0, 'the rate has to land below 1 and ease back, so kicks accumulate');
 
   // amplitude is a gain on the lift, k is the frequency, and the phase knob is an offset of one turn.
