@@ -77,6 +77,14 @@ At the requester's instruction the reference body is kept as written; the change
 
 The supplied presentation fragment is kept in Shadertoy shape: Vignette() with its three #defines lifted to uniforms, the bloom contribution, `texelFetch(iChannel1, ivec2(xy)/kScreenDownsample)` as a nearest sample of the downsampled source at 0.6, the saturate → pow(0.8) → mix(0.1, 0.9) curve, and the vignette multiply. The parts the fragment names but does not define are separate components: the corrupted-signal source (hashed blocks, tear band, channel split, scanline, grain), a two-pass separable bloom, and the low-res composite. The integer PCG wrapper is replaced by a GLSL1 float hash because the source compiles in WebGL1. Every constant is a knob; audioDrive/audioGlitch/audioTear/audioBloom/beatPulse are the audio connection points (8-band frame + beat pulse). The licence is **UNVERIFIED**; do not distribute a build, screenshot or derivative of this preset until the author confirms the terms and this file, NOTICE.md and the sidecar are updated.
 
+## Visual preset 20「DVD待机」(DVD STANDBY) — reference port (licence unverified)
+
+- Reference: Shadertoy view **wtcSzN**: <https://www.shadertoy.com/view/wtcSzN> (title "DVD"; source supplied by the requester)
+- Landing file: `public/js/modules/02-visual/25-dvd-standby-preset.js`
+- Attribution sidecar: `public/js/modules/02-visual/25-dvd-standby-preset.LICENSE.txt`
+
+The single Image pass is kept as written: the DVD-logo SDF, the bouncing cell walk (`calcHitPos`), the mirrored tile reflections (`flip`), the wavefront/ripple normal bump (`drawHit` / `drawReflectedHit`), the inverted + lit surface, the dither and the gamma curve. The changes are the GLSL3 preamble, a generated 512×512 noise texture in place of the reference iChannel0 (the lookup keeps `fragCoord / resolution`), an opaque output alpha, and knobs whose defaults equal the reference literals (speed, direction, logo scale, hit count, ripple range/frequency, bump, dither, gamma, lighting). The app's particles and stage lyrics are suppressed because the reference composition is the whole picture. The licence is **UNVERIFIED**; do not distribute a build, screenshot or derivative of this preset until the terms are confirmed and this file, NOTICE.md and the sidecar are updated.
+
 ## Qishui Passport Web QR authentication
 
 - Upstream: `Wx2yZx/Mineradio-Qishui-QR-Login`

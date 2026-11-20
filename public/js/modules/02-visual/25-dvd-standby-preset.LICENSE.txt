@@ -1,0 +1,45 @@
+Visual preset 20「DVD待机」(DVD STANDBY) — reference port, licence UNVERIFIED
+==========================================================================
+
+POSTURE
+-------
+This build contains a port of a Shadertoy shader. Nothing containing this preset may be
+distributed until the author confirms the terms.
+
+REFERENCE
+---------
+Shadertoy view "wtcSzN" — https://www.shadertoy.com/view/wtcSzN
+Title "DVD". The source was supplied by the requester as a single Image pass. The page did not
+expose a licence header we could read. The fragment is ported as written into
+DVD_SOURCE_FS (GLSL3): the DVD-logo SDF (dvd / dvd_v / dvd_c / dvd_d), the bouncing cell walk
+(calcHitPos), the mirrored tile reflections (flip), the wavefront/ripple normal bump
+(drawHit / drawReflectedHit / ref), the inverted + lit surface, the ordered dither and the gamma
+curve.
+
+Constants kept from the reference: the logo size 0.1, the 9:16 direction (45° on a 16:9 screen),
+the hit loop's 5 reflections, ripple centre at the last cell boundary, frequency 2, bump 0.1,
+dither 0.005, gamma 1/1.5, the lighting coefficients (5×diffuse + 0.2, 5×specular) and the
+mix(1, spec, pow(blend, 4)) curve.
+
+CHANGES FROM THE SUPPLIED FRAGMENT
+----------------------------------
+- The pass compiles as GLSL3, so the output is `out vec4 outColor` and the supplied `mainImage`
+  is called from a `main()`; the DEBUG branches are removed.
+- The noise channel's `iChannelResolution[0]` is our generated 512×512 RGBA noise texture
+  (`uNoiseRes` carries its size); it wraps, so the supplied `fragCoord / iChannelResolution`
+  lookup is unchanged.
+- The reference's hardcoded direction is `uAngle` (default 45°, identical on 16:9), the logo
+  scale, hit count, ripple range/frequency, bump, dither, gamma and a lighting multiplier are
+  knobs whose defaults equal the reference values.
+- The reference is opaque to Shadertoy; our fragment forces alpha 1 so a full-screen pass cannot
+  punch a translucent hole in the app's canvas.
+- The app's particles and stage lyrics are suppressed: the reference composition is the whole
+  picture and no lyric layer was added on top.
+
+LICENCE STATUS
+--------------
+UNVERIFIED. Shadertoy's default licence is CC BY-NC-SA 3.0 (non-commercial, share-alike), which is
+not compatible with this repository's GPL-3.0-only distribution. The page carried no licence header
+we could read, so the author and terms are unknown. Do not publish a build containing this preset
+(or a screenshot of it) until the terms are confirmed and this file, NOTICE.md and
+docs/THIRD_PARTY_PORTS.md are updated.

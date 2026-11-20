@@ -1404,6 +1404,20 @@
         </div>
         <div class="fx-actions"><button class="fx-mini-btn" onclick="resetGlitchTuning()">恢复故障艺术默认</button></div>
       </div>
+      <!-- DVD待机 (preset 20)：参考 wtcSzN 的单 Pass；撞角反弹/瓷砖反射/波前涟漪，参数全开。 -->
+      <div class="fx-dvd-tuning">
+        <div class="fx-slider"><label>反弹速度</label><input id="fx-dvdspeed" type="range" min="0.1" max="3" step="0.01" oninput="setDvdTuning('speed', this.value)"><output></output></div>
+        <div class="fx-slider"><label>反弹角度</label><input id="fx-dvdangle" type="range" min="5" max="85" step="1" oninput="setDvdTuning('angle', this.value)"><output></output></div>
+        <div class="fx-slider"><label>标志大小</label><input id="fx-dvdlogoScale" type="range" min="0.4" max="2.5" step="0.01" oninput="setDvdTuning('logoScale', this.value)"><output></output></div>
+        <div class="fx-slider"><label>反射次数</label><input id="fx-dvdreflections" type="range" min="1" max="8" step="1" oninput="setDvdTuning('reflections', this.value)"><output></output></div>
+        <div class="fx-slider"><label>涟漪范围</label><input id="fx-dvdrippleRange" type="range" min="0" max="4" step="0.01" oninput="setDvdTuning('rippleRange', this.value)"><output></output></div>
+        <div class="fx-slider"><label>涟漪频率</label><input id="fx-dvdrippleFreq" type="range" min="0.2" max="5" step="0.01" oninput="setDvdTuning('rippleFreq', this.value)"><output></output></div>
+        <div class="fx-slider"><label>凸起强度</label><input id="fx-dvdbump" type="range" min="0.02" max="0.6" step="0.01" oninput="setDvdTuning('bump', this.value)"><output></output></div>
+        <div class="fx-slider"><label>抖动强度</label><input id="fx-dvddither" type="range" min="0" max="2" step="0.01" oninput="setDvdTuning('dither', this.value)"><output></output></div>
+        <div class="fx-slider"><label>伽马</label><input id="fx-dvdgamma" type="range" min="0.8" max="2.5" step="0.01" oninput="setDvdTuning('gamma', this.value)"><output></output></div>
+        <div class="fx-slider"><label>光照亮度</label><input id="fx-dvdbrightness" type="range" min="0.3" max="2" step="0.01" oninput="setDvdTuning('brightness', this.value)"><output></output></div>
+        <div class="fx-actions"><button class="fx-mini-btn" onclick="resetDvdTuning()">恢复DVD待机默认</button></div>
+      </div>
     </div>
 
     <!-- 歌单/队列面板 (左侧贴边自动显示, 无关闭按钮) -->

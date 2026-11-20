@@ -667,6 +667,8 @@ function animate() {
   if (typeof updateNyanTownLayer === 'function') updateNyanTownLayer(now, dt, sonicAudioFrame);
   // 故障艺术 (preset 19): a full-frame corrupted signal + its bloom/composite pipeline.
   if (typeof glitchUpdateLayer === 'function') glitchUpdateLayer(now, dt, sonicAudioFrame);
+  // DVD待机 (preset 20): the reference's screen-space DVD bounce is the whole picture.
+  if (typeof dvdUpdateLayer === 'function') dvdUpdateLayer(now, dt, sonicAudioFrame);
   var targetRotY = orbit.centerLocked ? 0 : (headParallax.active ? headParallax.x * 0.5 : 0) + gestureRotation.y;
   var targetRotX = orbit.centerLocked ? 0 : (headParallax.active ? -headParallax.y * 0.35 : 0) + gestureRotation.x;
   particles.rotation.y += (targetRotY - particles.rotation.y) * 0.055;
@@ -742,6 +744,7 @@ function animate() {
   if (!lensFrameDone && typeof renderMixerDeskFrame === 'function') lensFrameDone = renderMixerDeskFrame();
   if (!lensFrameDone && typeof renderNyanTownFrame === 'function') lensFrameDone = renderNyanTownFrame();
   if (!lensFrameDone && typeof glitchRenderFrame === 'function') lensFrameDone = glitchRenderFrame();
+  if (!lensFrameDone && typeof dvdRenderFrame === 'function') lensFrameDone = dvdRenderFrame();
   if (!lensFrameDone) renderer.render(scene, camera);
   if (perfProbe && perfProbe.markSince) perfProbe.markSince('renderer.render', rendererPerfStart);
   var frameCostMs = performance.now() - framePerfStart;
