@@ -2653,6 +2653,102 @@ function runGlitchArtPresetCheck() {
   process.stdout.write(result.stdout || '');
   console.log(`[OK] Glitch art wired: preset ${index}, reference presentation components, ${schema.size} knobs (licence unverified).`);
 }
+function runDvdStandbyPresetCheck() {
+  logStep('DVD standby preset (single-pass reference port, bouncing cell reflections)');
+  const modulePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '25-dvd-standby-preset.js');
+  const tuningPath = path.join(appRoot, 'public', 'js', 'modules', '07-fx', '18-dvd-standby-tuning.js');
+  const licensePath = path.join(appRoot, 'public', 'js', 'modules', '02-visual', '25-dvd-standby-preset.LICENSE.txt');
+  const testPath = path.join(appRoot, 'tests', 'dvd-standby.test.js');
+  if (!fs.existsSync(modulePath)) fail('02-visual/25-dvd-standby-preset.js is missing; preset 20 would be an empty card');
+  if (!fs.existsSync(tuningPath)) fail('07-fx/18-dvd-standby-tuning.js is missing; the DVD knobs would be dead rows');
+  if (!fs.existsSync(licensePath)) fail('25-dvd-standby-preset.LICENSE.txt is missing; the reference needs its attribution/status');
+  if (!fs.existsSync(testPath)) fail('tests/dvd-standby.test.js is missing');
+  const text = fs.readFileSync(modulePath, 'utf8');
+  const tuningText = fs.readFileSync(tuningPath, 'utf8');
+  const htmlText = fs.readFileSync(path.join(appRoot, 'public', 'index.html'), 'utf8');
+  const loaderText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'index-loader.js'), 'utf8');
+  const gridText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '04-preset-grid-uniforms.js'), 'utf8');
+  const archiveText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '00-preset-archive-data.js'), 'utf8');
+  const consoleText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '07-fx', '09-console-workspace.js'), 'utf8');
+  const loopText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '11-main-loop.js'), 'utf8');
+  const coreText = fs.readFileSync(path.join(appRoot, 'public', 'js', 'modules', '00-state', '00-core-stores.js'), 'utf8');
+  const licenseText = fs.readFileSync(licensePath, 'utf8');
+  const noticeText = fs.readFileSync(path.join(appRoot, 'NOTICE.md'), 'utf8');
+  const portsText = fs.readFileSync(path.join(appRoot, 'docs', 'THIRD_PARTY_PORTS.md'), 'utf8');
+  const index = Number((text.match(/DVD_PRESET_INDEX = (\d+)/) || [])[1]);
+  if (index !== 20) fail(`DVD_PRESET_INDEX must be 20 (found ${index}) and is never renumbered`);
+  if (!/MAX_VISUAL_PRESET_INDEX = 20/.test(coreText)) fail('MAX_VISUAL_PRESET_INDEX must follow the new preset (20)');
+  if (loaderText.indexOf("'js/modules/02-visual/25-dvd-standby-preset.js'") < 0) fail('25-dvd-standby-preset.js must be listed in index-loader.js');
+  if (loaderText.indexOf("'js/modules/07-fx/18-dvd-standby-tuning.js'") < 0) fail('18-dvd-standby-tuning.js must be listed in index-loader.js');
+  if (!/DVD待机/.test(archiveText) || !/DVD STANDBY/.test(archiveText)) fail('the DVD preset must be a labelled, selectable card');
+  if (!/20, 6, 7, 8/.test(archiveText)) fail('the DVD preset has to sit in presetDisplayOrder next to the other premium visuals');
+  if (!/applyDvdPresetNow\(prev, p\)/.test(gridText)) fail('selecting preset 20 must build the pass and leaving it must release it');
+  if (!/dvdUpdateLayer\(now, dt, sonicAudioFrame\)/.test(loopText)) fail('the main loop must step the DVD layer');
+  if (!/dvdRenderFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the DVD pass');
+  const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
+  if (!/id: 'dvd-standby'/.test(ownerBlock)) fail('the DVD preset must register as a takeover owner');
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+    if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the DVD preset must take ${layer} over: the reference is the whole picture`);
+  }
+  // The reference's components.
+  for (const [pattern, why] of [
+    [/float dvd\(vec2 p\)/, 'the DVD logo SDF has to survive'],
+    [/vec2 calcHitPos\(vec2 move, vec2 dir, vec2 size\)/, 'the bouncing cell walk has to survive'],
+    [/void flip\(inout vec2 pos\)/, 'the mirrored-tile reflection has to survive'],
+    [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitDist\)/, 'the wavefront hit has to survive'],
+    [/void drawReflectedHit\(/, 'the four mirrored hits have to survive'],
+    [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit count has to be a uniform loop'],
+    [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma has to survive'],
+    [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
+    [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
+    [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
+    [/fragColor = vec4\(col\.rgb, 1\.0\);/, 'the full-screen pass must be opaque'],
+    [/function dvdDisposeScene\(/, 'leaving the preset has to release the pass'],
+  ]) {
+    if (!pattern.test(text)) fail(why);
+  }
+  // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
+  const schema = new Map();
+  const schemaBlock = (text.match(/var DVD_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
+  const schemaRe = /(\w+):\s*\{\s*def:\s*(-?[\d.]+),\s*min:\s*(-?[\d.]+),\s*max:\s*(-?[\d.]+),\s*kind:\s*'(\w+)',\s*rebuild:\s*'(\w+)'\s*\}/g;
+  let found;
+  while ((found = schemaRe.exec(schemaBlock))) {
+    schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
+  }
+  if (schema.size < 10) fail('DVD_SCHEMA must expose at least the ten reference controls');
+  for (const [key, spec] of schema) {
+    const id = 'fx-dvd' + key;
+    const at = htmlText.indexOf('id="' + id + '"');
+    if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
+    const input = htmlText.slice(at, htmlText.indexOf('>', at));
+    if (input.indexOf('min="' + spec.min + '"') < 0 || input.indexOf('max="' + spec.max + '"') < 0) {
+      fail(`the slider ${id} must run from ${spec.min} to ${spec.max}`);
+    }
+    const rowStart = htmlText.lastIndexOf('class="fx-slider"', at);
+    if (rowStart < 0 || htmlText.slice(rowStart, at).indexOf('</div>') >= 0) {
+      fail(`the slider ${id} must sit inside its .fx-slider row, or it carries no reset button`);
+    }
+    if (!htmlText.includes(`setDvdTuning('${key}', this.value)`)) fail(`the slider ${id} must call setDvdTuning('${key}')`);
+    if (!consoleText.includes(`fxConsoleItem('${id}'`)) fail(`the knob ${key} must be listed in the console DVD group`);
+  }
+  if (!/key: 'dvd'/.test(consoleText) || !/title: 'DVD待机'/.test(consoleText)) fail('the visual console needs a DVD待机 group in the 动效 tab');
+  if (!/presets: \[DVD_PRESET_INDEX\]/.test(consoleText)) fail('the DVD group has to carry presets: [DVD_PRESET_INDEX]');
+  if (!/mineradio-dvd-standby-tuning-v1/.test(tuningText) || !/function bindDvdTuningResetButtons\(/.test(tuningText)) {
+    fail('the DVD knobs need their own store and one reset button per row');
+  }
+  for (const [body, name] of [[licenseText, 'LICENSE sidecar'], [noticeText, 'NOTICE.md'], [portsText, 'THIRD_PARTY_PORTS.md']]) {
+    if (!/wtcSzN/.test(body)) fail(name + ' has to name the reference (Shadertoy view wtcSzN)');
+    if (!/UNVERIFIED|unverified|待核实/.test(body)) fail(name + ' has to mark the licence unverified');
+  }
+  const result = spawnSync(process.execPath, ['--test', testPath], { cwd: appRoot, encoding: 'utf8' });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail('the DVD standby component test failed: ' + rel(testPath));
+  }
+  process.stdout.write(result.stdout || '');
+  console.log(`[OK] DVD standby wired: preset ${index}, reference DVD SDF/reflections/surface, ${schema.size} knobs (licence unverified).`);
+}
 function runFeatureIndexCheck() {
   logStep('Feature index (preset and console registries still match the code)');
   const script = path.join(appRoot, 'scripts', 'dev-feature-index.js');
@@ -5978,10 +6074,10 @@ function checkSonicTopographyPresetGuard() {
   if (!/function deriveGroundLayoutSettings/.test(sonicText) || !/sonicGroundRange/.test(sonicText) || !/state\.root\.rotation\.x\s*=\s*state\.boundRotX/.test(sonicText) || !/state\.root\.position\.set\(0,\s*layout\.y,\s*layout\.z\)/.test(sonicText) || !/state\.root\.scale\.setScalar\(layout\.scale\)/.test(sonicText)) {
     fail('Sonic Topography must expose a wide, lyric-safe horizontal platter layout inside Mineradio camera space');
   }
-  if (!/MAX_VISUAL_PRESET_INDEX = 19/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
+  if (!/MAX_VISUAL_PRESET_INDEX = 20/.test(coreText) || !/SONIC_PRESET_INDEX = 7/.test(coreText) || !/SONIC_WORKSHOP_PRESET_INDEX = 8/.test(coreText) || !/MAX_VISUAL_PRESET_INDEX/.test(runtimeText + persistenceText)) {
     fail('Sonic preset 7 and Workshop derivative preset 8 must survive autosave and startup restore clamps');
   }
-  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
+  if (!/音域回响/.test(archiveText) || !/presetDisplayOrder = \[0, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 6, 7, 8/.test(archiveText) || /音域回响[\s\S]{0,120}disabled:\s*true/.test(archiveText)) {
     fail('Sonic Topography must be exposed as the selectable 音域回响 preset');
   }
   if (!archiveText.includes('音域回响 <span class="pc-name-en">Sonic-Topography</span>')
@@ -8368,6 +8464,7 @@ async function main() {
   runMixerDeskPresetCheck();
   runNyanTownPresetCheck();
   runGlitchArtPresetCheck();
+  runDvdStandbyPresetCheck();
   runPvDrawTierCheck();
   runPvDrawBenchGuardCheck();
   runHaloDrawTierCheck();

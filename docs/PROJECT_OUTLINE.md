@@ -67,19 +67,19 @@ Electron main  desktop/main.js (6058 行)
 
 重跑方式：`node scripts/dev-feature-index.js`（loader 条数与缺失）与 `node scripts/dev-module-graph.js`（唯一顶层声明、层间依赖、承重全局名）。**下面这张表是 2026-10-18 的快照**，只用来读趋势；当前值以脚本为准。
 
-快照：105 模块 / 0 缺失 / **3623 个唯一顶层声明**；当前 loader 为 116 条 / 0 缺失。
+快照：107 模块 / 0 缺失 / **3651 个唯一顶层声明**；当前 loader 为 118 条 / 0 缺失。
 
 | 层 | 模块 | 行数 | 顶层声明 |
 |---|---|---|---|
 | `00-state` | 12 | 2211 | 467 |
 | `01-scene` | 5 | 2387 | 155 |
-| `02-visual` | 16 | 12208 | 703 |
+| `02-visual` | 17 | 12698 | 719 |
 | `public-root`（两个 sonic preset） | 2 | 1901 | 0（IIFE 包裹） |
 | `03-beat` | 8 | 3779 | 133 |
 | `04-shelf` | 7 | 2722 | 50 |
 | `05-playback` | 22 | 13220 | 794 |
 | `06-lyrics` | 8 | 3757 | 259 |
-| `07-fx` | 11 | 8661 | 505 |
+| `07-fx` | 12 | 8764 | 517 |
 | `08-account` | 7 | 4003 | 218 |
 | `modules`（`09-idle-toast-libraries` + `11-main-loop`） | 2 | 1512 | 86 |
 | `10-shell` | 6 | 3793 | 267 |
@@ -370,6 +370,7 @@ graph LR
 | 歌词渲染：舞台 | `#stage-lyrics` | fx 存档 | `02-visual/14-stage-lyrics-rendering.js` | 接管掩码的 `stageLyrics` 通道 |
 | 歌词渲染：预设内 | `#pv-layer`、`#halo-layer`、`#halo-canvas`（黑洞、彩虹猫小镇在其场景内） | — | `02-visual/17`、`18`、`19`、`23` | 各自 `registerVisualTakeoverOwner`；23 的歌词相机逐帧复刻场景 `path()/move()` 姿态，单行板按天空仰角摆放 |
 | 预设 19 故障艺术 | 控制台「故障艺术」组（`.fx-glitch-tuning`） | `mineradio-glitch-art-tuning-v1` | `02-visual/24-glitch-art-preset.js` + `07-fx/17-glitch-art-tuning.js` | 源→可分离溢光→低分辨率合成；`applyGlitchArtPresetNow` / `glitchUpdateLayer` / `glitchRenderFrame` |
+| 预设 20 DVD待机 | 控制台「DVD待机」组（`.fx-dvd-tuning`） | `mineradio-dvd-standby-tuning-v1` | `02-visual/25-dvd-standby-preset.js` + `07-fx/18-dvd-standby-tuning.js` | 单 Pass 参考移植；`applyDvdPresetNow` / `dvdUpdateLayer` / `dvdRenderFrame` |
 | 3D 歌单架 | 控制台「歌单架」tab 的 `#shelf-*` | fx 存档 | `04-shelf/01-manager-core.js` | 同一份 `FX_CONSOLE_LAYOUT` |
 | 手势 | `#gesture-hud` | 摄像头权限 | `10-shell/00-gesture-control.js` | — |
 | 全局快捷键 | `#hotkey-modal` | 主进程注册 | `07-fx/06-hotkeys.js` + `HOTKEY_ACTIONS`（8 个动作） | 新增动作要同时接本地与全局 |

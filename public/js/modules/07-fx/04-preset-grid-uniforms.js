@@ -85,6 +85,7 @@ function setPreset(p, opts) {
   if (typeof applyMixerPresetNow === 'function') applyMixerPresetNow(prev, p);
   if (typeof applyNyanTownPresetNow === 'function') applyNyanTownPresetNow(prev, p);
   if (typeof applyGlitchArtPresetNow === 'function') applyGlitchArtPresetNow(prev, p);
+  if (typeof applyDvdPresetNow === 'function') applyDvdPresetNow(prev, p);
   uniforms.uPreset.value = p;
   refreshPresetGrid();
   if (typeof updateSonicSeriesControlVisibility === 'function') updateSonicSeriesControlVisibility();
