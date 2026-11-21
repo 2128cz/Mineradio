@@ -71,6 +71,7 @@ uniform float uImpact;
 uniform sampler2D uCover;
 uniform sampler2D uCoverBlur;
 uniform float uRefract;
+uniform vec3 uLightColor;
 uniform float uBrightness;
 
 #define PI 3.14159265359
@@ -268,22 +269,24 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     if (aspect > 1.) cuv.y = .5 + (cuv.y - .5) / aspect;
     else cuv.x = .5 + (cuv.x - .5) * aspect;
     vec2 refr = nor.xy * uRefract * .35;
-    float slope = length(vec2(fx, fy));
+    float slope = length(nor.xy);
     vec3 waterSharp = texture(uCover, clamp(cuv + refr, 0., 1.)).rgb;
     vec3 waterBlur = texture(uCoverBlur, clamp(cuv + refr * 1.25, 0., 1.)).rgb;
-    vec3 water = mix(waterSharp, waterBlur, smoothstep(.02, .35, slope));
+    vec3 water = mix(waterSharp, waterBlur, smoothstep(0., .15, slope));
 
-    // lighting (iq, Shadertoy Xds3zN)
-    vec3 lig = normalize(vec3(1, 2, 2.));
+    // lighting (iq, Shadertoy Xds3zN): fixed 60° elevation, 45° azimuth, lyric-coloured highlight
+    float el = radians(60.);
+    float az = radians(45.);
+    vec3 lig = normalize(vec3(cos(el) * cos(az), cos(el) * sin(az), sin(el)));
     vec3 rd = normalize(vec3(p, -10.));
     vec3 hal = normalize(lig - rd);
 
     float dif = clamp(dot(lig, nor), 0., 1.);
-    float spe = pow(clamp(dot(nor, hal), 0.0, 1.0), 16.0) * dif
+    float spe = pow(clamp(dot(nor, hal), 0.0, 1.0), 40.0) * dif
         * (0.04 + 0.96 * pow(clamp(1.0 + dot(hal, rd), 0.0, 1.0), 5.0));
 
     vec3 lin = vec3(.55 + .45 * dif) * uBrightness;
-    col.rgb = water * lin + vec3(.5, .62, .8) * spe * 1.4 * uBrightness;
+    col.rgb = water * lin + uLightColor * spe * 2.2 * uBrightness;
 
     // dvd logo — the beat and the wall impact pulse the mark itself; the background stays untouched.
     float logoPulse = 1. + uBeat * .16;
@@ -338,6 +341,7 @@ var dvdState = {
   coverBlurTex: null,
   coverSource: null,
   coverBlurPx: -1,
+  lightCss: '',
   frames: 0,
   size: null
 };
@@ -500,6 +504,34 @@ function dvdUpdateCoverTexture() {
   u.uCoverBlur.value = dvdState.coverBlurTex;
 }
 
+// The water's highlight uses the lyric text colour (the console's lyric palette primary), with
+// the light fixed at 60° elevation and 45° azimuth.
+function dvdLyricLightCss() {
+  if (typeof effectiveLyricPalette === 'function') {
+    try {
+      var pal = effectiveLyricPalette(null);
+      if (pal && pal.primary) return pal.primary;
+    } catch (_) {}
+  }
+  if (typeof fx !== 'undefined' && fx && fx.lyricColorPrimary) return fx.lyricColorPrimary;
+  return '#ffffff';
+}
+
+function dvdUpdateLightColor() {
+  var u = dvdState.mat && dvdState.mat.uniforms;
+  if (!u) return;
+  var css = dvdLyricLightCss();
+  if (css === dvdState.lightCss) return;
+  dvdState.lightCss = css;
+  var color = u.uLightColor.value;
+  try {
+    if (typeof color.setStyle === 'function') color.setStyle(css);
+    else color.set(css);
+  } catch (_) {
+    color.setRGB(1, 1, 1);
+  }
+}
+
 function dvdBuildScene() {
   if (dvdState.built) return true;
   if (typeof THREE === 'undefined') {
@@ -555,7 +587,8 @@ function dvdBuildScene() {
         uImpact: { value: 0 },
         uCover: { value: fallback },
         uCoverBlur: { value: fallback },
-        uRefract: { value: 0.5 }
+        uRefract: { value: 0.5 },
+        uLightColor: { value: new THREE.Color(1, 1, 1) }
       },
       glslVersion: THREE.GLSL3,
       vertexShader: DVD_QUAD_VS_GLSL3,
@@ -577,6 +610,7 @@ function dvdBuildScene() {
     dvdState.fallbackTex = fallback;
     dvdState.coverSource = null;
     dvdState.coverBlurPx = -1;
+    dvdState.lightCss = '';
     dvdState.built = true;
     dvdState.error = '';
     dvdState.travel = 0;
@@ -603,6 +637,7 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   if (!dvdState.built && !dvdBuildScene()) return false;
   dvdApplyKnobs();
   dvdUpdateCoverTexture();
+  dvdUpdateLightColor();
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
   dvdState.clock += step;
 
@@ -749,6 +784,7 @@ function dvdDisposeScene() {
   dvdState.coverBlurTex = null;
   dvdState.coverSource = null;
   dvdState.coverBlurPx = -1;
+  dvdState.lightCss = '';
   dvdState.clock = 0;
   dvdState.travel = 0;
   dvdState.dash = null;

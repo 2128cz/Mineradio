@@ -59,7 +59,7 @@ for (const [pattern, why] of [
   [/uniform float uRefract;/, 'the normal has to drive a refraction strength'],
   [/texture\(uCover, clamp\(cuv \+ refr/, 'the flat surface has to be the cover, refracted by the height'],
   [/texture\(uCoverBlur, clamp\(cuv \+ refr \* 1\.25/, 'ripples have to sample the blurred cover'],
-  [/smoothstep\(\.02, \.35, slope\)/, 'the steeper the slope the more of the blur is used'],
+  [/smoothstep\(0\., \.15, slope\)/, 'the normal tilt mixes in the blurred cover'],
   [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit loop has to be the knob, not a baked count'],
   [/float bf = uBump;/, 'the bump factor has to be the knob'],
   [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma curve has to survive'],
@@ -94,6 +94,12 @@ assert.match(moduleText, /uBeat\.value = dvdState\.beatPulse \* dvdParam\('beatP
 assert.match(moduleText, /uImpact\.value = dvdState\.impactPulse \* dvdParam\('impactFlash'\)/);
 assert.match(moduleText, /exp\(-hitAge \* uHeightDecay\)/);
 assert.match(moduleText, /function dvdUpdateCoverTexture\(/);
+assert.match(moduleText, /uniform vec3 uLightColor;/);
+assert.match(moduleText, /float el = radians\(60\.\);/);
+assert.match(moduleText, /float az = radians\(45\.\);/);
+assert.match(moduleText, /uLightColor \* spe/);
+assert.match(moduleText, /effectiveLyricPalette/);
+assert.match(moduleText, /function dvdUpdateLightColor\(/);
 assert.match(moduleText, /typeof coverTex !== 'undefined'/);
 assert.match(moduleText, /ctx\.filter = 'blur\(' \+ blurPx/);
 assert.match(moduleText, /u\.uCover\.value = cover;/);

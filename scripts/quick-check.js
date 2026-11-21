@@ -2711,7 +2711,11 @@ function runDvdStandbyPresetCheck() {
     [/uniform sampler2D uCover;/, 'the water surface has to sample the current cover'],
     [/uniform sampler2D uCoverBlur;/, 'the water surface needs a blurred cover'],
     [/texture\(uCover, clamp\(cuv \+ refr/, 'the flat surface has to be the cover, refracted by the height'],
-    [/smoothstep\(\.02, \.35, slope\)/, 'the steeper the slope the more of the blurred cover is used'],
+    [/uniform vec3 uLightColor;/, 'the water highlight needs a lyric-coloured light'],
+    [/float el = radians\(60\.\);/, 'the light elevation is fixed at 60 degrees'],
+    [/float az = radians\(45\.\);/, 'the light azimuth is fixed at 45 degrees'],
+    [/uLightColor \* spe/, 'the specular highlight has to use the lyric colour'],
+    [/smoothstep\(0\., \.15, slope\)/, 'the normal tilt mixes in the blurred cover'],
     [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a live beat can dash it'],
     [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
     [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
@@ -2736,6 +2740,9 @@ function runDvdStandbyPresetCheck() {
   if (/col\.rgb \+= uBeat \* vec3|col\.rgb \+= uImpact \* vec3/.test(text)) fail('the wall may not change with the beat');
   if (!/function dvdUpdateCoverTexture\(/.test(text) || !/typeof coverTex !== 'undefined'/.test(text) || !/ctx\.filter = 'blur\(' \+ blurPx/.test(text)) {
     fail('the cover and its blurred copy have to be built from the current song cover');
+  }
+  if (!/function dvdUpdateLightColor\(/.test(text) || !/effectiveLyricPalette/.test(text)) {
+    fail('the water light colour has to follow the lyric palette');
   }
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
