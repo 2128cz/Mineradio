@@ -19,7 +19,7 @@ assert.strictEqual(sandbox.DVD_PRESET_INDEX, 20, 'the preset index is 20 and is 
 
 const schema = sandbox.DVD_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 19, 'the reference constants and the water/beat controls live in DVD_SCHEMA');
+assert.ok(keys.length >= 21, 'the reference constants and the water/beat controls live in DVD_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);
@@ -41,6 +41,8 @@ assert.strictEqual(schema.dashPower.def, 3, 'the dash accelerates into the wall 
 assert.strictEqual(schema.heightDecay.def, 0.35, 'ripple relief fades with age');
 assert.strictEqual(schema.refract.def, 0.5, 'the cover refraction starts at half strength');
 assert.strictEqual(schema.coverBlur.def, 10, 'the blurred cover starts at 10 px');
+assert.strictEqual(schema.blurBase.def, 0.3, 'the whole cover starts with a light blur');
+assert.strictEqual(schema.blurWater.def, 0.9, 'ripples add the water blur');
 assert.strictEqual(schema.beatPunch.def, 0.7, 'a live beat pulses the logo and its halo');
 assert.strictEqual(schema.impactFlash.def, 0.8, 'a wall impact flashes the logo halo');
 
@@ -137,11 +139,18 @@ assert.match(moduleText, /Math\.abs\(dash\.sizeX - play\.x\)/);
     `the diagonal hits the y wall first on a 16:9 playable area (got ${diagonal})`);
 }
 
-// Lifecycle: a takeover owner with the whole picture, and a full dispose.
+assert.match(moduleText, /uniform float uBlurBase;/);
+assert.match(moduleText, /uniform float uBlurWater;/);
+assert.match(moduleText, /clamp\(uBlurBase \+ uBlurWater \* smoothstep\(0\., \.15, slope\), 0\., 1\.\)/);
+assert.match(moduleText, /function dvdRenderLyricsOverlay\(/);
+assert.match(moduleText, /dvdState\.lyricScene\.add\(group\)/);
+
+// Lifecycle: a takeover owner with the whole picture except the official lyric layers, and a full dispose.
 assert.match(moduleText, /id: 'dvd-standby'/);
-for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples']) {
   assert.ok(new RegExp(layer + ': true').test(moduleText), `the DVD preset must take ${layer} over`);
 }
+assert.match(moduleText, /lyricsParticles: false, stageLyrics: false/, 'the official default lyric layers stay alive');
 assert.match(moduleText, /function dvdDisposeScene\(/);
 assert.match(moduleText, /if \(dvdState\.noiseTex\) dvdState\.noiseTex\.dispose\(\);/);
 assert.match(moduleText, /function dvdRenderFrame\(/);

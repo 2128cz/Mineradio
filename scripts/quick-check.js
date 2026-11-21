@@ -2687,9 +2687,11 @@ function runDvdStandbyPresetCheck() {
   if (!/dvdRenderFrame\(\)/.test(loopText)) fail('the main loop must route the frame through the DVD pass');
   const ownerBlock = text.slice(text.indexOf('registerVisualTakeoverOwner({'));
   if (!/id: 'dvd-standby'/.test(ownerBlock)) fail('the DVD preset must register as a takeover owner');
-  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples', 'lyricsParticles', 'stageLyrics']) {
+  for (const layer of ['particles', 'bloom', 'float', 'backCover', 'starRiver', 'ripples']) {
     if (!new RegExp(layer + ': true').test(ownerBlock)) fail(`the DVD preset must take ${layer} over: the reference is the whole picture`);
   }
+  if (!/lyricsParticles: false, stageLyrics: false/.test(ownerBlock)) fail('the official default lyric layers have to keep running under the DVD water');
+  if (!/function dvdRenderLyricsOverlay\(/.test(text) || !/dvdState\.lyricScene\.add\(group\)/.test(text)) fail('the default stage lyrics have to be composited after the full-screen DVD pass');
   // The reference's components.
   for (const [pattern, why] of [
     [/float dvd\(vec2 p\)/, 'the DVD logo SDF has to survive'],
@@ -2710,6 +2712,9 @@ function runDvdStandbyPresetCheck() {
     [/float height = ripple \* blend \* exp\(-hitAge \* uHeightDecay\);/, 'the ripple height has to flatten with age'],
     [/uniform sampler2D uCover;/, 'the water surface has to sample the current cover'],
     [/uniform sampler2D uCoverBlur;/, 'the water surface needs a blurred cover'],
+    [/uniform float uBlurBase;/, 'the whole cover needs a base blur mix'],
+    [/uniform float uBlurWater;/, 'the ripples need their own blur mix'],
+    [/clamp\(uBlurBase \+ uBlurWater \* smoothstep\(0\., \.15, slope\), 0\., 1\.\)/, 'base and water blur have to mix together'],
     [/texture\(uCover, clamp\(cuv \+ refr/, 'the flat surface has to be the cover, refracted by the height'],
     [/uniform vec3 uLightColor;/, 'the water highlight needs a lyric-coloured light'],
     [/float el = radians\(60\.\);/, 'the light elevation is fixed at 60 degrees'],
@@ -2752,7 +2757,7 @@ function runDvdStandbyPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 19) fail('DVD_SCHEMA must expose the reference controls, the beat/ripple controls, the pulses, the height fade and the cover/refraction controls');
+  if (schema.size < 21) fail('DVD_SCHEMA must expose the reference controls, the beat/ripple controls, the pulses, the height fade, the cover/refraction and the two blur mixes');
   for (const [key, spec] of schema) {
     const id = 'fx-dvd' + key;
     if (spec.kind === 'bool') {

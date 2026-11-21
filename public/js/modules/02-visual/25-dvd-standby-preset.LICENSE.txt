@@ -47,7 +47,12 @@ CHANGES FROM THE SUPPLIED FRAGMENT
   and the normal tilt mixes in a blurred copy of the cover (a 256×256 canvas rebuilt from the cover
   when it or the blur radius changes). The reference's `spectrum`/`pal` palette and its inverted
   colour pass are therefore not used. The water highlight is lit by the lyric palette's primary
-  colour, from a fixed 60° elevation and 45° azimuth. Knobs: `refract`, `coverBlur`.
+  colour, from a fixed 60° elevation and 45° azimuth. Knobs: `refract`, `coverBlur`, `blurBase`
+  (whole-cover blur mix) and `blurWater` (normal-driven ripple blur mix).
+- The official default stage lyrics are not suppressed: after the full-screen DVD pass the app's
+  stage lyric group is rendered with the main camera over the water, so the console's lyric text,
+  translation and animation keep working. The app's other particle/background layers are still
+  suppressed.
 - The reference's hardcoded direction is `uAngle` (default 45°, identical on 16:9), the logo
   scale, hit count, ripple range/frequency/life, bump, dither, gamma and a lighting multiplier are
   knobs; their defaults are the reference values except the history/life noted above.

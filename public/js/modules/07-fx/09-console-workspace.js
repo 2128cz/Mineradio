@@ -401,6 +401,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-dvdheightDecay', '涟漪高度衰减', 'DVD 待机 涟漪 高度 衰减 变平'),
         fxConsoleItem('fx-dvdrefract', '封面折射强度', 'DVD 待机 封面 折射 水面'),
         fxConsoleItem('fx-dvdcoverBlur', '封面模糊', 'DVD 待机 封面 模糊 采样'),
+        fxConsoleItem('fx-dvdblurBase', '基础模糊混合', 'DVD 待机 封面 基础 模糊 混合'),
+        fxConsoleItem('fx-dvdblurWater', '水波模糊混合', 'DVD 待机 水波 模糊 混合'),
         fxConsoleItem('fx-dvdbump', '凸起强度', 'DVD 待机 凸起 法线 立体'),
         fxConsoleItem('fx-dvddither', '抖动强度', 'DVD 待机 抖动 噪点'),
         fxConsoleItem('fx-dvdgamma', '伽马', 'DVD 待机 伽马 亮度'),

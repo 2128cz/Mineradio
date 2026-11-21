@@ -32,6 +32,8 @@ var DVD_SCHEMA = {
   heightDecay: { def: 0.35, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   refract: { def: 0.5, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
   coverBlur: { def: 10, min: 0, max: 30, kind: 'unit', rebuild: 'live' },
+  blurBase: { def: 0.3, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
+  blurWater: { def: 0.9, min: 0, max: 1, kind: 'ratio', rebuild: 'live' },
   bump: { def: 0.1, min: 0.02, max: 0.6, kind: 'ratio', rebuild: 'live' },
   dither: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gamma: { def: 1.5, min: 0.8, max: 2.5, kind: 'ratio', rebuild: 'live' },
@@ -71,6 +73,8 @@ uniform float uImpact;
 uniform sampler2D uCover;
 uniform sampler2D uCoverBlur;
 uniform float uRefract;
+uniform float uBlurBase;
+uniform float uBlurWater;
 uniform vec3 uLightColor;
 uniform float uBrightness;
 
@@ -272,7 +276,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float slope = length(nor.xy);
     vec3 waterSharp = texture(uCover, clamp(cuv + refr, 0., 1.)).rgb;
     vec3 waterBlur = texture(uCoverBlur, clamp(cuv + refr * 1.25, 0., 1.)).rgb;
-    vec3 water = mix(waterSharp, waterBlur, smoothstep(0., .15, slope));
+    vec3 water = mix(waterSharp, waterBlur, clamp(uBlurBase + uBlurWater * smoothstep(0., .15, slope), 0., 1.));
 
     // lighting (iq, Shadertoy Xds3zN): fixed 60° elevation, 45° azimuth, lyric-coloured highlight
     float el = radians(60.);
@@ -342,6 +346,7 @@ var dvdState = {
   coverSource: null,
   coverBlurPx: -1,
   lightCss: '',
+  lyricScene: null,
   frames: 0,
   size: null
 };
@@ -459,6 +464,8 @@ function dvdApplyKnobs() {
   u.uRippleLife.value = dvdParam('rippleLife');
   u.uHeightDecay.value = dvdParam('heightDecay');
   u.uRefract.value = dvdParam('refract');
+  u.uBlurBase.value = dvdParam('blurBase');
+  u.uBlurWater.value = dvdParam('blurWater');
 }
 
 function dvdUpdateCoverTexture() {
@@ -588,6 +595,8 @@ function dvdBuildScene() {
         uCover: { value: fallback },
         uCoverBlur: { value: fallback },
         uRefract: { value: 0.5 },
+        uBlurBase: { value: 0.3 },
+        uBlurWater: { value: 0.9 },
         uLightColor: { value: new THREE.Color(1, 1, 1) }
       },
       glslVersion: THREE.GLSL3,
@@ -743,6 +752,21 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   return true;
 }
 
+function dvdRenderLyricsOverlay() {
+  var group = (typeof stageLyrics !== 'undefined' && stageLyrics) ? stageLyrics.group : null;
+  if (!group || !group.visible || typeof camera === 'undefined' || !camera) return false;
+  if (!dvdState.lyricScene) dvdState.lyricScene = new THREE.Scene();
+  var parent = group.parent;
+  dvdState.lyricScene.add(group);
+  try {
+    renderer.autoClear = false;
+    renderer.render(dvdState.lyricScene, camera);
+    return true;
+  } finally {
+    if (parent) parent.add(group);
+  }
+}
+
 function dvdRenderFrame() {
   if (!dvdPresetIsActive()) return false;
   if (typeof renderer === 'undefined' || !renderer) return false;
@@ -757,6 +781,7 @@ function dvdRenderFrame() {
     renderer.autoClear = false;
     renderer.setRenderTarget(null);
     renderer.render(dvdState.pass.scene, dvdState.pass.camera);
+    dvdRenderLyricsOverlay();
     return true;
   } catch (err) {
     dvdState.error = String(err && (err.message || err)).slice(0, 200);
@@ -785,6 +810,10 @@ function dvdDisposeScene() {
   dvdState.coverSource = null;
   dvdState.coverBlurPx = -1;
   dvdState.lightCss = '';
+  if (dvdState.lyricScene) {
+    dvdState.lyricScene.clear();
+    dvdState.lyricScene = null;
+  }
   dvdState.clock = 0;
   dvdState.travel = 0;
   dvdState.dash = null;
@@ -836,7 +865,7 @@ if (typeof registerVisualTakeoverOwner === 'function') {
     isActive: dvdPresetIsActive,
     suppresses: {
       particles: true, bloom: true, float: true, backCover: true,
-      starRiver: true, ripples: true, lyricsParticles: true, stageLyrics: true
+      starRiver: true, ripples: true, lyricsParticles: false, stageLyrics: false
     }
   });
 }
