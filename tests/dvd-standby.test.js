@@ -19,7 +19,7 @@ assert.strictEqual(sandbox.DVD_PRESET_INDEX, 20, 'the preset index is 20 and is 
 
 const schema = sandbox.DVD_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 14, 'the reference constants and the beat/ripple controls live in DVD_SCHEMA');
+assert.ok(keys.length >= 16, 'the reference constants and the beat/ripple controls live in DVD_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);
@@ -38,6 +38,8 @@ assert.strictEqual(schema.gamma.def, 1.5, 'the reference gamma is pow(1/1.5)');
 assert.strictEqual(schema.beatDash.def, 1, 'the beat dash is on by default');
 assert.strictEqual(schema.dashBeats.def, 0.55, 'the dash lasts a little over half a beat');
 assert.strictEqual(schema.dashPower.def, 3, 'the dash accelerates into the wall (exponent 3)');
+assert.strictEqual(schema.beatPunch.def, 0.7, 'a live beat pulses the logo and its halo');
+assert.strictEqual(schema.impactFlash.def, 0.8, 'a wall impact flashes the rings and the wall');
 
 // The picture: the reference's SDFs, cell walk, reflections and surface treatment survive.
 for (const [pattern, why] of [
@@ -69,11 +71,19 @@ assert.ok(!/dir \* t \/ 1\.5/.test(moduleText), 'the reference time path must be
 assert.match(moduleText, /vec2 baseDir = normalize\(vec2\(9\., 16\.\) \* screenSize\);/);
 assert.match(moduleText, /vec2 dir = normalize\(mat2\(cos\(a\), -sin\(a\), sin\(a\), cos\(a\)\) \* baseDir\);/);
 assert.match(moduleText, /float logoScale = \.1 \* uLogoScale;/);
-assert.match(moduleText, /float wavefront = d - hitAge \* uRippleRange;/);
+assert.match(moduleText, /float wavefront = d - hitAge \* uRippleRange/);
 assert.ok(!/distance\(hitPos, move\)/.test(moduleText), 'the ripple age must not be the distance the logo has travelled');
 assert.match(moduleText, /dvdState\.rippleClock \+= step \* cellSpeed;/);
 assert.match(moduleText, /dvdState\.rippleClock - dvdState\.hitBirths\[ai\]/);
 assert.match(moduleText, /dvdState\.mat\.uniforms\.uHitAges\.value/);
+
+assert.match(moduleText, /uniform float uBeat;/);
+assert.match(moduleText, /uniform float uImpact;/);
+assert.match(moduleText, /float logoPulse = 1\. \+ uBeat \* \.16;/);
+assert.match(moduleText, /dvdState\.beatPulse = 1;/);
+assert.match(moduleText, /dvdState\.impactPulse = 1;/);
+assert.match(moduleText, /uBeat\.value = dvdState\.beatPulse \* dvdParam\('beatPunch'\)/);
+assert.match(moduleText, /uImpact\.value = dvdState\.impactPulse \* dvdParam\('impactFlash'\)/);
 
 // Beat dash: live onset only (no map), and the next wall is solved from the live playable size.
 assert.match(moduleText, /typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag/);

@@ -2703,6 +2703,10 @@ function runDvdStandbyPresetCheck() {
     [/float blend = smoothstep\(uRippleLife, 0\., hitAge\);/, 'ripple life has to be a knob so old rings survive more than one bounce'],
     [/uniform float uHitAges\[16\];/, 'each hit needs an independent ripple age so a beat dash cannot speed up the wavefronts'],
     [/float hitAge = uHitAges\[i\];/, 'the ring age must come from the JS ripple clock, not the logo distance'],
+    [/uniform float uBeat;/, 'the shader needs a live beat pulse'],
+    [/uniform float uImpact;/, 'the shader needs a wall-impact flash'],
+    [/float logoPulse = 1\. \+ uBeat \* \.16;/, 'the logo has to pulse on the beat'],
+    [/uBeat \* vec3\(\.03, \.05, \.08\)/, 'the wall has to lift with the beat'],
     [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a live beat can dash it'],
     [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
     [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
@@ -2718,6 +2722,10 @@ function runDvdStandbyPresetCheck() {
   if (!/gap \* dvdParam\('dashBeats'\)/.test(text)) fail('the dash length has to follow the live beat gap');
   if (!/dvdState\.rippleClock \+= step \* cellSpeed;/.test(text)) fail('ripples need their own clock at the base speed');
   if (/distance\(hitPos, move\)/.test(text)) fail('the ripple age must not be the distance the logo travelled, or a dash would accelerate it');
+  if (!/dvdState\.beatPulse = 1;/.test(text) || !/dvdState\.impactPulse = 1;/.test(text)) fail('a beat and a wall impact must each start their own visual pulse');
+  if (!/uBeat\.value = dvdState\.beatPulse \* dvdParam\('beatPunch'\)/.test(text) || !/uImpact\.value = dvdState\.impactPulse \* dvdParam\('impactFlash'\)/.test(text)) {
+    fail('the beat/impact pulses have to reach the shader through their knobs');
+  }
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
   const schemaBlock = (text.match(/var DVD_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
@@ -2726,7 +2734,7 @@ function runDvdStandbyPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 14) fail('DVD_SCHEMA must expose the ten reference controls plus the beat dash and ripple-life controls');
+  if (schema.size < 16) fail('DVD_SCHEMA must expose the reference controls, the beat/ripple controls and the beat pulse/flash');
   for (const [key, spec] of schema) {
     const id = 'fx-dvd' + key;
     if (spec.kind === 'bool') {
