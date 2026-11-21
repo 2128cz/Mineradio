@@ -2700,6 +2700,8 @@ function runDvdStandbyPresetCheck() {
     [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit count has to be a uniform loop'],
     [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma has to survive'],
     [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
+    [/float blend = smoothstep\(uRippleLife, 0\., hitDist\);/, 'ripple life has to be a knob so old rings survive more than one bounce'],
+    [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a live beat can dash it'],
     [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
     [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
     [/fragColor = vec4\(col\.rgb, 1\.0\);/, 'the full-screen pass must be opaque'],
@@ -2707,6 +2709,11 @@ function runDvdStandbyPresetCheck() {
   ]) {
     if (!pattern.test(text)) fail(why);
   }
+  if (!/typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag/.test(text)) fail('the dash has to use the live onset flag');
+  if (/currentBeatMap|cameraBeats|gridStep/.test(text)) fail('the dash must not depend on a pre-analysed beat map');
+  if (!/function dvdNextBoundaryTravel\(/.test(text)) fail('a live resize needs the boundary solver in JS');
+  if (!/Math\.pow\(progress, dvdParam\('dashPower'\)\)/.test(text)) fail('the dash has to accelerate from slow to fast');
+  if (!/gap \* dvdParam\('dashBeats'\)/.test(text)) fail('the dash length has to follow the live beat gap');
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
   const schemaBlock = (text.match(/var DVD_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
@@ -2715,9 +2722,17 @@ function runDvdStandbyPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 10) fail('DVD_SCHEMA must expose at least the ten reference controls');
+  if (schema.size < 14) fail('DVD_SCHEMA must expose the ten reference controls plus the beat dash and ripple-life controls');
   for (const [key, spec] of schema) {
     const id = 'fx-dvd' + key;
+    if (spec.kind === 'bool') {
+      const toggle = 't-dvd' + key;
+      if (!htmlText.includes('id="' + toggle + '"') || !htmlText.includes(`toggleDvdTuning('${key}')`)) {
+        fail(`the toggle ${key} needs a t-${id} switch in index.html`);
+      }
+      if (!consoleText.includes(`fxConsoleItem('${toggle}'`)) fail(`the toggle ${key} must be listed in the console DVD group`);
+      continue;
+    }
     const at = htmlText.indexOf('id="' + id + '"');
     if (at < 0) { fail(`the knob ${key} has no slider (${id}) in index.html`); continue; }
     const input = htmlText.slice(at, htmlText.indexOf('>', at));
@@ -2733,7 +2748,7 @@ function runDvdStandbyPresetCheck() {
   }
   if (!/key: 'dvd'/.test(consoleText) || !/title: 'DVD待机'/.test(consoleText)) fail('the visual console needs a DVD待机 group in the 动效 tab');
   if (!/presets: \[DVD_PRESET_INDEX\]/.test(consoleText)) fail('the DVD group has to carry presets: [DVD_PRESET_INDEX]');
-  if (!/mineradio-dvd-standby-tuning-v1/.test(tuningText) || !/function bindDvdTuningResetButtons\(/.test(tuningText)) {
+  if (!/mineradio-dvd-standby-tuning-v2/.test(tuningText) || !/function bindDvdTuningResetButtons\(/.test(tuningText)) {
     fail('the DVD knobs need their own store and one reset button per row');
   }
   for (const [body, name] of [[licenseText, 'LICENSE sidecar'], [noticeText, 'NOTICE.md'], [portsText, 'THIRD_PARTY_PORTS.md']]) {

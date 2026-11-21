@@ -4,7 +4,7 @@
 // Defaults live in DVD_SCHEMA (02-visual/25-dvd-standby-preset.js); this file is the store and the
 // console bindings. These values only mean something while the preset is on.
 
-var DVD_STANDBY_TUNING_STORE_KEY = 'mineradio-dvd-standby-tuning-v1';
+var DVD_STANDBY_TUNING_STORE_KEY = 'mineradio-dvd-standby-tuning-v2';
 
 function dvdTuningClamp(key, value) {
   var spec = DVD_SCHEMA[key];
@@ -33,15 +33,23 @@ function dvdStandbyTuningFormat(key) {
   var spec = DVD_SCHEMA[key];
   if (!spec) return '';
   var value = dvdStandbyTuning[key];
+  if (spec.kind === 'bool') return value > 0 ? '开' : '关';
   if (spec.kind === 'count') return String(Math.round(value));
   if (spec.kind === 'sec') return Math.round(value * 10) / 10 + 's';
   if (key === 'angle') return Math.round(value) + '°';
-  if (key === 'gamma' || key === 'bump') return String(Math.round(value * 100) / 100);
+  if (key === 'gamma' || key === 'bump' || key === 'dashPower') return String(Math.round(value * 100) / 100);
+  if (key === 'rippleLife') return String(Math.round(value));
   return Math.round(value * 100) + '%';
 }
 
 function dvdStandbyTuningSyncInputs() {
   Object.keys(DVD_SCHEMA).forEach(function (key) {
+    var spec = DVD_SCHEMA[key];
+    if (spec.kind === 'bool') {
+      var toggle = document.getElementById('t-dvd' + key);
+      if (toggle && toggle.classList) toggle.classList.toggle('on', dvdStandbyTuning[key] > 0);
+      return;
+    }
     var input = document.getElementById('fx-dvd' + key);
     if (!input) return;
     input.value = String(dvdStandbyTuning[key]);
@@ -76,9 +84,16 @@ function resetDvdTuningValue(id, key, btn) {
   return true;
 }
 
+function toggleDvdTuning(key) {
+  var spec = DVD_SCHEMA[key];
+  if (!spec || spec.kind !== 'bool') return false;
+  return setDvdTuning(key, dvdStandbyTuning[key] > 0 ? 0 : 1);
+}
+
 function bindDvdTuningResetButtons() {
   if (typeof ensureFxSliderResetButton !== 'function') return;
   Object.keys(DVD_SCHEMA).forEach(function (key) {
+    if (DVD_SCHEMA[key].kind === 'bool') return;
     ensureFxSliderResetButton('fx-dvd' + key, key, resetDvdTuningValue);
   });
 }
