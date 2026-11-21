@@ -2703,7 +2703,7 @@ function runDvdStandbyPresetCheck() {
     [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma has to survive'],
     [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
     [/float blend = smoothstep\(uRippleLife, 0\., hitAge\);/, 'ripple life has to be a knob so old rings survive more than one bounce'],
-    [/uniform float uHitAges\[16\];/, 'each hit needs an independent ripple age so a beat dash cannot speed up the wavefronts'],
+    [/uniform float uHitAges\[32\];/, 'each hit needs an independent ripple age so a beat dash cannot speed up the wavefronts'],
     [/float hitAge = uHitAges\[i\];/, 'the ring age must come from the JS ripple clock, not the logo distance'],
     [/uniform float uBeat;/, 'the shader needs a live beat pulse'],
     [/uniform float uImpact;/, 'the shader needs an impact pulse'],

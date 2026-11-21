@@ -25,7 +25,7 @@ var DVD_SCHEMA = {
   speed: { def: 1, min: 0.1, max: 3, kind: 'ratio', rebuild: 'live' },
   angle: { def: 45, min: 5, max: 85, kind: 'unit', rebuild: 'live' },
   logoScale: { def: 1, min: 0.4, max: 2.5, kind: 'ratio', rebuild: 'live' },
-  reflections: { def: 10, min: 1, max: 16, kind: 'count', rebuild: 'live' },
+  reflections: { def: 12, min: 1, max: 24, kind: 'count', rebuild: 'live' },
   rippleRange: { def: 1.5, min: 0, max: 4, kind: 'ratio', rebuild: 'live' },
   rippleFreq: { def: 2, min: 0.2, max: 5, kind: 'ratio', rebuild: 'live' },
   rippleLife: { def: 12, min: 3, max: 40, kind: 'unit', rebuild: 'live' },
@@ -67,7 +67,7 @@ uniform float uGamma;
 uniform float uTravel;
 uniform float uRippleLife;
 uniform float uHeightDecay;
-uniform float uHitAges[16];
+uniform float uHitAges[32];
 uniform float uBeat;
 uniform float uImpact;
 uniform sampler2D uCover;
@@ -565,7 +565,7 @@ function dvdBuildScene() {
     noiseTex.needsUpdate = true;
 
     var geometry = new THREE.PlaneGeometry(2, 2);
-    var hitAges = new Float32Array(16);
+    var hitAges = new Float32Array(32);
     hitAges.fill(99);
     var fallback = new THREE.DataTexture(new Uint8Array([6, 8, 12, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
     fallback.needsUpdate = true;
@@ -727,13 +727,13 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
       dvdState.hitBirths.unshift(dvdState.rippleClock);
       dvdState.impactPulse = 1;
       dvdState.impactCount++;
-      if (dvdState.hitBirths.length > 16) dvdState.hitBirths.length = 16;
+      if (dvdState.hitBirths.length > 32) dvdState.hitBirths.length = 32;
       cursor = nextHit;
     }
   }
   dvdState.lastTravel = dvdState.travel;
   var ages = dvdState.mat.uniforms.uHitAges.value;
-  for (var ai = 0; ai < 16; ai++) {
+  for (var ai = 0; ai < 32; ai++) {
     ages[ai] = ai < dvdState.hitBirths.length
       ? Math.max(0, dvdState.rippleClock - dvdState.hitBirths[ai])
       : 99;

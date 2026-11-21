@@ -28,7 +28,7 @@ for (const key of keys) {
 assert.strictEqual(schema.speed.def, 1, 'the reference time is 1x');
 assert.strictEqual(schema.angle.def, 45, 'the reference direction is 45 degrees on a 16:9 screen');
 assert.strictEqual(schema.logoScale.def, 1, 'the reference logo scale is 1x');
-assert.strictEqual(schema.reflections.def, 10, 'the history is ten hits by default so old ripples survive');
+assert.strictEqual(schema.reflections.def, 12, "the history is twelve hits by default so old ripples survive");
 assert.strictEqual(schema.rippleRange.def, 1.5, 'the reference wavefront is hitDist * 1.5');
 assert.strictEqual(schema.rippleFreq.def, 2, 'the reference ripple frequency is 2');
 assert.strictEqual(schema.rippleLife.def, 12, 'ripples fade over 12 cell units, not the reference 3');
@@ -67,7 +67,7 @@ for (const [pattern, why] of [
   [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma curve has to survive'],
   [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
   [/float blend = smoothstep\(uRippleLife, 0\., hitAge\);/, 'the ripple life has to be the knob, not the reference 3'],
-  [/uniform float uHitAges\[16\];/, 'the shader needs one independent age per walk hit'],
+  [/uniform float uHitAges\[32\];/, 'the shader needs one independent age per walk hit'],
   [/float hitAge = uHitAges\[i\];/, 'the ring age must come from the ripple clock, not the logo distance'],
   [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a beat can dash it'],
   [/fragColor = vec4\(col\.rgb, 1\.0\);/, 'the full-screen pass has to be opaque'],
