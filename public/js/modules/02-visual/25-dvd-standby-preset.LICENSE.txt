@@ -17,9 +17,10 @@ DVD_SOURCE_FS (GLSL3): the DVD-logo SDF (dvd / dvd_v / dvd_c / dvd_d), the bounc
 curve.
 
 Constants kept from the reference: the logo size 0.1, the 9:16 direction (45° on a 16:9 screen),
-the hit loop's 5 reflections, ripple centre at the last cell boundary, frequency 2, bump 0.1,
-dither 0.005, gamma 1/1.5, the lighting coefficients (5×diffuse + 0.2, 5×specular) and the
-mix(1, spec, pow(blend, 4)) curve.
+ripple centre at the last cell boundary, frequency 2, bump 0.1, dither 0.005, gamma 1/1.5 and the
+lighting coefficients (5×diffuse + 0.2, 5×specular). Two defaults differ: the hit history is 10
+instead of 5 and the ripple fade distance is 12 instead of 3, because the reference's rings
+disappeared after one bounce; both are knobs.
 
 CHANGES FROM THE SUPPLIED FRAGMENT
 ----------------------------------
@@ -28,9 +29,14 @@ CHANGES FROM THE SUPPLIED FRAGMENT
 - The noise channel's `iChannelResolution[0]` is our generated 512×512 RGBA noise texture
   (`uNoiseRes` carries its size); it wraps, so the supplied `fragCoord / iChannelResolution`
   lookup is unchanged.
+- The reference's `move = dir * iTime / 1.5` becomes `move = dir * uTravel`. The JS side advances
+  `uTravel` continuously or, on a live beat onset, dashes it to the next cell boundary with an
+  ease-in curve (`dashBeats`, `dashPower`). The dash uses only the live beat flag and the live beat
+  gap, never a pre-analysed beat map, and resolves the next wall from the current playable
+  rectangle, so resizing the logo or the window re-aims the dash.
 - The reference's hardcoded direction is `uAngle` (default 45°, identical on 16:9), the logo
-  scale, hit count, ripple range/frequency, bump, dither, gamma and a lighting multiplier are
-  knobs whose defaults equal the reference values.
+  scale, hit count, ripple range/frequency/life, bump, dither, gamma and a lighting multiplier are
+  knobs; their defaults are the reference values except the history/life noted above.
 - The reference is opaque to Shadertoy; our fragment forces alpha 1 so a full-screen pass cannot
   punch a translucent hole in the app's canvas.
 - The app's particles and stage lyrics are suppressed: the reference composition is the whole

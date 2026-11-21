@@ -390,17 +390,21 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('fx-glitchaudioRipple', '鼓点增涟漪', '故障 艺术 鼓点 涟漪'),
         fxConsoleItem({ selector: '.fx-glitch-tuning .fx-actions' }, '恢复故障艺术默认', '故障 艺术 重置 还原 默认'),
       ] },
-      { key: 'dvd', title: 'DVD待机', presets: [DVD_PRESET_INDEX], hint: '原参考的单 Pass：DVD 标志撞角反弹、镜面瓷砖反射、波前涟漪与立体光照；不叠加 app 粒子与歌词', items: [
+      { key: 'dvd', title: 'DVD待机', presets: [DVD_PRESET_INDEX], hint: '原参考的单 Pass：DVD 标志撞角反弹、镜面瓷砖反射、波前涟漪与立体光照；鼓点到来时按指数曲线冲刺下一面墙，涟漪寿命可调；不叠加 app 粒子与歌词', items: [
         fxConsoleItem('fx-dvdspeed', '反弹速度', 'DVD 待机 反弹 速度 时间'),
         fxConsoleItem('fx-dvdangle', '反弹角度', 'DVD 待机 反弹 角度 方向'),
         fxConsoleItem('fx-dvdlogoScale', '标志大小', 'DVD 待机 标志 大小 缩放'),
         fxConsoleItem('fx-dvdreflections', '反射次数', 'DVD 待机 反射 次数 瓷砖'),
         fxConsoleItem('fx-dvdrippleRange', '涟漪范围', 'DVD 待机 涟漪 范围 波前'),
         fxConsoleItem('fx-dvdrippleFreq', '涟漪频率', 'DVD 待机 涟漪 频率'),
+        fxConsoleItem('fx-dvdrippleLife', '涟漪寿命', 'DVD 待机 涟漪 寿命 保留'),
         fxConsoleItem('fx-dvdbump', '凸起强度', 'DVD 待机 凸起 法线 立体'),
         fxConsoleItem('fx-dvddither', '抖动强度', 'DVD 待机 抖动 噪点'),
         fxConsoleItem('fx-dvdgamma', '伽马', 'DVD 待机 伽马 亮度'),
         fxConsoleItem('fx-dvdbrightness', '光照亮度', 'DVD 待机 光照 亮度'),
+        fxConsoleItem('t-dvdbeatDash', '鼓点冲刺', 'DVD 待机 鼓点 冲刺 节拍'),
+        fxConsoleItem('fx-dvddashBeats', '冲刺拍长', 'DVD 待机 冲刺 拍长 时长'),
+        fxConsoleItem('fx-dvddashPower', '冲刺指数', 'DVD 待机 冲刺 指数 加速'),
         fxConsoleItem({ selector: '.fx-dvd-tuning .fx-actions' }, '恢复DVD待机默认', 'DVD 待机 重置 还原 默认'),
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [
