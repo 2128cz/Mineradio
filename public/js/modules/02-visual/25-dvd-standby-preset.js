@@ -34,7 +34,9 @@ var DVD_SCHEMA = {
   brightness: { def: 1, min: 0.3, max: 2, kind: 'ratio', rebuild: 'live' },
   beatDash: { def: 1, min: 0, max: 1, kind: 'bool', rebuild: 'live' },
   dashBeats: { def: 0.55, min: 0.1, max: 1, kind: 'ratio', rebuild: 'live' },
-  dashPower: { def: 3, min: 1, max: 5, kind: 'ratio', rebuild: 'live' }
+  dashPower: { def: 3, min: 1, max: 5, kind: 'ratio', rebuild: 'live' },
+  beatPunch: { def: 0.7, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  impactFlash: { def: 0.8, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' }
 };
 
 var DVD_QUAD_VS_GLSL3 = 'void main() { gl_Position = vec4(position.xy, 0.999999, 1.0); }';
@@ -59,6 +61,8 @@ uniform float uGamma;
 uniform float uTravel;
 uniform float uRippleLife;
 uniform float uHitAges[16];
+uniform float uBeat;
+uniform float uImpact;
 uniform float uBrightness;
 
 #define PI 3.14159265359
@@ -144,7 +148,7 @@ vec3 spectrum(float n) {
 
 void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     float d = length(p - hitPos);
-    float wavefront = d - hitAge * uRippleRange;
+    float wavefront = d - hitAge * uRippleRange * (1. + uBeat * .15);
     float freq = uRippleFreq;
 
     vec3 spec = (1. - spectrum(-wavefront * freq + hitAge * freq));
@@ -155,6 +159,7 @@ void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     blend *= rangec(-4., .0, wavefront);
 
     col.rgb *= mix(vec3(1), spec, pow(blend, 4.));
+    col.rgb += vec3(.8, .9, 1.) * pow(blend, 4.) * uImpact * .22;
     float height = (ripple * blend);
     col.a -= height * 1.9 / freq;
 }
@@ -278,10 +283,15 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     col.rgb = col.rgb * lin;
     col.rgb += 5. * spe * uBrightness;
 
-    // dvd logo
-    float d = dvd((p - move) / logoScale);
-    d /= fwidth(d);
+    // dvd logo — a live beat pulses the mark and leaves a short halo; the wall impact adds a flash.
+    float logoPulse = 1. + uBeat * .16;
+    float dRaw = dvd((p - move) / (logoScale * logoPulse));
+    float d = dRaw / fwidth(dRaw);
     d = 1. - clamp(d, 0., 1.);
+    float halo = exp(-max(dRaw, 0.) * 14.) * uBeat * .55;
+    col.rgb += halo * vec3(.35, .8, 1.);
+    col.rgb += uBeat * vec3(.03, .05, .08);
+    col.rgb += uImpact * vec3(.10, .14, .20);
     col.rgb = mix(col.rgb, vec3(1), d);
 
     // banding be gone
@@ -318,6 +328,11 @@ var dvdState = {
   hitBirths: [],
   lastTravel: 0,
   pathKey: '',
+  beatPulse: 0,
+  impactPulse: 0,
+  beatCount: 0,
+  dashCount: 0,
+  impactCount: 0,
   frames: 0,
   size: null
 };
@@ -482,7 +497,9 @@ function dvdBuildScene() {
         uBrightness: { value: 1 },
         uTravel: { value: 0 },
         uRippleLife: { value: 12 },
-        uHitAges: { value: hitAges }
+        uHitAges: { value: hitAges },
+        uBeat: { value: 0 },
+        uImpact: { value: 0 }
       },
       glslVersion: THREE.GLSL3,
       vertexShader: DVD_QUAD_VS_GLSL3,
@@ -509,6 +526,11 @@ function dvdBuildScene() {
     dvdState.hitBirths = [];
     dvdState.lastTravel = 0;
     dvdState.pathKey = '';
+    dvdState.beatPulse = 0;
+    dvdState.impactPulse = 0;
+    dvdState.beatCount = 0;
+    dvdState.dashCount = 0;
+    dvdState.impactCount = 0;
     dvdApplyKnobs();
     return true;
   } catch (err) {
@@ -545,6 +567,10 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   var gap = (typeof rtBeat !== 'undefined' && rtBeat && Number(rtBeat.tempoGap) > 0.15 && Number(rtBeat.tempoGap) <= 2)
     ? Number(rtBeat.tempoGap)
     : 0.5;
+  if (beatHit) {
+    dvdState.beatPulse = 1;
+    dvdState.beatCount++;
+  }
 
   if (beatDash && beatHit && !dvdState.dash) {
     var beatTarget = dvdNextBoundaryTravel(dvdState.travel + 1e-4, dir.x, dir.y, play.x, play.y);
@@ -554,6 +580,7 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
         from: dvdState.travel, to: beatTarget, elapsed: 0, duration: beatDuration,
         dirX: dir.x, dirY: dir.y, sizeX: play.x, sizeY: play.y
       };
+      dvdState.dashCount++;
     }
   }
 
@@ -594,6 +621,8 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
       var nextHit = dvdNextBoundaryTravel(cursor + 1e-6, dir.x, dir.y, play.x, play.y);
       if (!isFinite(nextHit) || nextHit > dvdState.travel + 1e-6) break;
       dvdState.hitBirths.unshift(dvdState.rippleClock);
+      dvdState.impactPulse = 1;
+      dvdState.impactCount++;
       if (dvdState.hitBirths.length > 16) dvdState.hitBirths.length = 16;
       cursor = nextHit;
     }
@@ -605,6 +634,11 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
       ? Math.max(0, dvdState.rippleClock - dvdState.hitBirths[ai])
       : 99;
   }
+
+  dvdState.beatPulse *= Math.exp(-step * 9);
+  dvdState.impactPulse *= Math.exp(-step * 18);
+  dvdState.mat.uniforms.uBeat.value = dvdState.beatPulse * dvdParam('beatPunch');
+  dvdState.mat.uniforms.uImpact.value = dvdState.impactPulse * dvdParam('impactFlash');
 
   dvdState.mat.uniforms.iTime.value = dvdState.clock;
   dvdState.mat.uniforms.iFrame.value = dvdState.frames | 0;
@@ -655,6 +689,11 @@ function dvdDisposeScene() {
   dvdState.hitBirths = [];
   dvdState.lastTravel = 0;
   dvdState.pathKey = '';
+  dvdState.beatPulse = 0;
+  dvdState.impactPulse = 0;
+  dvdState.beatCount = 0;
+  dvdState.dashCount = 0;
+  dvdState.impactCount = 0;
   dvdState.frames = 0;
 }
 
@@ -676,6 +715,13 @@ function dvdStandbyStatus() {
     built: dvdState.built,
     frames: dvdState.frames,
     clock: dvdState.clock,
+    travel: dvdState.travel,
+    rippleClock: dvdState.rippleClock,
+    beats: dvdState.beatCount,
+    dashes: dvdState.dashCount,
+    impacts: dvdState.impactCount,
+    beatPulse: dvdState.beatPulse,
+    impactPulse: dvdState.impactPulse,
     error: dvdState.error
   };
 }

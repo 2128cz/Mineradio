@@ -405,6 +405,8 @@ var FX_CONSOLE_LAYOUT = [
         fxConsoleItem('t-dvdbeatDash', '鼓点冲刺', 'DVD 待机 鼓点 冲刺 节拍'),
         fxConsoleItem('fx-dvddashBeats', '冲刺拍长', 'DVD 待机 冲刺 拍长 时长'),
         fxConsoleItem('fx-dvddashPower', '冲刺指数', 'DVD 待机 冲刺 指数 加速'),
+        fxConsoleItem('fx-dvdbeatPunch', '鼓点脉冲', 'DVD 待机 鼓点 脉冲 缩放 光晕'),
+        fxConsoleItem('fx-dvdimpactFlash', '撞墙闪光', 'DVD 待机 撞墙 闪光 撞击'),
         fxConsoleItem({ selector: '.fx-dvd-tuning .fx-actions' }, '恢复DVD待机默认', 'DVD 待机 重置 还原 默认'),
       ] },
       { key: 'particles', title: '粒子与光影', hint: '粒子尺寸、运动、扭曲和溢光', items: [

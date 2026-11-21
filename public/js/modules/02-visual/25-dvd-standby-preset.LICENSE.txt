@@ -37,6 +37,9 @@ CHANGES FROM THE SUPPLIED FRAGMENT
 - The rings do not inherit that dash: each wall crossing gets a birth time on a separate ripple
   clock advanced at the base speed, and the shader reads those ages from `uHitAges[16]`. A ring
   therefore keeps expanding at the normal rate while the logo rushes to the wall.
+- A live beat additionally pulses the logo (scale + a short cyan halo) and lifts the wall through
+  `uBeat`; a wall impact flashes the rings and the wall through `uImpact`. These are original
+  additions, exposed as `beatPunch` and `impactFlash`, not part of the reference picture.
 - The reference's hardcoded direction is `uAngle` (default 45°, identical on 16:9), the logo
   scale, hit count, ripple range/frequency/life, bump, dither, gamma and a lighting multiplier are
   knobs; their defaults are the reference values except the history/life noted above.
