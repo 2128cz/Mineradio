@@ -370,7 +370,7 @@ graph LR
 | 歌词渲染：舞台 | `#stage-lyrics` | fx 存档 | `02-visual/14-stage-lyrics-rendering.js` | 接管掩码的 `stageLyrics` 通道 |
 | 歌词渲染：预设内 | `#pv-layer`、`#halo-layer`、`#halo-canvas`（黑洞、彩虹猫小镇在其场景内） | — | `02-visual/17`、`18`、`19`、`23` | 各自 `registerVisualTakeoverOwner`；23 的歌词相机逐帧复刻场景 `path()/move()` 姿态，单行板按天空仰角摆放 |
 | 预设 19 故障艺术 | 控制台「故障艺术」组（`.fx-glitch-tuning`） | `mineradio-glitch-art-tuning-v1` | `02-visual/24-glitch-art-preset.js` + `07-fx/17-glitch-art-tuning.js` | 源→可分离溢光→低分辨率合成；`applyGlitchArtPresetNow` / `glitchUpdateLayer` / `glitchRenderFrame` |
-| 预设 20 DVD待机 | 控制台「DVD待机」组（`.fx-dvd-tuning`） | `mineradio-dvd-standby-tuning-v2` | `02-visual/25-dvd-standby-preset.js` + `07-fx/18-dvd-standby-tuning.js` | 单 Pass 参考移植；`applyDvdPresetNow` / `dvdUpdateLayer` / `dvdRenderFrame` |
+| 预设 20 DVD待机 | 控制台「DVD待机」组（`.fx-dvd-tuning`） | `mineradio-dvd-standby-tuning-v2` | `02-visual/25-dvd-standby-preset.js` + `07-fx/18-dvd-standby-tuning.js` | 单 Pass 参考移植 + 封面水面（折射/基础+水波模糊/歌词色高光）+ 官方默认歌词叠加 + 实时鼓点冲刺；`applyDvdPresetNow` / `dvdUpdateLayer` / `dvdRenderFrame` |
 | 3D 歌单架 | 控制台「歌单架」tab 的 `#shelf-*` | fx 存档 | `04-shelf/01-manager-core.js` | 同一份 `FX_CONSOLE_LAYOUT` |
 | 手势 | `#gesture-hud` | 摄像头权限 | `10-shell/00-gesture-control.js` | — |
 | 全局快捷键 | `#hotkey-modal` | 主进程注册 | `07-fx/06-hotkeys.js` + `HOTKEY_ACTIONS`（8 个动作） | 新增动作要同时接本地与全局 |
