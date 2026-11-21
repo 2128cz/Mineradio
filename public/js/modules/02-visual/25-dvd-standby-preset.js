@@ -28,6 +28,7 @@ var DVD_SCHEMA = {
   rippleRange: { def: 1.5, min: 0, max: 4, kind: 'ratio', rebuild: 'live' },
   rippleFreq: { def: 2, min: 0.2, max: 5, kind: 'ratio', rebuild: 'live' },
   rippleLife: { def: 12, min: 3, max: 40, kind: 'unit', rebuild: 'live' },
+  heightDecay: { def: 0.35, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   bump: { def: 0.1, min: 0.02, max: 0.6, kind: 'ratio', rebuild: 'live' },
   dither: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gamma: { def: 1.5, min: 0.8, max: 2.5, kind: 'ratio', rebuild: 'live' },
@@ -60,6 +61,7 @@ uniform float uDither;
 uniform float uGamma;
 uniform float uTravel;
 uniform float uRippleLife;
+uniform float uHeightDecay;
 uniform float uHitAges[16];
 uniform float uBeat;
 uniform float uImpact;
@@ -148,7 +150,7 @@ vec3 spectrum(float n) {
 
 void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     float d = length(p - hitPos);
-    float wavefront = d - hitAge * uRippleRange * (1. + uBeat * .15);
+    float wavefront = d - hitAge * uRippleRange;
     float freq = uRippleFreq;
 
     vec3 spec = (1. - spectrum(-wavefront * freq + hitAge * freq));
@@ -159,8 +161,8 @@ void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     blend *= rangec(-4., .0, wavefront);
 
     col.rgb *= mix(vec3(1), spec, pow(blend, 4.));
-    col.rgb += vec3(.8, .9, 1.) * pow(blend, 4.) * uImpact * .22;
-    float height = (ripple * blend);
+    // The ring colour may linger, but its relief has to flatten with age; no beat term here.
+    float height = ripple * blend * exp(-hitAge * uHeightDecay);
     col.a -= height * 1.9 / freq;
 }
 
@@ -283,15 +285,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     col.rgb = col.rgb * lin;
     col.rgb += 5. * spe * uBrightness;
 
-    // dvd logo — a live beat pulses the mark and leaves a short halo; the wall impact adds a flash.
+    // dvd logo — the beat and the wall impact pulse the mark itself; the background stays untouched.
     float logoPulse = 1. + uBeat * .16;
     float dRaw = dvd((p - move) / (logoScale * logoPulse));
     float d = dRaw / fwidth(dRaw);
     d = 1. - clamp(d, 0., 1.);
-    float halo = exp(-max(dRaw, 0.) * 14.) * uBeat * .55;
+    float halo = exp(-max(dRaw, 0.) * 14.) * (uBeat * .55 + uImpact * .35);
     col.rgb += halo * vec3(.35, .8, 1.);
-    col.rgb += uBeat * vec3(.03, .05, .08);
-    col.rgb += uImpact * vec3(.10, .14, .20);
     col.rgb = mix(col.rgb, vec3(1), d);
 
     // banding be gone
@@ -448,6 +448,7 @@ function dvdApplyKnobs() {
   u.uGamma.value = dvdParam('gamma');
   u.uBrightness.value = dvdParam('brightness');
   u.uRippleLife.value = dvdParam('rippleLife');
+  u.uHeightDecay.value = dvdParam('heightDecay');
 }
 
 function dvdBuildScene() {
@@ -497,6 +498,7 @@ function dvdBuildScene() {
         uBrightness: { value: 1 },
         uTravel: { value: 0 },
         uRippleLife: { value: 12 },
+        uHeightDecay: { value: 0.35 },
         uHitAges: { value: hitAges },
         uBeat: { value: 0 },
         uImpact: { value: 0 }
