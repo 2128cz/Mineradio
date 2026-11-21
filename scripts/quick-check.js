@@ -2695,12 +2695,14 @@ function runDvdStandbyPresetCheck() {
     [/float dvd\(vec2 p\)/, 'the DVD logo SDF has to survive'],
     [/vec2 calcHitPos\(vec2 move, vec2 dir, vec2 size\)/, 'the bouncing cell walk has to survive'],
     [/void flip\(inout vec2 pos\)/, 'the mirrored-tile reflection has to survive'],
-    [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitDist\)/, 'the wavefront hit has to survive'],
+    [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitAge\)/, 'the wavefront hit has to survive'],
     [/void drawReflectedHit\(/, 'the four mirrored hits have to survive'],
     [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit count has to be a uniform loop'],
     [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma has to survive'],
     [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
-    [/float blend = smoothstep\(uRippleLife, 0\., hitDist\);/, 'ripple life has to be a knob so old rings survive more than one bounce'],
+    [/float blend = smoothstep\(uRippleLife, 0\., hitAge\);/, 'ripple life has to be a knob so old rings survive more than one bounce'],
+    [/uniform float uHitAges\[16\];/, 'each hit needs an independent ripple age so a beat dash cannot speed up the wavefronts'],
+    [/float hitAge = uHitAges\[i\];/, 'the ring age must come from the JS ripple clock, not the logo distance'],
     [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a live beat can dash it'],
     [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
     [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
@@ -2714,6 +2716,8 @@ function runDvdStandbyPresetCheck() {
   if (!/function dvdNextBoundaryTravel\(/.test(text)) fail('a live resize needs the boundary solver in JS');
   if (!/Math\.pow\(progress, dvdParam\('dashPower'\)\)/.test(text)) fail('the dash has to accelerate from slow to fast');
   if (!/gap \* dvdParam\('dashBeats'\)/.test(text)) fail('the dash length has to follow the live beat gap');
+  if (!/dvdState\.rippleClock \+= step \* cellSpeed;/.test(text)) fail('ripples need their own clock at the base speed');
+  if (/distance\(hitPos, move\)/.test(text)) fail('the ripple age must not be the distance the logo travelled, or a dash would accelerate it');
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
   const schemaBlock = (text.match(/var DVD_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';

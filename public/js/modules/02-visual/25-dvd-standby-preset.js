@@ -58,6 +58,7 @@ uniform float uDither;
 uniform float uGamma;
 uniform float uTravel;
 uniform float uRippleLife;
+uniform float uHitAges[16];
 uniform float uBrightness;
 
 #define PI 3.14159265359
@@ -141,15 +142,15 @@ vec3 spectrum(float n) {
     return pal(n, vec3(0.5, 0.5, 0.5), vec3(0.5, 0.5, 0.5), vec3(1.0, 1.0, 1.0), vec3(0.0, 0.33, 0.67));
 }
 
-void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitDist) {
+void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     float d = length(p - hitPos);
-    float wavefront = d - hitDist * uRippleRange;
+    float wavefront = d - hitAge * uRippleRange;
     float freq = uRippleFreq;
 
-    vec3 spec = (1. - spectrum(-wavefront * freq + hitDist * freq));
+    vec3 spec = (1. - spectrum(-wavefront * freq + hitAge * freq));
     float ripple = sin((wavefront * freq) * PI * 2. - PI / 2.);
 
-    float blend = smoothstep(uRippleLife, 0., hitDist);
+    float blend = smoothstep(uRippleLife, 0., hitAge);
     blend *= smoothstep(.2, -.5, wavefront);
     blend *= rangec(-4., .0, wavefront);
 
@@ -164,12 +165,12 @@ vec2 ref(vec2 p, vec2 planeNormal, float offset) {
     return p;
 }
 
-void drawReflectedHit(inout vec4 col, vec2 p, vec2 hitPos, float hitDist, vec2 screenSize) {
+void drawReflectedHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge, vec2 screenSize) {
     col.a += length(p) * .0001;
-    drawHit(col, p, ref(hitPos, vec2(0, 1), 1.), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(0, -1), 1.), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(1, 0), screenSize.x / screenSize.y), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(-1, 0), screenSize.x / screenSize.y), hitDist);
+    drawHit(col, p, ref(hitPos, vec2(0, 1), 1.), hitAge);
+    drawHit(col, p, ref(hitPos, vec2(0, -1), 1.), hitAge);
+    drawHit(col, p, ref(hitPos, vec2(1, 0), screenSize.x / screenSize.y), hitAge);
+    drawHit(col, p, ref(hitPos, vec2(-1, 0), screenSize.x / screenSize.y), hitAge);
 }
 
 // Flip every second cell to create reflection
@@ -232,15 +233,17 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         }
         lastHitPos = hitPos;
 
-        float hitDist = distance(hitPos, move);
+        // The ring's age comes from the JS ripple clock, not from how far the logo has travelled.
+        // A beat dash therefore moves the logo without speeding up the wavefronts.
+        float hitAge = uHitAges[i];
 
         flip(hitPos);
         hitPos = (hitPos - .5) * size;
         hitPos += logoSize * compassDir(hitPos / size);
 
-        drawReflectedHit(col, p, hitPos, hitDist, screenSize);
-        drawReflectedHit(colFx, p + e, hitPos, hitDist, screenSize);
-        drawReflectedHit(colFy, p + e.yx, hitPos, hitDist, screenSize);
+        drawReflectedHit(col, p, hitPos, hitAge, screenSize);
+        drawReflectedHit(colFx, p + e, hitPos, hitAge, screenSize);
+        drawReflectedHit(colFy, p + e.yx, hitPos, hitAge, screenSize);
     }
 
     flip(move);
@@ -311,6 +314,10 @@ var dvdState = {
   clock: 0,
   travel: 0,
   dash: null,
+  rippleClock: 0,
+  hitBirths: [],
+  lastTravel: 0,
+  pathKey: '',
   frames: 0,
   size: null
 };
@@ -454,6 +461,8 @@ function dvdBuildScene() {
     noiseTex.needsUpdate = true;
 
     var geometry = new THREE.PlaneGeometry(2, 2);
+    var hitAges = new Float32Array(16);
+    hitAges.fill(99);
     var mat = new THREE.ShaderMaterial({
       uniforms: {
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
@@ -472,7 +481,8 @@ function dvdBuildScene() {
         uGamma: { value: 1.5 },
         uBrightness: { value: 1 },
         uTravel: { value: 0 },
-        uRippleLife: { value: 12 }
+        uRippleLife: { value: 12 },
+        uHitAges: { value: hitAges }
       },
       glslVersion: THREE.GLSL3,
       vertexShader: DVD_QUAD_VS_GLSL3,
@@ -495,6 +505,10 @@ function dvdBuildScene() {
     dvdState.error = '';
     dvdState.travel = 0;
     dvdState.dash = null;
+    dvdState.rippleClock = 0;
+    dvdState.hitBirths = [];
+    dvdState.lastTravel = 0;
+    dvdState.pathKey = '';
     dvdApplyKnobs();
     return true;
   } catch (err) {
@@ -513,6 +527,19 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   var dir = dvdPathDirection();
   var play = dir.size;
   var speed = dvdParam('speed');
+  var pathKey = dvdParam('angle') + '|' + dvdParam('logoScale') + '|' + play.aspect.toFixed(4);
+  var skipCross = false;
+  if (dvdState.pathKey !== pathKey) {
+    // A resize/logo/angle change remaps the cell coordinates; the old travel is not on the same
+    // boundary grid, so start the crossing detector fresh instead of emitting a phantom hit.
+    dvdState.pathKey = pathKey;
+    dvdState.lastTravel = dvdState.travel;
+    skipCross = true;
+  }
+  // Ripples age on their own clock at the base speed, never at the dash's eased speed.
+  var cellSpeed = Math.hypot(dir.x / Math.max(1e-4, play.x), dir.y / Math.max(1e-4, play.y)) * (speed / 1.5);
+  dvdState.rippleClock += step * cellSpeed;
+
   var beatDash = dvdParam('beatDash') > 0;
   var beatHit = typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag;
   var gap = (typeof rtBeat !== 'undefined' && rtBeat && Number(rtBeat.tempoGap) > 0.15 && Number(rtBeat.tempoGap) <= 2)
@@ -543,6 +570,7 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
       dash.dirY = dir.y;
       dash.sizeX = play.x;
       dash.sizeY = play.y;
+      skipCross = true;
     }
     dash.elapsed += step;
     var progress = Math.min(1, dash.elapsed / Math.max(0.001, dash.duration));
@@ -557,6 +585,27 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   }
 
   dvdState.mat.uniforms.uTravel.value = dvdState.travel;
+
+  // Record each wall crossing as a ripple birth, in chronological order. The shader's walk reports
+  // its hits most-recent-first, which is the same order as this list.
+  if (!skipCross && isFinite(dvdState.travel)) {
+    var cursor = dvdState.lastTravel;
+    for (var guard = 0; guard < 16; guard++) {
+      var nextHit = dvdNextBoundaryTravel(cursor + 1e-6, dir.x, dir.y, play.x, play.y);
+      if (!isFinite(nextHit) || nextHit > dvdState.travel + 1e-6) break;
+      dvdState.hitBirths.unshift(dvdState.rippleClock);
+      if (dvdState.hitBirths.length > 16) dvdState.hitBirths.length = 16;
+      cursor = nextHit;
+    }
+  }
+  dvdState.lastTravel = dvdState.travel;
+  var ages = dvdState.mat.uniforms.uHitAges.value;
+  for (var ai = 0; ai < 16; ai++) {
+    ages[ai] = ai < dvdState.hitBirths.length
+      ? Math.max(0, dvdState.rippleClock - dvdState.hitBirths[ai])
+      : 99;
+  }
+
   dvdState.mat.uniforms.iTime.value = dvdState.clock;
   dvdState.mat.uniforms.iFrame.value = dvdState.frames | 0;
   dvdState.frames++;
@@ -602,6 +651,10 @@ function dvdDisposeScene() {
   dvdState.clock = 0;
   dvdState.travel = 0;
   dvdState.dash = null;
+  dvdState.rippleClock = 0;
+  dvdState.hitBirths = [];
+  dvdState.lastTravel = 0;
+  dvdState.pathKey = '';
   dvdState.frames = 0;
 }
 

@@ -47,14 +47,16 @@ for (const [pattern, why] of [
   [/float dvd\(vec2 p\)/, 'the three glyphs have to be combined into the logo'],
   [/vec2 calcHitPos\(vec2 move, vec2 dir, vec2 size\)/, 'the cell-boundary walk has to survive'],
   [/void flip\(inout vec2 pos\)/, 'the mirrored-tile flip has to survive'],
-  [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitDist\)/, 'the wavefront hit has to survive'],
-  [/void drawReflectedHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitDist, vec2 screenSize\)/, 'the four mirrored hits have to survive'],
+  [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitAge\)/, 'the wavefront hit has to survive'],
+  [/void drawReflectedHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitAge, vec2 screenSize\)/, 'the four mirrored hits have to survive'],
   [/vec3 spectrum\(float n\)/, 'the spectrum palette has to survive'],
   [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit loop has to be the knob, not a baked count'],
   [/float bf = uBump;/, 'the bump factor has to be the knob'],
   [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma curve has to survive'],
   [/texture\(iChannel0, fragCoord \/ uNoiseRes\)/, 'the dither has to read the generated noise'],
-  [/float blend = smoothstep\(uRippleLife, 0\., hitDist\);/, 'the ripple life has to be the knob, not the reference 3'],
+  [/float blend = smoothstep\(uRippleLife, 0\., hitAge\);/, 'the ripple life has to be the knob, not the reference 3'],
+  [/uniform float uHitAges\[16\];/, 'the shader needs one independent age per walk hit'],
+  [/float hitAge = uHitAges\[i\];/, 'the ring age must come from the ripple clock, not the logo distance'],
   [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a beat can dash it'],
   [/fragColor = vec4\(col\.rgb, 1\.0\);/, 'the full-screen pass has to be opaque'],
   [/glslVersion: THREE\.GLSL3/, 'fwidth/texture need GLSL3'],
@@ -67,7 +69,11 @@ assert.ok(!/dir \* t \/ 1\.5/.test(moduleText), 'the reference time path must be
 assert.match(moduleText, /vec2 baseDir = normalize\(vec2\(9\., 16\.\) \* screenSize\);/);
 assert.match(moduleText, /vec2 dir = normalize\(mat2\(cos\(a\), -sin\(a\), sin\(a\), cos\(a\)\) \* baseDir\);/);
 assert.match(moduleText, /float logoScale = \.1 \* uLogoScale;/);
-assert.match(moduleText, /float wavefront = d - hitDist \* uRippleRange;/);
+assert.match(moduleText, /float wavefront = d - hitAge \* uRippleRange;/);
+assert.ok(!/distance\(hitPos, move\)/.test(moduleText), 'the ripple age must not be the distance the logo has travelled');
+assert.match(moduleText, /dvdState\.rippleClock \+= step \* cellSpeed;/);
+assert.match(moduleText, /dvdState\.rippleClock - dvdState\.hitBirths\[ai\]/);
+assert.match(moduleText, /dvdState\.mat\.uniforms\.uHitAges\.value/);
 
 // Beat dash: live onset only (no map), and the next wall is solved from the live playable size.
 assert.match(moduleText, /typeof beatOnsetFlag !== 'undefined' && beatOnsetFlag/);
