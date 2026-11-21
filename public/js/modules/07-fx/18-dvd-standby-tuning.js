@@ -39,6 +39,7 @@ function dvdStandbyTuningFormat(key) {
   if (key === 'angle') return Math.round(value) + '°';
   if (key === 'gamma' || key === 'bump' || key === 'dashPower') return String(Math.round(value * 100) / 100);
   if (key === 'rippleLife') return String(Math.round(value));
+  if (key === 'coverBlur') return Math.round(value) + 'px';
   return Math.round(value * 100) + '%';
 }
 

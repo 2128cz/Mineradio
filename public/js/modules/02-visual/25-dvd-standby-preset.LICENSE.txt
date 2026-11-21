@@ -42,6 +42,11 @@ CHANGES FROM THE SUPPLIED FRAGMENT
   as `beatPunch` and `impactFlash`, and they deliberately do not re-time, tint or flash the
   background rings or the wall. The rings' relief fades with age through `heightDecay`; their
   colour can outlive the relief.
+- The background surface is not the reference's inverted spectrum wall. The app's current cover
+  texture is sampled as the flat water colour; the height gradient/normal refracts that lookup,
+  and the steeper the slope the more a blurred copy of the cover is used (a 256×256 canvas rebuilt
+  from the cover when it or the blur radius changes). The reference's `spectrum`/`pal` palette and
+  its inverted colour pass are therefore not used. Knobs: `refract`, `coverBlur`.
 - The reference's hardcoded direction is `uAngle` (default 45°, identical on 16:9), the logo
   scale, hit count, ripple range/frequency/life, bump, dither, gamma and a lighting multiplier are
   knobs; their defaults are the reference values except the history/life noted above.

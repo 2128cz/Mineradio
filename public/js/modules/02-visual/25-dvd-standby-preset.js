@@ -14,9 +14,10 @@
 // the standby animation keeps bouncing while paused and in wallpaper mode.
 //
 // Two additions on top of the reference: the travel is a value the JS side can dash on a live
-// beat (no beat map required), and the ripple history/life are knobs so older wavefronts do not
-// vanish after one bounce. Both defaults are documented in the sidecar; the beat dash is not in
-// the reference.
+// beat (no beat map required), and the surface is the current song cover instead of the reference's
+// inverted spectrum wall: the ripple normal refracts the cover lookup and steeper slopes use a
+// blurred copy. The beat only pulses the logo; it never re-times the water. Both deviations and the
+// ripple history/life are documented in the sidecar.
 
 var DVD_PRESET_INDEX = 20;
 
@@ -29,6 +30,8 @@ var DVD_SCHEMA = {
   rippleFreq: { def: 2, min: 0.2, max: 5, kind: 'ratio', rebuild: 'live' },
   rippleLife: { def: 12, min: 3, max: 40, kind: 'unit', rebuild: 'live' },
   heightDecay: { def: 0.35, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
+  refract: { def: 0.5, min: 0, max: 1.5, kind: 'ratio', rebuild: 'live' },
+  coverBlur: { def: 10, min: 0, max: 30, kind: 'unit', rebuild: 'live' },
   bump: { def: 0.1, min: 0.02, max: 0.6, kind: 'ratio', rebuild: 'live' },
   dither: { def: 1, min: 0, max: 2, kind: 'ratio', rebuild: 'live' },
   gamma: { def: 1.5, min: 0.8, max: 2.5, kind: 'ratio', rebuild: 'live' },
@@ -65,6 +68,9 @@ uniform float uHeightDecay;
 uniform float uHitAges[16];
 uniform float uBeat;
 uniform float uImpact;
+uniform sampler2D uCover;
+uniform sampler2D uCoverBlur;
+uniform float uRefract;
 uniform float uBrightness;
 
 #define PI 3.14159265359
@@ -140,27 +146,17 @@ float rangec(float a, float b, float t) {
     return clamp(range(a, b, t), 0., 1.);
 }
 
-vec3 pal(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
-    return a + b * cos(6.28318 * (c * t + d));
-}
-
-vec3 spectrum(float n) {
-    return pal(n, vec3(0.5, 0.5, 0.5), vec3(0.5, 0.5, 0.5), vec3(1.0, 1.0, 1.0), vec3(0.0, 0.33, 0.67));
-}
-
 void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitAge) {
     float d = length(p - hitPos);
     float wavefront = d - hitAge * uRippleRange;
     float freq = uRippleFreq;
 
-    vec3 spec = (1. - spectrum(-wavefront * freq + hitAge * freq));
     float ripple = sin((wavefront * freq) * PI * 2. - PI / 2.);
 
     float blend = smoothstep(uRippleLife, 0., hitAge);
     blend *= smoothstep(.2, -.5, wavefront);
     blend *= rangec(-4., .0, wavefront);
 
-    col.rgb *= mix(vec3(1), spec, pow(blend, 4.));
     // The ring colour may linger, but its relief has to flatten with age; no beat term here.
     float height = ripple * blend * exp(-hitAge * uHeightDecay);
     col.a -= height * 1.9 / freq;
@@ -265,9 +261,17 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float ee = rangec(0., 10. / iResolution.y, ff);
     nor = normalize(vec3(vec2(fx, fy) * ee, ff));
 
-    // invert colours
-    col.rgb = clamp(1. - col.rgb, vec3(0), vec3(1));
-    col.rgb /= 3.;
+    // Water surface: the current cover is the flat colour; the ripple normal refracts the lookup,
+// and the steeper the slope the more of the blurred cover is used.
+    vec2 cuv = fragCoord / iResolution.xy;
+    float aspect = iResolution.x / iResolution.y;
+    if (aspect > 1.) cuv.y = .5 + (cuv.y - .5) / aspect;
+    else cuv.x = .5 + (cuv.x - .5) * aspect;
+    vec2 refr = nor.xy * uRefract * .35;
+    float slope = length(vec2(fx, fy));
+    vec3 waterSharp = texture(uCover, clamp(cuv + refr, 0., 1.)).rgb;
+    vec3 waterBlur = texture(uCoverBlur, clamp(cuv + refr * 1.25, 0., 1.)).rgb;
+    vec3 water = mix(waterSharp, waterBlur, smoothstep(.02, .35, slope));
 
     // lighting (iq, Shadertoy Xds3zN)
     vec3 lig = normalize(vec3(1, 2, 2.));
@@ -278,12 +282,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float spe = pow(clamp(dot(nor, hal), 0.0, 1.0), 16.0) * dif
         * (0.04 + 0.96 * pow(clamp(1.0 + dot(hal, rd), 0.0, 1.0), 5.0));
 
-    vec3 lin = vec3(0.);
-    lin += 5. * dif;
-    lin += .2;
-    lin *= uBrightness;
-    col.rgb = col.rgb * lin;
-    col.rgb += 5. * spe * uBrightness;
+    vec3 lin = vec3(.55 + .45 * dif) * uBrightness;
+    col.rgb = water * lin + vec3(.5, .62, .8) * spe * 1.4 * uBrightness;
 
     // dvd logo — the beat and the wall impact pulse the mark itself; the background stays untouched.
     float logoPulse = 1. + uBeat * .16;
@@ -333,6 +333,11 @@ var dvdState = {
   beatCount: 0,
   dashCount: 0,
   impactCount: 0,
+  fallbackTex: null,
+  coverCanvas: null,
+  coverBlurTex: null,
+  coverSource: null,
+  coverBlurPx: -1,
   frames: 0,
   size: null
 };
@@ -449,6 +454,50 @@ function dvdApplyKnobs() {
   u.uBrightness.value = dvdParam('brightness');
   u.uRippleLife.value = dvdParam('rippleLife');
   u.uHeightDecay.value = dvdParam('heightDecay');
+  u.uRefract.value = dvdParam('refract');
+}
+
+function dvdUpdateCoverTexture() {
+  var u = dvdState.mat && dvdState.mat.uniforms;
+  if (!u) return;
+  var cover = (typeof coverTex !== 'undefined' && coverTex) ? coverTex : null;
+  var img = cover && cover.image ? cover.image : null;
+  if (!img) {
+    u.uCover.value = dvdState.fallbackTex;
+    u.uCoverBlur.value = dvdState.fallbackTex;
+    return;
+  }
+  u.uCover.value = cover;
+  var blurPx = dvdParam('coverBlur');
+  if (img === dvdState.coverSource && Math.abs(blurPx - dvdState.coverBlurPx) < 0.5) {
+    u.uCoverBlur.value = dvdState.coverBlurTex || cover;
+    return;
+  }
+  if (!dvdState.coverCanvas) {
+    var size = 256;
+    dvdState.coverCanvas = document.createElement('canvas');
+    dvdState.coverCanvas.width = size;
+    dvdState.coverCanvas.height = size;
+    dvdState.coverBlurTex = new THREE.CanvasTexture(dvdState.coverCanvas);
+    dvdState.coverBlurTex.minFilter = THREE.LinearFilter;
+    dvdState.coverBlurTex.magFilter = THREE.LinearFilter;
+    dvdState.coverBlurTex.wrapS = THREE.ClampToEdgeWrapping;
+    dvdState.coverBlurTex.wrapT = THREE.ClampToEdgeWrapping;
+  }
+  var canvas = dvdState.coverCanvas;
+  var ctx = canvas.getContext('2d');
+  var iw = Math.max(1, img.width || img.videoWidth || 1);
+  var ih = Math.max(1, img.height || img.videoHeight || 1);
+  var scale = Math.max(canvas.width / iw, canvas.height / ih);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  if (blurPx > 0.5) ctx.filter = 'blur(' + blurPx.toFixed(1) + 'px)';
+  ctx.drawImage(img, (canvas.width - iw * scale) * 0.5, (canvas.height - ih * scale) * 0.5, iw * scale, ih * scale);
+  ctx.restore();
+  dvdState.coverBlurTex.needsUpdate = true;
+  dvdState.coverSource = img;
+  dvdState.coverBlurPx = blurPx;
+  u.uCoverBlur.value = dvdState.coverBlurTex;
 }
 
 function dvdBuildScene() {
@@ -479,6 +528,8 @@ function dvdBuildScene() {
     var geometry = new THREE.PlaneGeometry(2, 2);
     var hitAges = new Float32Array(16);
     hitAges.fill(99);
+    var fallback = new THREE.DataTexture(new Uint8Array([6, 8, 12, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    fallback.needsUpdate = true;
     var mat = new THREE.ShaderMaterial({
       uniforms: {
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
@@ -501,7 +552,10 @@ function dvdBuildScene() {
         uHeightDecay: { value: 0.35 },
         uHitAges: { value: hitAges },
         uBeat: { value: 0 },
-        uImpact: { value: 0 }
+        uImpact: { value: 0 },
+        uCover: { value: fallback },
+        uCoverBlur: { value: fallback },
+        uRefract: { value: 0.5 }
       },
       glslVersion: THREE.GLSL3,
       vertexShader: DVD_QUAD_VS_GLSL3,
@@ -520,6 +574,9 @@ function dvdBuildScene() {
     dvdState.mat = mat;
     dvdState.pass = { scene: scene, camera: camera, mesh: mesh };
     dvdState.size = new THREE.Vector2();
+    dvdState.fallbackTex = fallback;
+    dvdState.coverSource = null;
+    dvdState.coverBlurPx = -1;
     dvdState.built = true;
     dvdState.error = '';
     dvdState.travel = 0;
@@ -545,6 +602,7 @@ function dvdUpdateLayer(now, dt, sonicFrame) {
   if (!dvdPresetIsActive()) return false;
   if (!dvdState.built && !dvdBuildScene()) return false;
   dvdApplyKnobs();
+  dvdUpdateCoverTexture();
   var step = Math.max(0, Math.min(0.12, Number(dt) || 0));
   dvdState.clock += step;
 
@@ -678,12 +736,19 @@ function dvdDisposeScene() {
   if (dvdState.mat) dvdState.mat.dispose();
   if (dvdState.geometry) dvdState.geometry.dispose();
   if (dvdState.noiseTex) dvdState.noiseTex.dispose();
+  if (dvdState.coverBlurTex) dvdState.coverBlurTex.dispose();
+  if (dvdState.fallbackTex) dvdState.fallbackTex.dispose();
   dvdState.built = false;
   dvdState.mat = null;
   dvdState.geometry = null;
   dvdState.noiseTex = null;
   dvdState.pass = null;
   dvdState.size = null;
+  dvdState.fallbackTex = null;
+  dvdState.coverCanvas = null;
+  dvdState.coverBlurTex = null;
+  dvdState.coverSource = null;
+  dvdState.coverBlurPx = -1;
   dvdState.clock = 0;
   dvdState.travel = 0;
   dvdState.dash = null;

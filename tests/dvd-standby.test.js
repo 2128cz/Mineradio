@@ -19,7 +19,7 @@ assert.strictEqual(sandbox.DVD_PRESET_INDEX, 20, 'the preset index is 20 and is 
 
 const schema = sandbox.DVD_SCHEMA;
 const keys = Object.keys(schema);
-assert.ok(keys.length >= 17, 'the reference constants and the beat/ripple controls live in DVD_SCHEMA');
+assert.ok(keys.length >= 19, 'the reference constants and the water/beat controls live in DVD_SCHEMA');
 for (const key of keys) {
   const spec = schema[key];
   assert.ok(spec.def >= spec.min && spec.def <= spec.max, `${key} default must sit inside its range`);
@@ -39,6 +39,8 @@ assert.strictEqual(schema.beatDash.def, 1, 'the beat dash is on by default');
 assert.strictEqual(schema.dashBeats.def, 0.55, 'the dash lasts a little over half a beat');
 assert.strictEqual(schema.dashPower.def, 3, 'the dash accelerates into the wall (exponent 3)');
 assert.strictEqual(schema.heightDecay.def, 0.35, 'ripple relief fades with age');
+assert.strictEqual(schema.refract.def, 0.5, 'the cover refraction starts at half strength');
+assert.strictEqual(schema.coverBlur.def, 10, 'the blurred cover starts at 10 px');
 assert.strictEqual(schema.beatPunch.def, 0.7, 'a live beat pulses the logo and its halo');
 assert.strictEqual(schema.impactFlash.def, 0.8, 'a wall impact flashes the logo halo');
 
@@ -52,7 +54,12 @@ for (const [pattern, why] of [
   [/void flip\(inout vec2 pos\)/, 'the mirrored-tile flip has to survive'],
   [/void drawHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitAge\)/, 'the wavefront hit has to survive'],
   [/void drawReflectedHit\(inout vec4 col, vec2 p, vec2 hitPos, float hitAge, vec2 screenSize\)/, 'the four mirrored hits have to survive'],
-  [/vec3 spectrum\(float n\)/, 'the spectrum palette has to survive'],
+  [/uniform sampler2D uCover;/, 'the water surface has to sample the current cover'],
+  [/uniform sampler2D uCoverBlur;/, 'the water surface needs a blurred cover'],
+  [/uniform float uRefract;/, 'the normal has to drive a refraction strength'],
+  [/texture\(uCover, clamp\(cuv \+ refr/, 'the flat surface has to be the cover, refracted by the height'],
+  [/texture\(uCoverBlur, clamp\(cuv \+ refr \* 1\.25/, 'ripples have to sample the blurred cover'],
+  [/smoothstep\(\.02, \.35, slope\)/, 'the steeper the slope the more of the blur is used'],
   [/for \(int i = 0; i < uReflections; i\+\+\)/, 'the hit loop has to be the knob, not a baked count'],
   [/float bf = uBump;/, 'the bump factor has to be the knob'],
   [/pow\(col\.rgb, vec3\(1\. \/ uGamma\)\)/, 'the reference gamma curve has to survive'],
@@ -86,6 +93,11 @@ assert.match(moduleText, /dvdState\.impactPulse = 1;/);
 assert.match(moduleText, /uBeat\.value = dvdState\.beatPulse \* dvdParam\('beatPunch'\)/);
 assert.match(moduleText, /uImpact\.value = dvdState\.impactPulse \* dvdParam\('impactFlash'\)/);
 assert.match(moduleText, /exp\(-hitAge \* uHeightDecay\)/);
+assert.match(moduleText, /function dvdUpdateCoverTexture\(/);
+assert.match(moduleText, /typeof coverTex !== 'undefined'/);
+assert.match(moduleText, /ctx\.filter = 'blur\(' \+ blurPx/);
+assert.match(moduleText, /u\.uCover\.value = cover;/);
+assert.match(moduleText, /u\.uCoverBlur\.value = dvdState\.coverBlurTex;/);
 // The beat must not re-time the background ripple pattern: its wavefront radius is hitAge-only,
 // and neither uBeat nor uImpact may tint the wall/rings.
 assert.ok(!/float wavefront = d - hitAge \* uRippleRange \* \(1\. \+ uBeat/.test(moduleText), 'the ripple wavefront may not be modulated by the beat');

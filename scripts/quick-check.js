@@ -2708,6 +2708,10 @@ function runDvdStandbyPresetCheck() {
     [/float logoPulse = 1\. \+ uBeat \* \.16;/, 'the logo has to pulse on the beat'],
     [/uniform float uHeightDecay;/, 'ripple relief needs its own age fade'],
     [/float height = ripple \* blend \* exp\(-hitAge \* uHeightDecay\);/, 'the ripple height has to flatten with age'],
+    [/uniform sampler2D uCover;/, 'the water surface has to sample the current cover'],
+    [/uniform sampler2D uCoverBlur;/, 'the water surface needs a blurred cover'],
+    [/texture\(uCover, clamp\(cuv \+ refr/, 'the flat surface has to be the cover, refracted by the height'],
+    [/smoothstep\(\.02, \.35, slope\)/, 'the steeper the slope the more of the blurred cover is used'],
     [/vec2 move = dir \* uTravel;/, 'the position has to come from the JS travel value so a live beat can dash it'],
     [/glslVersion: THREE\.GLSL3/, 'the pass needs GLSL3 for texture/fwidth'],
     [/new THREE\.DataTexture\(noiseData, noiseSize, noiseSize/, 'the reference noise channel is replaced by a generated texture'],
@@ -2730,6 +2734,9 @@ function runDvdStandbyPresetCheck() {
   if (/float wavefront = d - hitAge \* uRippleRange \* \(1\. \+ uBeat/.test(text)) fail('the background ripple wavefront may not be re-timed by the beat');
   if (/col\.rgb \+= vec3\(\.8, \.9, 1\.\) \* pow\(blend, 4\.\) \* uImpact/.test(text)) fail('the background rings may not flash with the beat');
   if (/col\.rgb \+= uBeat \* vec3|col\.rgb \+= uImpact \* vec3/.test(text)) fail('the wall may not change with the beat');
+  if (!/function dvdUpdateCoverTexture\(/.test(text) || !/typeof coverTex !== 'undefined'/.test(text) || !/ctx\.filter = 'blur\(' \+ blurPx/.test(text)) {
+    fail('the cover and its blurred copy have to be built from the current song cover');
+  }
   // Knobs: one row per schema entry, in a .fx-slider row, with the console entry and the setter.
   const schema = new Map();
   const schemaBlock = (text.match(/var DVD_SCHEMA = \{[\s\S]*?\n\};/) || [])[0] || '';
@@ -2738,7 +2745,7 @@ function runDvdStandbyPresetCheck() {
   while ((found = schemaRe.exec(schemaBlock))) {
     schema.set(found[1], { def: Number(found[2]), min: Number(found[3]), max: Number(found[4]), kind: found[5], rebuild: found[6] });
   }
-  if (schema.size < 17) fail('DVD_SCHEMA must expose the reference controls, the beat/ripple controls, the pulses and the height fade');
+  if (schema.size < 19) fail('DVD_SCHEMA must expose the reference controls, the beat/ripple controls, the pulses, the height fade and the cover/refraction controls');
   for (const [key, spec] of schema) {
     const id = 'fx-dvd' + key;
     if (spec.kind === 'bool') {
